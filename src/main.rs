@@ -59,7 +59,11 @@ struct Cli {
 enum Commands {
     /// Restore original values from anonymized data
     Restore {
-        /// Input file (reads from stdin if not provided)
+        /// Input file (positional, optional)
+        #[arg(value_name = "INPUT")]
+        input_positional: Option<PathBuf>,
+
+        /// Input file (flag, optional — overrides positional)
         #[arg(short, long)]
         input: Option<PathBuf>,
 
@@ -598,12 +602,12 @@ impl Anonymizer {
             }
         }
 
-        // Sort by span length desc, then score desc, then position asc
-        // This ensures longer/higher-confidence matches win overlap resolution
+        // Sort by position asc, then span length desc, then score desc
+        // Matches Python/Presidio overlap resolution: position-first
         detections.sort_by(|a, b| {
-            (b.end - b.start).cmp(&(a.end - a.start))
+            a.start.cmp(&b.start)
+                .then_with(|| (b.end - b.start).cmp(&(a.end - a.start)))
                 .then_with(|| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
-                .then_with(|| a.start.cmp(&b.start))
         });
 
         // Remove overlapping detections (keep first = longest/highest score)
@@ -835,11 +839,13 @@ fn main() -> io::Result<()> {
 
     match cli.command {
         Some(Commands::Restore {
+            input_positional,
             input,
             mapping,
             output,
         }) => {
-            let content = read_input(input.as_ref())?;
+            let resolved_input = input.or(input_positional);
+            let content = read_input(resolved_input.as_ref())?;
             let mapping_content = fs::read_to_string(&mapping)?;
             let mut mapping: Mapping = match serde_json::from_str(&mapping_content) {
                 Ok(m) => m,
@@ -900,6 +906,13 @@ fn main() -> io::Result<()> {
             }
 
             let content = read_input(cli.input.as_ref())?;
+
+            // Empty input short-circuit (match Python behavior)
+            if content.trim().is_empty() {
+                write_output(cli.output.as_ref(), &content)?;
+                return Ok(());
+            }
+
             let mut anonymizer = Anonymizer::new(cli.threshold);
 
             // Determine format and process
@@ -944,8 +957,8 @@ fn main() -> io::Result<()> {
             // Handle --include-mapping: append mapping as comment at end
             let final_output = if cli.include_mapping {
                 eprintln!("Warning: --include-mapping embeds original PII values in the output");
-                let mapping_json = serde_json::to_string(&anonymizer.mapping)?;
-                format!("{}\n/* MAPPING: {} */", result.trim_end(), mapping_json)
+                let mapping_json = serde_json::to_string_pretty(&anonymizer.mapping)?;
+                format!("{}\n\n/* MAPPING:\n{}\n*/", result.trim_end(), mapping_json)
             } else {
                 result
             };
