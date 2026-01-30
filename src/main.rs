@@ -47,8 +47,12 @@ struct Cli {
     format: Format,
 
     /// Minimum confidence score (0.0-1.0)
-    #[arg(long, default_value = "0.0")]
+    #[arg(long, default_value = "0.5")]
     threshold: f64,
+
+    /// Language for detection
+    #[arg(short, long, default_value = "en")]
+    language: String,
 }
 
 #[derive(Subcommand)]
@@ -76,6 +80,8 @@ enum Format {
     Auto,
     Json,
     Text,
+    Sql,
+    Csv,
 }
 
 // ─── Mapping ────────────────────────────────────────────────────────────────
@@ -85,43 +91,110 @@ struct Mapping {
     session_id: String,
     created_at: String,
     mappings: HashMap<String, String>,
+    #[serde(skip)]
+    reverse: HashMap<String, String>,
+    #[serde(skip)]
+    counters: HashMap<String, usize>,
+}
+
+fn days_to_ymd(days: u64) -> (u64, u64, u64) {
+    // Howard Hinnant's civil calendar algorithm
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { yoe + era * 400 + 1 } else { yoe + era * 400 };
+    (y, m, d)
 }
 
 impl Mapping {
     fn new() -> Self {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let session_id = format!(
+            "{:08x}",
+            RandomState::new().build_hasher().finish() as u32
+        );
+
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let day_secs = secs % 86400;
+        let (year, month, day) = days_to_ymd(secs / 86400);
+        let created_at = format!(
+            "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}+00:00",
+            day_secs / 3600,
+            (day_secs % 3600) / 60,
+            day_secs % 60
+        );
+
         Self {
-            session_id: uuid::Uuid::new_v4().to_string()[..8].to_string(),
-            created_at: chrono::Utc::now().to_rfc3339(),
+            session_id,
+            created_at,
             mappings: HashMap::new(),
+            reverse: HashMap::new(),
+            counters: HashMap::new(),
         }
     }
 
     fn add(&mut self, entity_type: &str, original: &str) -> String {
-        for (token, val) in &self.mappings {
-            if val == original {
-                return token.clone();
-            }
+        if let Some(token) = self.reverse.get(original) {
+            return token.clone();
         }
 
-        let count = self
-            .mappings
-            .keys()
-            .filter(|k| k.starts_with(&format!("[{}_", entity_type)))
-            .count()
-            + 1;
+        let counter = self.counters.entry(entity_type.to_string()).or_insert(0);
+        *counter += 1;
+        let token = format!("[{}_{counter}]", entity_type);
 
-        let token = format!("[{}_{count}]", entity_type);
         self.mappings.insert(token.clone(), original.to_string());
+        self.reverse.insert(original.to_string(), token.clone());
         token
     }
 
-    fn restore(&self, text: &str) -> String {
-        let mut result = text.to_string();
-        let mut tokens: Vec<_> = self.mappings.iter().collect();
-        tokens.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-        for (token, original) in tokens {
-            result = result.replace(token, original);
+    fn rebuild_caches(&mut self) {
+        self.reverse.clear();
+        self.counters.clear();
+        for (token, original) in &self.mappings {
+            self.reverse.insert(original.clone(), token.clone());
+            if let Some(inner) = token.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
+                if let Some(pos) = inner.rfind('_') {
+                    if let Ok(n) = inner[pos + 1..].parse::<usize>() {
+                        let counter = self.counters.entry(inner[..pos].to_string()).or_insert(0);
+                        *counter = (*counter).max(n);
+                    }
+                }
+            }
         }
+    }
+
+    fn restore(&self, text: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let bytes = text.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            if bytes[i] == b'[' {
+                if let Some(close) = text[i..].find(']') {
+                    let candidate = &text[i..i + close + 1];
+                    if let Some(original) = self.mappings.get(candidate) {
+                        result.push_str(original);
+                        i += close + 1;
+                        continue;
+                    }
+                }
+            }
+            let ch = text[i..].chars().next().unwrap();
+            result.push(ch);
+            i += ch.len_utf8();
+        }
+
         result
     }
 }
@@ -134,16 +207,20 @@ struct PiiPattern {
     pattern: &'static str,
     score: f64,
     context_keywords: &'static [&'static str],
+    /// If true, context keywords are required (no keyword = no match).
+    /// If false and context_keywords is non-empty, keywords boost the score.
+    context_required: bool,
 }
 
 const PATTERNS: &[PiiPattern] = &[
     // ── Email ──
     PiiPattern {
         name: "email",
-        entity_type: "EMAIL",
+        entity_type: "EMAIL_ADDRESS",
         pattern: r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
         score: 0.9,
         context_keywords: &[],
+        context_required: false,
     },
     // ── URL ──
     PiiPattern {
@@ -152,21 +229,38 @@ const PATTERNS: &[PiiPattern] = &[
         pattern: r#"https?://[^\s\)\]>"']+[^\s\)\]>"'.,;:!?]"#,
         score: 0.9,
         context_keywords: &[],
+        context_required: false,
     },
     // ── French phone numbers ──
     PiiPattern {
         name: "fr_phone_intl",
-        entity_type: "FR_PHONE",
+        entity_type: "FR_PHONE_NUMBER",
         pattern: r"\+33\s?[1-9](?:[\s.\-]?\d{2}){4}",
         score: 0.9,
-        context_keywords: &[],
+        context_keywords: &[
+            "telephone", "tel", "phone", "mobile", "contact", "appeler", "numero", "portable",
+        ],
+        context_required: false,
     },
     PiiPattern {
         name: "fr_phone_national",
-        entity_type: "FR_PHONE",
+        entity_type: "FR_PHONE_NUMBER",
         pattern: r"\b0[1-9](?:[\s.\-]?\d{2}){4}\b",
         score: 0.7,
-        context_keywords: &[],
+        context_keywords: &[
+            "telephone", "tel", "phone", "mobile", "contact", "appeler", "numero", "portable",
+        ],
+        context_required: false,
+    },
+    PiiPattern {
+        name: "fr_phone_compact",
+        entity_type: "FR_PHONE_NUMBER",
+        pattern: r"\b0[1-9]\d{8}\b",
+        score: 0.6,
+        context_keywords: &[
+            "telephone", "tel", "phone", "mobile", "contact", "appeler", "numero", "portable",
+        ],
+        context_required: false,
     },
     // ── French IBAN ──
     PiiPattern {
@@ -174,7 +268,20 @@ const PATTERNS: &[PiiPattern] = &[
         entity_type: "FR_IBAN",
         pattern: r"FR\d{2}[\s]?(?:\d{4}[\s]?){5}\d{3}",
         score: 0.95,
-        context_keywords: &[],
+        context_keywords: &[
+            "iban", "compte", "account", "virement", "bank", "banque", "bancaire",
+        ],
+        context_required: false,
+    },
+    PiiPattern {
+        name: "fr_iban_compact",
+        entity_type: "FR_IBAN",
+        pattern: r"FR\d{25}",
+        score: 0.9,
+        context_keywords: &[
+            "iban", "compte", "account", "virement", "bank", "banque", "bancaire",
+        ],
+        context_required: false,
     },
     // ── French SSN (NIR) ──
     PiiPattern {
@@ -182,7 +289,20 @@ const PATTERNS: &[PiiPattern] = &[
         entity_type: "FR_SSN",
         pattern: r"[12]\s?\d{2}\s?(?:0[1-9]|1[0-2]|[2-9]\d)\s?(?:\d{2}|2[AB])\s?\d{3}\s?\d{3}(?:\s?\d{2})?",
         score: 0.85,
-        context_keywords: &[],
+        context_keywords: &[
+            "secu", "securite sociale", "ssn", "nir", "carte vitale", "numero", "immatriculation",
+        ],
+        context_required: false,
+    },
+    PiiPattern {
+        name: "fr_ssn_compact",
+        entity_type: "FR_SSN",
+        pattern: r"[12]\d{2}(?:0[1-9]|1[0-2]|[2-9]\d)(?:\d{2}|2[AB])\d{6}(?:\d{2})?",
+        score: 0.8,
+        context_keywords: &[
+            "secu", "securite sociale", "ssn", "nir", "carte vitale", "numero", "immatriculation",
+        ],
+        context_required: false,
     },
     // ── French passport ──
     PiiPattern {
@@ -191,50 +311,63 @@ const PATTERNS: &[PiiPattern] = &[
         pattern: r"\b\d{2}[A-Z]{2}\d{5}\b",
         score: 0.7,
         context_keywords: &["passeport", "passport", "document", "identite", "identité"],
+        context_required: true,
     },
     // ── Aircraft registration ──
     PiiPattern {
         name: "aircraft_fr",
-        entity_type: "AIRCRAFT",
+        entity_type: "AIRCRAFT_REGISTRATION",
         pattern: r"\bF-[A-Z]{4}\b",
         score: 0.95,
         context_keywords: &[],
+        context_required: false,
     },
     PiiPattern {
         name: "aircraft_eu",
-        entity_type: "AIRCRAFT",
+        entity_type: "AIRCRAFT_REGISTRATION",
         pattern: r"\b(?:D|G|I|EC|HB|OO|PH|OE|SE|LN|OH|CS|EI|9H)-[A-Z]{3,4}\b",
         score: 0.9,
         context_keywords: &[],
+        context_required: false,
     },
     PiiPattern {
         name: "aircraft_us",
-        entity_type: "AIRCRAFT",
-        pattern: r"\bN[1-9][0-9]{0,4}[A-Z]?\b",
-        score: 0.7,
-        context_keywords: &["aircraft", "avion", "registration", "immat", "appareil", "tail"],
+        entity_type: "AIRCRAFT_REGISTRATION",
+        pattern: r"\bN[1-9][0-9]{0,4}[A-Z]{0,2}\b",
+        score: 0.85,
+        context_keywords: &[
+            "aircraft", "avion", "registration", "immat", "appareil", "tail", "immatriculation",
+        ],
+        context_required: true,
     },
     // ── Flight numbers ──
     PiiPattern {
         name: "flight_amelia",
-        entity_type: "FLIGHT",
+        entity_type: "FLIGHT_NUMBER",
         pattern: r"\b(?:IZM|RLA|AME|GJT|AF)[0-9]{1,4}\b",
         score: 0.9,
         context_keywords: &[],
+        context_required: false,
     },
     PiiPattern {
         name: "flight_iata",
-        entity_type: "FLIGHT",
+        entity_type: "FLIGHT_NUMBER",
         pattern: r"\b[A-Z]{2}[0-9]{1,4}\b",
         score: 0.4,
-        context_keywords: &["flight", "vol", "departure", "arrival", "schedule", "rotation", "leg", "sector"],
+        context_keywords: &[
+            "flight", "vol", "departure", "arrival", "schedule", "rotation", "leg", "sector",
+        ],
+        context_required: true,
     },
     PiiPattern {
         name: "flight_icao",
-        entity_type: "FLIGHT",
+        entity_type: "FLIGHT_NUMBER",
         pattern: r"\b[A-Z]{3}[0-9]{1,4}\b",
         score: 0.5,
-        context_keywords: &["flight", "vol", "departure", "arrival", "schedule", "rotation", "leg", "sector"],
+        context_keywords: &[
+            "flight", "vol", "departure", "arrival", "schedule", "rotation", "leg", "sector",
+        ],
+        context_required: true,
     },
     // ── Crew codes ──
     PiiPattern {
@@ -248,14 +381,16 @@ const PATTERNS: &[PiiPattern] = &[
             "steward", "hostess", "hôtesse", "hotesse", "first officer", "fo",
             "member", "membre", "roster", "planning", "duty", "service",
         ],
+        context_required: true,
     },
     // ── IP addresses ──
     PiiPattern {
         name: "ipv4",
-        entity_type: "IP",
+        entity_type: "IP_ADDRESS",
         pattern: r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
         score: 0.9,
         context_keywords: &[],
+        context_required: false,
     },
     // ── Credit card ──
     PiiPattern {
@@ -263,7 +398,11 @@ const PATTERNS: &[PiiPattern] = &[
         entity_type: "CREDIT_CARD",
         pattern: r"\b(?:\d{4}[\s\-]?){3}\d{4}\b",
         score: 0.7,
-        context_keywords: &[],
+        context_keywords: &[
+            "card", "credit", "payment", "cc", "visa", "mastercard", "amex",
+            "cb", "carte", "bancaire", "debit", "paiement",
+        ],
+        context_required: true,
     },
     // ── UUID ──
     PiiPattern {
@@ -272,6 +411,24 @@ const PATTERNS: &[PiiPattern] = &[
         pattern: r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
         score: 0.95,
         context_keywords: &[],
+        context_required: false,
+    },
+    // ── Cryptocurrency ──
+    PiiPattern {
+        name: "crypto_bitcoin",
+        entity_type: "CRYPTO",
+        pattern: r"\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b",
+        score: 0.9,
+        context_keywords: &[],
+        context_required: false,
+    },
+    PiiPattern {
+        name: "crypto_ethereum",
+        entity_type: "CRYPTO",
+        pattern: r"\b0x[0-9a-fA-F]{40}\b",
+        score: 0.9,
+        context_keywords: &[],
+        context_required: false,
     },
 ];
 
@@ -285,6 +442,7 @@ const CREW_CODE_BLOCKLIST: &[&str] = &[
 ];
 
 const CONTEXT_WINDOW: usize = 80;
+const CONTEXT_SCORE_BOOST: f64 = 0.15;
 const MAX_INPUT_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
 
 fn luhn_check(number: &str) -> bool {
@@ -321,17 +479,18 @@ struct Anonymizer {
 }
 
 struct CompiledPattern {
-    entity_type: String,
+    entity_type: &'static str,
     #[allow(dead_code)]
-    name: String,
+    name: &'static str,
     regex: Regex,
     score: f64,
-    context_keywords: Vec<String>,
+    context_keywords: &'static [&'static str],
+    context_required: bool,
 }
 
 #[derive(Debug)]
 struct Detection {
-    entity_type: String,
+    entity_type: &'static str,
     original: String,
     start: usize,
     end: usize,
@@ -343,12 +502,13 @@ impl Anonymizer {
         let patterns = PATTERNS
             .iter()
             .map(|p| CompiledPattern {
-                entity_type: p.entity_type.to_string(),
-                name: p.name.to_string(),
+                entity_type: p.entity_type,
+                name: p.name,
                 regex: Regex::new(p.pattern)
                     .unwrap_or_else(|e| panic!("invalid regex for pattern '{}': {}", p.name, e)),
                 score: p.score,
-                context_keywords: p.context_keywords.iter().map(|k| k.to_lowercase()).collect(),
+                context_keywords: p.context_keywords,
+                context_required: p.context_required,
             })
             .collect();
 
@@ -359,9 +519,9 @@ impl Anonymizer {
         }
     }
 
-    fn has_context(&self, text: &str, start: usize, end: usize, keywords: &[String]) -> bool {
+    fn has_context(&self, text: &str, start: usize, end: usize, keywords: &[&str]) -> bool {
         if keywords.is_empty() {
-            return true;
+            return false;
         }
         let mut window_start = start.saturating_sub(CONTEXT_WINDOW);
         let mut window_end = (end + CONTEXT_WINDOW).min(text.len());
@@ -373,22 +533,33 @@ impl Anonymizer {
         }
         let window = &text[window_start..window_end];
         let lower = window.to_lowercase();
-        keywords.iter().any(|kw| lower.contains(kw.as_str()))
+        keywords.iter().any(|kw| lower.contains(*kw))
     }
 
     fn anonymize_text(&mut self, text: &str) -> (String, Vec<Detection>) {
         let mut detections: Vec<Detection> = Vec::new();
 
         for pat in &self.patterns {
-            if pat.score < self.threshold {
+            // Early threshold check: consider maximum possible score (with boost)
+            let max_score = if !pat.context_keywords.is_empty() && !pat.context_required {
+                (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
+            } else {
+                pat.score
+            };
+            if max_score < self.threshold {
                 continue;
             }
 
             for mat in pat.regex.find_iter(text) {
-                // Context check
-                if !pat.context_keywords.is_empty()
-                    && !self.has_context(text, mat.start(), mat.end(), &pat.context_keywords)
-                {
+                // Check context presence
+                let has_ctx = if !pat.context_keywords.is_empty() {
+                    self.has_context(text, mat.start(), mat.end(), pat.context_keywords)
+                } else {
+                    false
+                };
+
+                // Context gating: required mode skips when no context found
+                if pat.context_required && !pat.context_keywords.is_empty() && !has_ctx {
                     continue;
                 }
 
@@ -405,12 +576,24 @@ impl Anonymizer {
                     continue;
                 }
 
+                // Compute detection score with optional context boost
+                let detection_score = if !pat.context_required && !pat.context_keywords.is_empty() && has_ctx {
+                    (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
+                } else {
+                    pat.score
+                };
+
+                // Per-detection threshold check (for boost patterns without context)
+                if detection_score < self.threshold {
+                    continue;
+                }
+
                 detections.push(Detection {
-                    entity_type: pat.entity_type.clone(),
+                    entity_type: pat.entity_type,
                     original: mat.as_str().to_string(),
                     start: mat.start(),
                     end: mat.end(),
-                    score: pat.score,
+                    score: detection_score,
                 });
             }
         }
@@ -440,7 +623,7 @@ impl Anonymizer {
         // Replace from end to start
         let mut result = text.to_string();
         for det in filtered.iter().rev() {
-            let token = self.mapping.add(&det.entity_type, &det.original);
+            let token = self.mapping.add(det.entity_type, &det.original);
             result = format!(
                 "{}{}{}",
                 &result[..det.start],
@@ -483,14 +666,51 @@ impl Anonymizer {
 
 // ─── Format detection ───────────────────────────────────────────────────────
 
-fn detect_format(content: &str) -> Format {
+enum DetectedFormat {
+    Json(Value),
+    Sql,
+    Csv,
+    Text,
+}
+
+fn detect_format(content: &str) -> DetectedFormat {
     let trimmed = content.trim_start();
+
+    // JSON
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        if serde_json::from_str::<Value>(trimmed).is_ok() {
-            return Format::Json;
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            return DetectedFormat::Json(value);
         }
     }
-    Format::Text
+
+    // SQL
+    if let Some(first_word) = trimmed.split_whitespace().next() {
+        match first_word.to_uppercase().as_str() {
+            "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "DROP" => {
+                return DetectedFormat::Sql;
+            }
+            _ => {}
+        }
+    }
+
+    // CSV: multiple lines with consistent comma counts
+    let lines: Vec<&str> = trimmed.lines().collect();
+    if lines.len() > 1 && lines[0].contains(',') {
+        let counts: Vec<usize> = lines
+            .iter()
+            .take(5)
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.matches(',').count())
+            .collect();
+        if !counts.is_empty() {
+            let first = counts[0] as isize;
+            if counts.iter().all(|&c| (c as isize - first).abs() <= 1) {
+                return DetectedFormat::Csv;
+            }
+        }
+    }
+
+    DetectedFormat::Text
 }
 
 fn detect_json_indent(content: &str) -> usize {
@@ -621,13 +841,14 @@ fn main() -> io::Result<()> {
         }) => {
             let content = read_input(input.as_ref())?;
             let mapping_content = fs::read_to_string(&mapping)?;
-            let mapping: Mapping = match serde_json::from_str(&mapping_content) {
+            let mut mapping: Mapping = match serde_json::from_str(&mapping_content) {
                 Ok(m) => m,
                 Err(e) => {
                     eprintln!("Error: invalid mapping file: {e}");
                     std::process::exit(1);
                 }
             };
+            mapping.rebuild_caches();
 
             let result = mapping.restore(&content);
             write_output(output.as_ref(), &result)?;
@@ -647,8 +868,18 @@ fn main() -> io::Result<()> {
 
             for p in PATTERNS {
                 if seen.insert(p.entity_type) {
-                    let context = if !p.context_keywords.is_empty() {
+                    // Check context across all patterns for this entity type
+                    let has_required = PATTERNS.iter()
+                        .filter(|pp| pp.entity_type == p.entity_type)
+                        .any(|pp| pp.context_required && !pp.context_keywords.is_empty());
+                    let has_boost = PATTERNS.iter()
+                        .filter(|pp| pp.entity_type == p.entity_type)
+                        .any(|pp| !pp.context_required && !pp.context_keywords.is_empty());
+
+                    let context = if has_required {
                         " (context-aware)".dimmed().to_string()
+                    } else if has_boost {
+                        " (context-boosted)".dimmed().to_string()
                     } else {
                         String::new()
                     };
@@ -671,46 +902,50 @@ fn main() -> io::Result<()> {
             let content = read_input(cli.input.as_ref())?;
             let mut anonymizer = Anonymizer::new(cli.threshold);
 
-            // Determine format
-            let format = if cli.format == Format::Auto {
-                detect_format(&content)
+            // Determine format and process
+            let (parsed_json, format_name) = match cli.format {
+                Format::Json => match serde_json::from_str::<Value>(content.trim()) {
+                    Ok(v) => (Some(v), "json"),
+                    Err(e) => {
+                        eprintln!("Error: invalid JSON input: {e}");
+                        eprintln!("Hint: use --format text to force text mode");
+                        std::process::exit(1);
+                    }
+                },
+                Format::Auto => match detect_format(&content) {
+                    DetectedFormat::Json(v) => (Some(v), "json"),
+                    DetectedFormat::Sql => (None, "sql"),
+                    DetectedFormat::Csv => (None, "csv"),
+                    DetectedFormat::Text => (None, "text"),
+                },
+                Format::Text => (None, "text"),
+                Format::Sql => (None, "sql"),
+                Format::Csv => (None, "csv"),
+            };
+
+            let (result, detections) = if let Some(parsed) = parsed_json {
+                let indent = detect_json_indent(&content);
+                let (anon_value, dets) = anonymizer.anonymize_json_value(&parsed);
+
+                let indent_bytes = b" ".repeat(indent);
+                let formatter =
+                    serde_json::ser::PrettyFormatter::with_indent(&indent_bytes);
+                let mut buf = Vec::new();
+                let mut ser =
+                    serde_json::Serializer::with_formatter(&mut buf, formatter);
+                anon_value.serialize(&mut ser).unwrap();
+                let json_str = String::from_utf8(buf).unwrap();
+
+                (format!("{}\n", json_str), dets)
             } else {
-                cli.format
+                anonymizer.anonymize_text(&content)
             };
 
-            let (result, detections) = match format {
-                Format::Json => {
-                    let parsed: Value = match serde_json::from_str(content.trim()) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            eprintln!("Error: invalid JSON input: {e}");
-                            eprintln!("Hint: use --format text to force text mode");
-                            std::process::exit(1);
-                        }
-                    };
-                    let indent = detect_json_indent(&content);
-                    let (anon_value, dets) = anonymizer.anonymize_json_value(&parsed);
-
-                    let indent_bytes = b" ".repeat(indent);
-                    let formatter = serde_json::ser::PrettyFormatter::with_indent(
-                        &indent_bytes,
-                    );
-                    let mut buf = Vec::new();
-                    let mut ser =
-                        serde_json::Serializer::with_formatter(&mut buf, formatter);
-                    anon_value.serialize(&mut ser).unwrap();
-                    let json_str = String::from_utf8(buf).unwrap();
-
-                    (format!("{}\n", json_str), dets)
-                }
-                _ => anonymizer.anonymize_text(&content),
-            };
-
-            // Handle --include-mapping: prepend mapping as comment
+            // Handle --include-mapping: append mapping as comment at end
             let final_output = if cli.include_mapping {
                 eprintln!("Warning: --include-mapping embeds original PII values in the output");
                 let mapping_json = serde_json::to_string(&anonymizer.mapping)?;
-                format!("/* MAPPING: {} */\n{}", mapping_json, result)
+                format!("{}\n/* MAPPING: {} */", result.trim_end(), mapping_json)
             } else {
                 result
             };
@@ -736,9 +971,10 @@ fn main() -> io::Result<()> {
             if cli.verbose {
                 print_detections(&detections);
                 eprintln!(
-                    "  {} entities detected (format: {:?})",
+                    "  {} entities detected (format: {}, language: {})",
                     detections.len().to_string().bold(),
-                    if format == Format::Json { "json" } else { "text" }
+                    format_name,
+                    cli.language,
                 );
             }
         }
@@ -756,8 +992,8 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         let (result, dets) = a.anonymize_text("contact john@example.com now");
         assert_eq!(dets.len(), 1);
-        assert_eq!(dets[0].entity_type, "EMAIL");
-        assert!(result.contains("[EMAIL_1]"));
+        assert_eq!(dets[0].entity_type, "EMAIL_ADDRESS");
+        assert!(result.contains("[EMAIL_ADDRESS_1]"));
     }
 
     #[test]
@@ -773,14 +1009,22 @@ mod tests {
     fn test_fr_phone_intl() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("call +33 6 12 34 56 78");
-        assert!(result.contains("[FR_PHONE_1]"));
+        assert!(result.contains("[FR_PHONE_NUMBER_1]"));
     }
 
     #[test]
     fn test_fr_phone_national() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("call 06 12 34 56 78");
-        assert!(result.contains("[FR_PHONE_1]"));
+        assert!(result.contains("[FR_PHONE_NUMBER_1]"));
+    }
+
+    #[test]
+    fn test_fr_phone_compact() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_text("appeler 0612345678 rapidement");
+        assert!(result.contains("[FR_PHONE_NUMBER_"));
+        assert!(!result.contains("0612345678"));
     }
 
     #[test]
@@ -791,10 +1035,24 @@ mod tests {
     }
 
     #[test]
+    fn test_fr_iban_compact() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_text("IBAN: FR7630006000011234567890189");
+        assert!(result.contains("[FR_IBAN_"));
+    }
+
+    #[test]
     fn test_fr_ssn() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("NIR: 1 85 12 75 123 456 78");
         assert!(result.contains("[FR_SSN_1]"));
+    }
+
+    #[test]
+    fn test_fr_ssn_compact() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_text("NIR: 185127512345678");
+        assert!(result.contains("[FR_SSN_"));
     }
 
     #[test]
@@ -816,15 +1074,23 @@ mod tests {
     fn test_aircraft_fr() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("aircraft F-HOPA ready");
-        assert!(result.contains("[AIRCRAFT_1]"));
+        assert!(result.contains("[AIRCRAFT_REGISTRATION_1]"));
     }
 
     #[test]
     fn test_aircraft_us_with_context() {
         let mut a = Anonymizer::new(0.0);
         let (result, dets) = a.anonymize_text("aircraft N12345 ready");
-        assert!(dets.iter().any(|d| d.entity_type == "AIRCRAFT"));
-        assert!(result.contains("[AIRCRAFT_1]"));
+        assert!(dets.iter().any(|d| d.entity_type == "AIRCRAFT_REGISTRATION"));
+        assert!(result.contains("[AIRCRAFT_REGISTRATION_1]"));
+    }
+
+    #[test]
+    fn test_aircraft_us_two_letter_suffix() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_text("aircraft N12345AB ready");
+        assert!(result.contains("[AIRCRAFT_REGISTRATION_"));
+        assert!(!result.contains("N12345AB"));
     }
 
     #[test]
@@ -853,7 +1119,7 @@ mod tests {
     fn test_ip() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("server at 192.168.1.100");
-        assert!(result.contains("[IP_1]"));
+        assert!(result.contains("[IP_ADDRESS_1]"));
     }
 
     #[test]
@@ -864,19 +1130,27 @@ mod tests {
     }
 
     #[test]
+    fn test_crypto_ethereum() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("wallet: 0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18");
+        assert!(dets.iter().any(|d| d.entity_type == "CRYPTO"));
+        assert!(result.contains("[CRYPTO_1]"));
+    }
+
+    #[test]
     fn test_threshold() {
         let mut a = Anonymizer::new(0.8);
         let (_, dets) = a.anonymize_text("visit https://example.com call 06 12 34 56 78");
         // URL (0.9) should pass, fr_phone_national (0.7) should be filtered
         assert!(dets.iter().any(|d| d.entity_type == "URL"));
-        assert!(!dets.iter().any(|d| d.entity_type == "FR_PHONE"));
+        assert!(!dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"));
     }
 
     #[test]
     fn test_consistency() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("john@example.com and john@example.com again");
-        assert_eq!(result.matches("[EMAIL_1]").count(), 2);
+        assert_eq!(result.matches("[EMAIL_ADDRESS_1]").count(), 2);
     }
 
     #[test]
@@ -894,8 +1168,8 @@ mod tests {
         assert_eq!(dets.len(), 2);
         assert_eq!(result["count"], 42);
         assert_eq!(result["active"], true);
-        assert!(result["email"].as_str().unwrap().contains("[EMAIL_1]"));
-        assert!(result["nested"]["phone"].as_str().unwrap().contains("[FR_PHONE_1]"));
+        assert!(result["email"].as_str().unwrap().contains("[EMAIL_ADDRESS_1]"));
+        assert!(result["nested"]["phone"].as_str().unwrap().contains("[FR_PHONE_NUMBER_1]"));
     }
 
     #[test]
@@ -909,14 +1183,44 @@ mod tests {
 
     #[test]
     fn test_format_detection_json() {
-        assert_eq!(detect_format(r#"{"key": "value"}"#), Format::Json);
-        assert_eq!(detect_format(r#"[1, 2, 3]"#), Format::Json);
+        assert!(matches!(detect_format(r#"{"key": "value"}"#), DetectedFormat::Json(_)));
+        assert!(matches!(detect_format(r#"[1, 2, 3]"#), DetectedFormat::Json(_)));
     }
 
     #[test]
     fn test_format_detection_text() {
-        assert_eq!(detect_format("hello world"), Format::Text);
-        assert_eq!(detect_format("{invalid json"), Format::Text);
+        assert!(matches!(detect_format("hello world"), DetectedFormat::Text));
+        assert!(matches!(detect_format("{invalid json"), DetectedFormat::Text));
+    }
+
+    #[test]
+    fn test_format_detection_sql() {
+        assert!(matches!(detect_format("SELECT * FROM users WHERE id = 1"), DetectedFormat::Sql));
+        assert!(matches!(detect_format("INSERT INTO logs VALUES (1, 'test')"), DetectedFormat::Sql));
+        assert!(matches!(detect_format("  DELETE FROM sessions"), DetectedFormat::Sql));
+    }
+
+    #[test]
+    fn test_format_detection_csv() {
+        let csv = "name,email,phone\nJohn,john@test.com,0612345678\nJane,jane@test.com,0698765432";
+        assert!(matches!(detect_format(csv), DetectedFormat::Csv));
+        // Single line with commas is not CSV
+        assert!(!matches!(detect_format("hello, world, foo"), DetectedFormat::Csv));
+    }
+
+    #[test]
+    fn test_context_score_boost() {
+        // Without context keyword: base score
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("call 06 12 34 56 78");
+        let phone_det = dets.iter().find(|d| d.entity_type == "FR_PHONE_NUMBER").unwrap();
+        assert!((phone_det.score - 0.7).abs() < 0.01);
+
+        // With context keyword "telephone": boosted score
+        let mut a2 = Anonymizer::new(0.0);
+        let (_, dets2) = a2.anonymize_text("telephone 06 12 34 56 78");
+        let phone_det2 = dets2.iter().find(|d| d.entity_type == "FR_PHONE_NUMBER").unwrap();
+        assert!((phone_det2.score - 0.85).abs() < 0.01); // 0.7 + 0.15 boost
     }
 
     #[test]
@@ -934,7 +1238,7 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         let input = "Héloïse a envoyé un mail à héloïse@example.com depuis Zürich";
         let (result, _) = a.anonymize_text(input);
-        assert!(result.contains("[EMAIL_1]"));
+        assert!(result.contains("[EMAIL_ADDRESS_1]"));
         // Verify the surrounding accented text is preserved
         assert!(result.contains("Héloïse"));
         assert!(result.contains("Zürich"));
