@@ -1,7 +1,71 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::ner::{NerConfig, NerDetector, NerSpan};
+
+/// Allowed parent directories for ORT_DYLIB_PATH.
+/// Only libraries under these prefixes (after symlink resolution) are loaded.
+const ALLOWED_ORT_PREFIXES: &[&str] = &[
+    "/usr/lib",
+    "/usr/local/lib",
+    "/opt/homebrew",
+    "/opt/local/lib",
+    "/Library/Frameworks",
+    "/nix/store",
+];
+
+/// Validate ORT_DYLIB_PATH if set. Returns Ok(()) if unset or valid,
+/// Err with explanation if the path is suspicious.
+pub fn validate_ort_dylib_path() -> Result<(), String> {
+    let path_str = match std::env::var("ORT_DYLIB_PATH") {
+        Ok(p) => p,
+        Err(_) => return Ok(()), // Not set — ort will search system paths
+    };
+    validate_ort_path(&path_str)
+}
+
+/// Core validation: check that a library path is absolute, exists, and
+/// resolves (after symlinks) to a known system library directory.
+fn validate_ort_path(path_str: &str) -> Result<(), String> {
+    let path = PathBuf::from(path_str);
+
+    // Must be absolute
+    if !path.is_absolute() {
+        return Err(format!(
+            "ORT_DYLIB_PATH must be an absolute path, got: {path_str}"
+        ));
+    }
+
+    // Must exist
+    if !path.exists() {
+        return Err(format!(
+            "ORT_DYLIB_PATH does not exist: {path_str}"
+        ));
+    }
+
+    // Resolve symlinks to get the real path
+    let real = match path.canonicalize() {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(format!(
+                "ORT_DYLIB_PATH cannot be resolved: {path_str} ({e})"
+            ));
+        }
+    };
+
+    let real_str = real.to_string_lossy();
+
+    // Must resolve to a known system library directory
+    if !ALLOWED_ORT_PREFIXES.iter().any(|prefix| real_str.starts_with(prefix)) {
+        return Err(format!(
+            "ORT_DYLIB_PATH resolves to {real_str}, which is outside allowed directories: {:?}. \
+             Set ORT_DYLIB_PATH to a system-installed ONNX Runtime library.",
+            ALLOWED_ORT_PREFIXES
+        ));
+    }
+
+    Ok(())
+}
 
 pub struct MlNerDetector {
     session: Mutex<ort::session::Session>,
@@ -12,6 +76,9 @@ pub struct MlNerDetector {
 
 impl MlNerDetector {
     pub fn new(config: &NerConfig) -> Result<Self, Box<dyn std::error::Error>> {
+        // Validate ORT_DYLIB_PATH before ort loads the dynamic library
+        validate_ort_dylib_path()?;
+
         let model_path = config.model_dir.join("model.onnx");
         let tokenizer_path = config.model_dir.join("tokenizer.json");
         let config_path = config.model_dir.join("config.json");
@@ -338,5 +405,46 @@ mod tests {
         // Single character
         let spans = detector.detect_persons("X");
         assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn test_validate_ort_path_rejects_relative() {
+        let err = validate_ort_path("./libonnxruntime.so").unwrap_err();
+        assert!(err.contains("absolute"), "Should reject relative path: {err}");
+    }
+
+    #[test]
+    fn test_validate_ort_path_rejects_nonexistent() {
+        let err = validate_ort_path("/usr/lib/nonexistent_ort_library_12345.so").unwrap_err();
+        assert!(err.contains("does not exist"), "Should reject missing file: {err}");
+    }
+
+    #[test]
+    fn test_validate_ort_path_rejects_outside_allowed() {
+        // Create a real file in /tmp — exists but not in allowed prefixes
+        let tmp = std::env::temp_dir().join("fake_ort_lib.so");
+        std::fs::write(&tmp, b"fake").unwrap();
+
+        let err = validate_ort_path(tmp.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("outside allowed directories"), "Should reject /tmp path: {err}");
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_validate_ort_path_accepts_system_lib() {
+        // If a real file exists under an allowed prefix, it should pass.
+        // Use /usr/lib/libSystem.B.dylib on macOS or /usr/lib/libc.so.6 on Linux.
+        let candidates = [
+            "/usr/lib/libSystem.B.dylib",
+            "/usr/lib/libc.so.6",
+            "/usr/lib/x86_64-linux-gnu/libc.so.6",
+        ];
+        let valid = candidates.iter().find(|p| PathBuf::from(p).exists());
+        if let Some(path) = valid {
+            assert!(validate_ort_path(path).is_ok(), "Should accept system lib at {path}");
+        } else {
+            eprintln!("No system library found for positive test, skipping");
+        }
     }
 }
