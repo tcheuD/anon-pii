@@ -176,55 +176,47 @@ async fn handle_streaming(
     // Read the SSE stream and process events
     let byte_stream = upstream_resp.bytes_stream();
 
+    // Buffer for incomplete UTF-8 sequences split across TCP chunks
+    let mut utf8_buf: Vec<u8> = Vec::new();
+    // Buffer for incomplete SSE lines split across chunks
+    let mut line_buf = String::new();
+
     let processed_stream = byte_stream.map(move |chunk_result| {
         match chunk_result {
             Ok(chunk) => {
-                let text = String::from_utf8_lossy(&chunk);
+                utf8_buf.extend_from_slice(&chunk);
+
+                // Find the last valid UTF-8 boundary
+                let valid_up_to = match std::str::from_utf8(&utf8_buf) {
+                    Ok(_) => utf8_buf.len(),
+                    Err(e) => e.valid_up_to(),
+                };
+
+                if valid_up_to == 0 {
+                    // Entire buffer is incomplete UTF-8 — wait for more data
+                    return Ok::<_, reqwest::Error>(Bytes::new());
+                }
+
+                let text = std::str::from_utf8(&utf8_buf[..valid_up_to]).unwrap();
+                let remainder = utf8_buf[valid_up_to..].to_vec();
+
                 let mut output = String::new();
 
-                // Process each SSE line
-                for line in text.split('\n') {
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data == "[DONE]" {
-                            // Flush remaining buffer
-                            let remaining = token_buffer.flush();
-                            if !remaining.is_empty() {
-                                output.push_str(&format!("data: {remaining}\n\n"));
-                            }
-                            output.push_str("data: [DONE]\n\n");
-                            continue;
-                        }
-
-                        // Check if this event has a text delta
-                        if let Some(text_content) = sse::extract_text_delta(data) {
-                            // Feed through token buffer for restoration
-                            let restored = token_buffer.feed(&text_content);
-                            if !restored.is_empty() {
-                                // Rebuild the SSE event with restored text
-                                if let Some(new_data) =
-                                    sse::replace_text_delta(data, &restored)
-                                {
-                                    output.push_str(&format!("data: {new_data}\n\n"));
-                                } else {
-                                    output.push_str(line);
-                                    output.push('\n');
-                                }
-                            }
-                            // If restored is empty, buffer is accumulating — don't emit
-                        } else {
-                            // Non-text event, pass through
-                            output.push_str(line);
-                            output.push('\n');
-                        }
-                    } else if !line.is_empty() {
-                        // Event type or other SSE lines
-                        output.push_str(line);
-                        output.push('\n');
+                // Split into lines, keeping the last (possibly incomplete) line buffered
+                let mut lines_iter = text.split('\n').peekable();
+                while let Some(segment) = lines_iter.next() {
+                    if lines_iter.peek().is_none() {
+                        // Last segment — may be incomplete, buffer it
+                        line_buf.push_str(segment);
                     } else {
-                        // Empty line (event separator)
-                        output.push('\n');
+                        // Complete line (newline follows)
+                        line_buf.push_str(segment);
+                        let line = std::mem::take(&mut line_buf);
+                        process_sse_line(&line, &mut token_buffer, &mut output);
                     }
                 }
+
+                utf8_buf = remainder;
 
                 Ok::<_, reqwest::Error>(Bytes::from(output))
             }
@@ -255,6 +247,43 @@ async fn handle_streaming(
     response
         .body(body)
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+fn process_sse_line<R: TokenResolver>(
+    line: &str,
+    token_buffer: &mut TokenBuffer<R>,
+    output: &mut String,
+) {
+    if let Some(data) = line.strip_prefix("data: ") {
+        if data == "[DONE]" {
+            let remaining = token_buffer.flush();
+            if !remaining.is_empty() {
+                output.push_str(&format!("data: {remaining}\n\n"));
+            }
+            output.push_str("data: [DONE]\n\n");
+            return;
+        }
+
+        if let Some(text_content) = sse::extract_text_delta(data) {
+            let restored = token_buffer.feed(&text_content);
+            if !restored.is_empty() {
+                if let Some(new_data) = sse::replace_text_delta(data, &restored) {
+                    output.push_str(&format!("data: {new_data}\n\n"));
+                } else {
+                    output.push_str(line);
+                    output.push('\n');
+                }
+            }
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+    } else if !line.is_empty() {
+        output.push_str(line);
+        output.push('\n');
+    } else {
+        output.push('\n');
+    }
 }
 
 /// Allowed passthrough path prefixes — only forward to known Anthropic API paths.
