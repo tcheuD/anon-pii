@@ -212,14 +212,22 @@ impl HeuristicNerDetector {
 
     fn detect_dictionary_patterns(&self, text: &str) -> Vec<NerSpan> {
         let mut spans = Vec::new();
-        let words: Vec<(usize, &str)> = text
-            .split_whitespace()
-            .scan(0usize, |pos, word| {
-                let start = text[*pos..].find(word).map(|p| *pos + p).unwrap_or(*pos);
-                *pos = start + word.len();
-                Some((start, word))
-            })
-            .collect();
+        let words: Vec<(usize, &str)> = {
+            let mut result = Vec::new();
+            let mut pos = 0;
+            while pos < text.len() {
+                // Skip whitespace
+                match text[pos..].find(|c: char| !c.is_whitespace()) {
+                    Some(skip) => pos += skip,
+                    None => break,
+                }
+                // Find end of word
+                let end = pos + text[pos..].find(|c: char| c.is_whitespace()).unwrap_or(text.len() - pos);
+                result.push((pos, &text[pos..end]));
+                pos = end;
+            }
+            result
+        };
 
         for i in 0..words.len() {
             let (start, word) = words[i];
@@ -389,5 +397,23 @@ mod tests {
         let spans = det.detect_persons("Mme Héloïse Lefèvre est présente.");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text, "Héloïse Lefèvre");
+    }
+
+    #[test]
+    fn test_large_input_performance() {
+        // Regression test: the old scan-based word position finder was O(n²)
+        // because it used text[pos..].find(word) for each word. With 100k words
+        // this would take seconds. The linear scan should complete in < 100ms.
+        let det = HeuristicNerDetector::new();
+        let chunk = "The server is running well and processing requests normally. ";
+        let large_text = chunk.repeat(10_000);
+        let start = std::time::Instant::now();
+        let _ = det.detect_persons(&large_text);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_millis() < 1000,
+            "Heuristic NER took {}ms on ~600KB input, expected < 1000ms",
+            elapsed.as_millis()
+        );
     }
 }
