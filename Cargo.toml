@@ -13,6 +13,7 @@ serde_json = "1"
 colored = "2"
 dirs = "6"
 unicode-normalization = "0.1"
+getrandom = "0.2"
 
 # Proxy mode dependencies
 tokio = { version = "1", features = ["full"] }

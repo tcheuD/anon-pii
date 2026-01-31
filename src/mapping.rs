@@ -26,24 +26,11 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     (y, m, d)
 }
 
-/// Generate a hex string of `n_bytes` random bytes from a cryptographic source.
-/// Uses /dev/urandom on Unix; falls back to RandomState (non-crypto) on other platforms.
+/// Generate a hex string of `n_bytes` random bytes from the OS CSPRNG.
 fn crypto_random_hex(n_bytes: usize) -> String {
-    #[cfg(unix)]
-    {
-        use std::io::Read;
-        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-            let mut buf = vec![0u8; n_bytes];
-            if f.read_exact(&mut buf).is_ok() {
-                return buf.iter().map(|b| format!("{b:02x}")).collect();
-            }
-        }
-    }
-    // Fallback for non-Unix or if /dev/urandom fails
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    let h = RandomState::new().build_hasher().finish();
-    format!("{h:016x}")[..n_bytes * 2].to_string()
+    let mut buf = vec![0u8; n_bytes];
+    getrandom::getrandom(&mut buf).expect("OS CSPRNG unavailable");
+    buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl Mapping {
@@ -265,5 +252,23 @@ mod tests {
         assert_eq!(crypto_random_hex(4).len(), 8);
         assert_eq!(crypto_random_hex(8).len(), 16);
         assert_eq!(crypto_random_hex(16).len(), 32);
+    }
+
+    #[test]
+    fn test_crypto_random_hex_is_not_degenerate() {
+        // Verify output is valid hex and not all zeros (broken RNG)
+        let hex = crypto_random_hex(16);
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(hex, "0".repeat(32), "CSPRNG should not produce all zeros");
+    }
+
+    #[test]
+    fn test_crypto_random_hex_cross_platform() {
+        // getrandom works on all platforms — this test simply confirms
+        // it doesn't panic and returns the correct length
+        for size in [1, 4, 8, 16, 32] {
+            let hex = crypto_random_hex(size);
+            assert_eq!(hex.len(), size * 2);
+        }
     }
 }
