@@ -9,7 +9,7 @@ pub trait TokenResolver {
 
 impl TokenResolver for Mapping {
     fn restore(&self, text: &str) -> String {
-        Mapping::restore(self, text)
+        self.restore_bracketed(text)
     }
 }
 

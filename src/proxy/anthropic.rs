@@ -35,7 +35,7 @@ pub fn restore_response(body: &mut Value, mapping: &Mapping) {
     if let Some(Value::Array(content)) = body.get_mut("content") {
         for block in content.iter_mut() {
             if let Some(Value::String(text)) = block.get_mut("text") {
-                *text = mapping.restore(text);
+                *text = mapping.restore_bracketed(text);
             }
         }
     }

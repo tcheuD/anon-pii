@@ -118,10 +118,9 @@ impl Mapping {
             .collect()
     }
 
-    pub fn restore(&self, text: &str) -> String {
-        let bare_map = self.bare_token_map();
-
-        // First pass: restore [TOKEN] patterns
+    /// Restore only bracket-delimited tokens: `[EMAIL_ADDRESS_1]` → original.
+    /// Safe for use in proxy responses where bare token injection is a risk.
+    pub fn restore_bracketed(&self, text: &str) -> String {
         let mut result = String::with_capacity(text.len());
         let bytes = text.as_bytes();
         let mut i = 0;
@@ -142,15 +141,28 @@ impl Mapping {
             i += ch.len_utf8();
         }
 
-        // Second pass: restore bare tokens (EMAIL_ADDRESS_1, CREW_CODE_1, etc.)
-        // Handles cases where LLMs strip brackets in markdown output.
-        // Sort by token length descending so IP_ADDRESS_10 is replaced before
+        result
+    }
+
+    /// Restore both bracket-delimited and bare tokens.
+    /// Bare tokens use word-boundary matching to avoid partial/injected replacements.
+    /// Use for CLI restore where the user explicitly wants full restoration.
+    pub fn restore(&self, text: &str) -> String {
+        let mut result = self.restore_bracketed(text);
+
+        // Second pass: restore bare tokens at word boundaries only.
+        // Handles LLMs that strip brackets in markdown output.
+        // Sort by token length descending so IP_ADDRESS_10 is matched before
         // IP_ADDRESS_1 (avoids substring collision).
+        let bare_map = self.bare_token_map();
         if !bare_map.is_empty() {
             let mut sorted_bare: Vec<_> = bare_map.into_iter().collect();
             sorted_bare.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
             for (bare, original) in &sorted_bare {
-                result = result.replace(bare.as_str(), original);
+                let pattern = format!(r"\b{}\b", regex::escape(&bare));
+                if let Ok(re) = regex::Regex::new(&pattern) {
+                    result = re.replace_all(&result, original.as_str()).into_owned();
+                }
             }
         }
 
@@ -182,6 +194,70 @@ mod tests {
             "100 session IDs should be nearly all unique, got {} distinct",
             ids.len()
         );
+    }
+
+    fn make_mapping_with_email() -> Mapping {
+        let mut m = Mapping::new();
+        m.mappings.insert("[EMAIL_ADDRESS_1]".to_string(), "john@example.com".to_string());
+        m.rebuild_caches();
+        m
+    }
+
+    #[test]
+    fn test_restore_bracketed_replaces_bracket_tokens() {
+        let m = make_mapping_with_email();
+        let result = m.restore_bracketed("Contact [EMAIL_ADDRESS_1] now");
+        assert_eq!(result, "Contact john@example.com now");
+    }
+
+    #[test]
+    fn test_restore_bracketed_ignores_bare_tokens() {
+        let m = make_mapping_with_email();
+        // Bare token must NOT be restored via restore_bracketed — this is the
+        // token injection defense. An LLM emitting "EMAIL_ADDRESS_1" in prose
+        // should not cause PII disclosure in the proxy path.
+        let result = m.restore_bracketed("The entity EMAIL_ADDRESS_1 was detected");
+        assert_eq!(result, "The entity EMAIL_ADDRESS_1 was detected");
+    }
+
+    #[test]
+    fn test_restore_full_replaces_bare_at_word_boundary() {
+        let m = make_mapping_with_email();
+        let result = m.restore("The entity EMAIL_ADDRESS_1 was detected");
+        assert_eq!(result, "The entity john@example.com was detected");
+    }
+
+    #[test]
+    fn test_restore_full_bare_no_substring_collision() {
+        let mut m = Mapping::new();
+        m.mappings.insert("[IP_ADDRESS_1]".to_string(), "10.0.0.1".to_string());
+        m.mappings.insert("[IP_ADDRESS_10]".to_string(), "10.0.0.2".to_string());
+        m.rebuild_caches();
+
+        let result = m.restore("IP_ADDRESS_10 and IP_ADDRESS_1");
+        assert_eq!(result, "10.0.0.2 and 10.0.0.1");
+    }
+
+    #[test]
+    fn test_restore_full_bare_word_boundary_prevents_partial() {
+        let m = make_mapping_with_email();
+        // "EMAIL_ADDRESS_1X" should NOT trigger a bare match because
+        // the trailing X breaks the word boundary.
+        let result = m.restore("prefix EMAIL_ADDRESS_1X suffix");
+        assert_eq!(result, "prefix EMAIL_ADDRESS_1X suffix");
+    }
+
+    #[test]
+    fn test_restore_injection_attack_via_llm() {
+        let m = make_mapping_with_email();
+        // Simulates an LLM response in the proxy path — restore_bracketed
+        // must not replace the bare token the LLM emitted.
+        let llm_response = "I detected a token called EMAIL_ADDRESS_1 in your input. \
+            The bracketed form is [EMAIL_ADDRESS_1].";
+        let result = m.restore_bracketed(llm_response);
+        // Bracketed token is restored, bare token is left intact
+        assert!(result.contains("john@example.com"));
+        assert!(result.contains("EMAIL_ADDRESS_1 in your input"));
     }
 
     #[test]

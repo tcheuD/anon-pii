@@ -152,10 +152,11 @@ struct LiveResolver {
 impl TokenResolver for LiveResolver {
     fn restore(&self, text: &str) -> String {
         // try_lock avoids blocking the stream on contended mutex
+        // Use restore_bracketed (not bare restore) to prevent token injection
         if let Ok(anonymizer) = self.state.anonymizer.try_lock() {
-            anonymizer.mapping.restore(text)
+            anonymizer.mapping.restore_bracketed(text)
         } else {
-            self.cached.restore(text)
+            self.cached.restore_bracketed(text)
         }
     }
 }
