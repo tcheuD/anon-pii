@@ -42,8 +42,34 @@ impl ProxyState {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         let path = self.session_dir.join("mapping.json");
-        tokio::fs::write(&path, &mapping_json).await?;
-        Ok(())
+
+        // Refuse to write through symlinks
+        if path.is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Refusing to write mapping: {:?} is a symlink", path),
+            ));
+        }
+
+        // Write with restricted permissions (0o600) on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&path)
+                .await?;
+            tokio::io::AsyncWriteExt::write_all(&mut file, mapping_json.as_bytes()).await?;
+            return Ok(());
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::fs::write(&path, &mapping_json).await?;
+            Ok(())
+        }
     }
 
     pub async fn get_mapping_snapshot(&self) -> Mapping {
@@ -82,8 +108,17 @@ async fn validate_host(req: Request, next: Next) -> Response {
 }
 
 pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
-    // Ensure session dir exists
+    // Ensure session dir exists with restricted permissions
     tokio::fs::create_dir_all(&state.session_dir).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(
+            &state.session_dir,
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .await?;
+    }
 
     let app = Router::new()
         .route("/v1/messages", any(handler::handle_messages))
