@@ -26,16 +26,31 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     (y, m, d)
 }
 
+/// Generate a hex string of `n_bytes` random bytes from a cryptographic source.
+/// Uses /dev/urandom on Unix; falls back to RandomState (non-crypto) on other platforms.
+fn crypto_random_hex(n_bytes: usize) -> String {
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+            let mut buf = vec![0u8; n_bytes];
+            if f.read_exact(&mut buf).is_ok() {
+                return buf.iter().map(|b| format!("{b:02x}")).collect();
+            }
+        }
+    }
+    // Fallback for non-Unix or if /dev/urandom fails
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let h = RandomState::new().build_hasher().finish();
+    format!("{h:016x}")[..n_bytes * 2].to_string()
+}
+
 impl Mapping {
     pub fn new() -> Self {
-        use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hasher};
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let session_id = format!(
-            "{:08x}",
-            RandomState::new().build_hasher().finish() as u32
-        );
+        let session_id = crypto_random_hex(8);
 
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -140,5 +155,39 @@ impl Mapping {
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_session_id_is_hex_and_correct_length() {
+        let m = Mapping::new();
+        assert_eq!(m.session_id.len(), 16, "session_id should be 16 hex chars (8 bytes)");
+        assert!(
+            m.session_id.chars().all(|c| c.is_ascii_hexdigit()),
+            "session_id should contain only hex characters: {}",
+            m.session_id
+        );
+    }
+
+    #[test]
+    fn test_session_id_uniqueness() {
+        let ids: HashSet<String> = (0..100).map(|_| Mapping::new().session_id).collect();
+        assert!(
+            ids.len() >= 95,
+            "100 session IDs should be nearly all unique, got {} distinct",
+            ids.len()
+        );
+    }
+
+    #[test]
+    fn test_crypto_random_hex_length() {
+        assert_eq!(crypto_random_hex(4).len(), 8);
+        assert_eq!(crypto_random_hex(8).len(), 16);
+        assert_eq!(crypto_random_hex(16).len(), 32);
     }
 }
