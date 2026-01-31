@@ -51,7 +51,8 @@ pub fn detect_json_indent(content: &str) -> usize {
     for line in content.lines().skip(1) {
         let stripped = line.trim_start();
         if !stripped.is_empty() && line.len() > stripped.len() {
-            let indent = line.chars().count() - stripped.chars().count();
+            // Use byte length difference — JSON indent is always ASCII spaces/tabs
+            let indent = line.len() - stripped.len();
             if indent <= 8 {
                 return indent;
             }
