@@ -11,10 +11,13 @@ use super::anthropic;
 use super::sse::{self, TokenBuffer, TokenResolver};
 use super::ProxyState;
 
+/// Maximum request body size for `/v1/messages` (10 MB).
+const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024;
+
 /// Handle POST /v1/messages — the Anthropic Messages API endpoint.
 ///
 /// Flow:
-/// 1. Read request body, parse as JSON
+/// 1. Read request body (with size limit), parse as JSON
 /// 2. Anonymize PII in the request
 /// 3. Forward to upstream
 /// 4. If streaming: process SSE events, restore tokens
@@ -23,8 +26,20 @@ use super::ProxyState;
 pub async fn handle_messages(
     State(state): State<Arc<ProxyState>>,
     headers: HeaderMap,
-    body: Bytes,
+    req: Request<Body>,
 ) -> Response {
+    // Read body with size limit to prevent OOM
+    let body: Bytes = match axum::body::to_bytes(req.into_body(), MAX_REQUEST_BODY_SIZE).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!("Request body exceeds {} byte limit", MAX_REQUEST_BODY_SIZE),
+            )
+                .into_response();
+        }
+    };
+
     // Parse request body
     let mut body_json: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
@@ -379,4 +394,55 @@ pub async fn passthrough(
     response
         .body(Body::from(resp_body))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    #[tokio::test]
+    async fn test_handle_messages_rejects_oversized_body() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-handler"),
+        ));
+
+        // Build a request body that exceeds MAX_REQUEST_BODY_SIZE
+        let oversized = vec![b'x'; MAX_REQUEST_BODY_SIZE + 1];
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .body(Body::from(oversized))
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let body = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("byte limit"), "Response should mention the limit: {text}");
+    }
+
+    #[tokio::test]
+    async fn test_handle_messages_accepts_valid_sized_body() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-handler"),
+        ));
+
+        // Valid-sized JSON body — will fail at upstream connect, not at size limit
+        let body = br#"{"model":"test","messages":[]}"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .body(Body::from(body.to_vec()))
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+        // Should NOT be 413 — it will be 502 (upstream unreachable) or similar
+        assert_ne!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
 }
