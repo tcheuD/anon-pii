@@ -205,6 +205,9 @@ fn flush_span(
     if (avg_score as f64) < min_score {
         return;
     }
+    if end > text.len() || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+        return;
+    }
     let span_text = &text[start..end];
     if span_text.trim().len() <= 1 {
         return;
@@ -264,5 +267,25 @@ mod tests {
         };
         let spans = detector.detect_persons("");
         assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn test_flush_span_invalid_char_boundary() {
+        // flush_span must not panic when offsets fall on non-char-boundary positions
+        let text = "café résumé"; // 'é' is 2 bytes in UTF-8
+        let mut spans = Vec::new();
+
+        // Byte 4 is inside the 'é' (bytes 3..5 of "café") — not a char boundary
+        flush_span(text, 4, 6, &[0.99], 0.5, &mut spans);
+        assert!(spans.is_empty(), "Should skip invalid char boundary");
+
+        // Out of bounds
+        flush_span(text, 0, text.len() + 5, &[0.99], 0.5, &mut spans);
+        assert!(spans.is_empty(), "Should skip out-of-bounds offset");
+
+        // Valid boundaries should still work — "café" is bytes 0..5
+        flush_span(text, 0, 5, &[0.99], 0.5, &mut spans);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "caf\u{e9}");
     }
 }
