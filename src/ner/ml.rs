@@ -1,19 +1,14 @@
-use std::cell::UnsafeCell;
 use std::path::Path;
+use std::sync::Mutex;
 
 use crate::ner::{NerConfig, NerDetector, NerSpan};
 
 pub struct MlNerDetector {
-    session: UnsafeCell<ort::session::Session>,
+    session: Mutex<ort::session::Session>,
     tokenizer: tokenizers::Tokenizer,
     id2label: Vec<String>,
     min_score: f64,
 }
-
-// SAFETY: Session is only accessed mutably through &self in detect_persons,
-// which is never called concurrently (single-threaded anonymization).
-unsafe impl Send for MlNerDetector {}
-unsafe impl Sync for MlNerDetector {}
 
 impl MlNerDetector {
     pub fn new(config: &NerConfig) -> Result<Self, Box<dyn std::error::Error>> {
@@ -39,7 +34,7 @@ impl MlNerDetector {
         let id2label = load_id2label(&config_path)?;
 
         Ok(Self {
-            session: UnsafeCell::new(session),
+            session: Mutex::new(session),
             tokenizer,
             id2label,
             min_score: config.min_score,
@@ -102,8 +97,10 @@ impl NerDetector for MlNerDetector {
             "attention_mask" => mask_tensor,
         ];
 
-        // SAFETY: single-threaded access, never called concurrently
-        let session = unsafe { &mut *self.session.get() };
+        let mut session = match self.session.lock() {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
 
         let outputs = match session.run(inputs) {
             Ok(o) => o,
