@@ -222,6 +222,17 @@ fn write_mapping_file(path: &PathBuf, content: &str) -> io::Result<()> {
 
 // ─── Verbose output ─────────────────────────────────────────────────────────
 
+/// Mask a PII value for safe display: show first and last char with `***` in between.
+/// Short values (≤2 chars) are fully masked.
+fn mask_pii(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= 2 {
+        "*".repeat(chars.len())
+    } else {
+        format!("{}***{}", chars[0], chars[chars.len() - 1])
+    }
+}
+
 fn print_detections(detections: &[Detection]) {
     if detections.is_empty() {
         return;
@@ -256,17 +267,18 @@ fn print_detections(detections: &[Detection]) {
     );
 
     for det in &unique {
-        let truncated: String = if det.original.chars().count() > val_width {
-            let s: String = det.original.chars().take(val_width - 1).collect();
+        let masked = mask_pii(&det.original);
+        let display: String = if masked.chars().count() > val_width {
+            let s: String = masked.chars().take(val_width - 1).collect();
             format!("{s}…")
         } else {
-            det.original.clone()
+            masked
         };
 
         eprintln!(
             "  {:<tw$}  {:<vw$}  {:.2}",
             det.entity_type.green(),
-            truncated,
+            display,
             det.score,
             tw = type_width,
             vw = val_width
@@ -495,6 +507,7 @@ fn main() -> io::Result<()> {
 
             // Output mapping to stderr
             if cli.mapping_stderr {
+                eprintln!("WARNING: mapping output contains original PII values in cleartext");
                 let mapping_json = serde_json::to_string_pretty(&anonymizer.mapping)?;
                 eprintln!("{}", mapping_json);
             }
@@ -576,6 +589,26 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), "attacker file");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_mask_pii_long_value() {
+        let masked = mask_pii("john@example.com");
+        assert_eq!(masked, "j***m");
+        assert!(!masked.contains("@"));
+        assert!(!masked.contains("example"));
+    }
+
+    #[test]
+    fn test_mask_pii_short_value() {
+        assert_eq!(mask_pii("ab"), "**");
+        assert_eq!(mask_pii("a"), "*");
+    }
+
+    #[test]
+    fn test_mask_pii_three_chars() {
+        let masked = mask_pii("abc");
+        assert_eq!(masked, "a***c");
     }
 
     #[cfg(unix)]
