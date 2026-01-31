@@ -139,7 +139,19 @@ fn default_mapping_path() -> PathBuf {
 
 fn read_input(path: Option<&PathBuf>) -> io::Result<String> {
     match path {
-        Some(p) => fs::read_to_string(p),
+        Some(p) => {
+            let size = fs::metadata(p)?.len();
+            if size > MAX_INPUT_SIZE {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "File too large: {} bytes (max {} bytes)",
+                        size, MAX_INPUT_SIZE
+                    ),
+                ));
+            }
+            fs::read_to_string(p)
+        }
         None => {
             let mut buffer = String::new();
             io::stdin()
