@@ -11,6 +11,37 @@ use crate::patterns::{
 #[cfg(any(feature = "ner", feature = "ner-lite"))]
 use crate::ner::NerDetector;
 
+/// Parse a single CSV line respecting RFC 4180 quoting.
+fn parse_csv_line(line: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    current.push('"');
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                current.push(c);
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == ',' {
+            cells.push(std::mem::take(&mut current));
+        } else {
+            current.push(c);
+        }
+    }
+    cells.push(current);
+    cells
+}
+
 pub struct Anonymizer {
     pub patterns: Vec<CompiledPattern>,
     pub mapping: Mapping,
@@ -206,6 +237,85 @@ impl Anonymizer {
         }
 
         (result, filtered)
+    }
+
+    /// Anonymize CSV content cell-by-cell, respecting RFC 4180 quoting.
+    /// Quoted fields (e.g. `"Doe, John"`) are extracted whole before anonymization.
+    pub fn anonymize_csv(&mut self, text: &str) -> (String, Vec<Detection>) {
+        let mut all_detections = Vec::new();
+        let mut output = String::with_capacity(text.len());
+
+        for (line_idx, line) in text.lines().enumerate() {
+            if line_idx > 0 {
+                output.push('\n');
+            }
+            let cells = parse_csv_line(line);
+            for (i, cell) in cells.iter().enumerate() {
+                if i > 0 {
+                    output.push(',');
+                }
+                let needs_quoting = cell.contains(',') || cell.contains('"') || cell.contains('\n');
+                let (anon, dets) = self.anonymize_text(cell);
+                all_detections.extend(dets);
+                if needs_quoting {
+                    output.push('"');
+                    output.push_str(&anon.replace('"', "\"\""));
+                    output.push('"');
+                } else {
+                    output.push_str(&anon);
+                }
+            }
+        }
+        if text.ends_with('\n') {
+            output.push('\n');
+        }
+
+        (output, all_detections)
+    }
+
+    /// Anonymize SQL content by only processing single-quoted string literals.
+    /// Identifiers, keywords, and non-string content are preserved as-is.
+    pub fn anonymize_sql(&mut self, text: &str) -> (String, Vec<Detection>) {
+        let mut all_detections = Vec::new();
+        let mut output = String::with_capacity(text.len());
+        let bytes = text.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            if bytes[i] == b'\'' {
+                // Extract the string literal (handling escaped quotes '')
+                let start = i;
+                i += 1; // skip opening quote
+                let mut literal = String::new();
+                while i < bytes.len() {
+                    if bytes[i] == b'\'' {
+                        if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                            literal.push('\'');
+                            i += 2;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        literal.push(bytes[i] as char);
+                        i += 1;
+                    }
+                }
+                if i < bytes.len() {
+                    i += 1; // skip closing quote
+                }
+                let (anon, dets) = self.anonymize_text(&literal);
+                all_detections.extend(dets);
+                output.push('\'');
+                output.push_str(&anon.replace('\'', "''"));
+                output.push('\'');
+                let _ = start; // suppress unused warning
+            } else {
+                output.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+
+        (output, all_detections)
     }
 
     /// Maximum JSON nesting depth for `walk_json`. Matches serde_json's default
@@ -618,5 +728,78 @@ mod tests {
         }
         // Beyond depth 128, the value is cloned as-is (not anonymized)
         assert_eq!(cursor.as_str().unwrap(), "deep@example.com");
+    }
+
+    #[test]
+    fn test_csv_quoted_field_with_comma() {
+        let mut a = Anonymizer::new(0.0);
+        let csv = "name,email\n\"Doe, John\",john@example.com";
+        let (result, dets) = a.anonymize_csv(csv);
+        // Email in second cell should be detected
+        assert!(dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
+        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        // Quoted field with comma should be preserved as a single cell
+        assert!(result.contains("Doe, John") || result.contains("\"Doe, John\""));
+    }
+
+    #[test]
+    fn test_csv_unquoted_email() {
+        let mut a = Anonymizer::new(0.0);
+        let csv = "id,email,name\n1,user@test.com,Alice\n2,admin@test.com,Bob";
+        let (result, dets) = a.anonymize_csv(csv);
+        assert_eq!(dets.iter().filter(|d| d.entity_type == "EMAIL_ADDRESS").count(), 2);
+        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        assert!(result.contains("[EMAIL_ADDRESS_2]"));
+    }
+
+    #[test]
+    fn test_sql_anonymizes_string_literals_only() {
+        let mut a = Anonymizer::new(0.0);
+        let sql = "INSERT INTO users VALUES (1, 'john@example.com', 'admin')";
+        let (result, dets) = a.anonymize_sql(sql);
+        // Email inside string literal should be detected
+        assert!(dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
+        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        // SQL keywords and structure should be preserved
+        assert!(result.starts_with("INSERT INTO users VALUES"));
+    }
+
+    #[test]
+    fn test_sql_preserves_identifiers() {
+        let mut a = Anonymizer::new(0.0);
+        // UUID is an identifier here, not PII — it's not inside quotes
+        let sql = "SELECT uuid FROM sessions WHERE id = '550e8400-e29b-41d4-a716-446655440000'";
+        let (result, dets) = a.anonymize_sql(sql);
+        // The UUID in the string literal should be detected
+        assert!(dets.iter().any(|d| d.entity_type == "UUID"));
+        // "uuid" as a column name should NOT be anonymized
+        assert!(result.contains("SELECT uuid FROM"));
+    }
+
+    #[test]
+    fn test_sql_escaped_quotes() {
+        let mut a = Anonymizer::new(0.0);
+        let sql = "INSERT INTO logs VALUES ('it''s john@test.com')";
+        let (result, dets) = a.anonymize_sql(sql);
+        assert!(dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
+        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+    }
+
+    #[test]
+    fn test_parse_csv_line_basic() {
+        let cells = parse_csv_line("a,b,c");
+        assert_eq!(cells, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_parse_csv_line_quoted() {
+        let cells = parse_csv_line("\"hello, world\",b,\"c\"");
+        assert_eq!(cells, vec!["hello, world", "b", "c"]);
+    }
+
+    #[test]
+    fn test_parse_csv_line_escaped_quote() {
+        let cells = parse_csv_line("\"he said \"\"hi\"\"\",b");
+        assert_eq!(cells, vec!["he said \"hi\"", "b"]);
     }
 }

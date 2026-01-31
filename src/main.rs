@@ -479,6 +479,10 @@ fn main() -> io::Result<()> {
                 let json_str = String::from_utf8(buf).unwrap();
 
                 (format!("{}\n", json_str), dets)
+            } else if format_name == "csv" {
+                anonymizer.anonymize_csv(&content)
+            } else if format_name == "sql" {
+                anonymizer.anonymize_sql(&content)
             } else {
                 anonymizer.anonymize_text(&content)
             };
