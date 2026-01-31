@@ -235,8 +235,12 @@ async fn handle_streaming(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// Allowed passthrough path prefixes — only forward to known Anthropic API paths.
+const ALLOWED_PASSTHROUGH_PREFIXES: &[&str] = &["/v1/"];
+
 /// Passthrough handler for any non-/v1/messages paths.
-/// Forwards the request as-is without anonymization.
+/// Forwards the request to known Anthropic API paths without anonymization.
+/// Rejects requests to unrecognized paths to prevent SSRF.
 pub async fn passthrough(
     State(state): State<Arc<ProxyState>>,
     req: Request<Body>,
@@ -247,6 +251,15 @@ pub async fn passthrough(
         .path_and_query()
         .map(|pq: &axum::http::uri::PathAndQuery| pq.as_str().to_string())
         .unwrap_or_default();
+
+    // Reject paths that don't match known API prefixes
+    if !ALLOWED_PASSTHROUGH_PREFIXES
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+    {
+        return (StatusCode::FORBIDDEN, "Forbidden: unknown API path").into_response();
+    }
+
     let headers: HeaderMap = req.headers().clone();
 
     let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
@@ -263,13 +276,22 @@ pub async fn passthrough(
         &upstream_url,
     );
 
-    // Forward all headers
+    // Forward only safe headers — strip auth headers to prevent credential leakage
     for (name, value) in headers.iter() {
         let name_str: &str = name.as_str();
-        if name_str != "host" && name_str != "connection" {
-            if let Ok(rn) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
-                if let Ok(rv) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
-                    upstream_req = upstream_req.header(rn, rv);
+        match name_str {
+            "host" | "connection" => continue,
+            "x-api-key" | "authorization" => {
+                upstream_req = upstream_req.header(
+                    reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()).unwrap(),
+                    reqwest::header::HeaderValue::from_bytes(value.as_bytes()).unwrap(),
+                );
+            }
+            _ => {
+                if let Ok(rn) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
+                    if let Ok(rv) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
+                        upstream_req = upstream_req.header(rn, rv);
+                    }
                 }
             }
         }
