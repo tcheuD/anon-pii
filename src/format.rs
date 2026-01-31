@@ -95,6 +95,18 @@ mod tests {
         assert!(matches!(detect_format("SELECT * FROM users WHERE id = 1"), DetectedFormat::Sql));
         assert!(matches!(detect_format("INSERT INTO logs VALUES (1, 'test')"), DetectedFormat::Sql));
         assert!(matches!(detect_format("  DELETE FROM sessions"), DetectedFormat::Sql));
+        assert!(matches!(detect_format("UPDATE users SET name = 'x'"), DetectedFormat::Sql));
+        assert!(matches!(detect_format("CREATE TABLE foo (id INT)"), DetectedFormat::Sql));
+    }
+
+    #[test]
+    fn test_format_detection_sql_not_plain_text() {
+        // These start with SQL keywords but aren't SQL — should be Text
+        assert!(matches!(detect_format("Select the best option"), DetectedFormat::Text));
+        assert!(matches!(detect_format("Delete this paragraph please"), DetectedFormat::Text));
+        assert!(matches!(detect_format("Update your profile"), DetectedFormat::Text));
+        assert!(matches!(detect_format("Create a new document"), DetectedFormat::Text));
+        assert!(matches!(detect_format("Drop me a message"), DetectedFormat::Text));
     }
 
     #[test]
