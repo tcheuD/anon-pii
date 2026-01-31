@@ -2,6 +2,17 @@ use crate::mapping::Mapping;
 
 const BUFFER_HARD_CAP: usize = 64;
 
+/// Trait for resolving tokens — allows both snapshot-based and live mapping.
+pub trait TokenResolver {
+    fn restore(&self, text: &str) -> String;
+}
+
+impl TokenResolver for Mapping {
+    fn restore(&self, text: &str) -> String {
+        Mapping::restore(self, text)
+    }
+}
+
 /// Bracket-detecting buffer for SSE token restoration.
 ///
 /// The problem: SSE streams deliver text in small chunks. A token like
@@ -11,18 +22,18 @@ const BUFFER_HARD_CAP: usize = 64;
 ///
 /// TokenBuffer accumulates text when an open bracket is seen,
 /// restores complete tokens, and flushes on close bracket or overflow.
-pub struct TokenBuffer {
+pub struct TokenBuffer<R: TokenResolver> {
     buf: String,
     in_bracket: bool,
-    mapping: Mapping,
+    resolver: R,
 }
 
-impl TokenBuffer {
-    pub fn new(mapping: Mapping) -> Self {
+impl<R: TokenResolver> TokenBuffer<R> {
+    pub fn new(resolver: R) -> Self {
         Self {
             buf: String::new(),
             in_bracket: false,
-            mapping,
+            resolver,
         }
     }
 
@@ -35,8 +46,7 @@ impl TokenBuffer {
             if self.in_bracket {
                 self.buf.push(ch);
                 if ch == ']' {
-                    // Try to restore the bracketed token
-                    let restored = self.mapping.restore(&self.buf);
+                    let restored = self.resolver.restore(&self.buf);
                     output.push_str(&restored);
                     self.buf.clear();
                     self.in_bracket = false;

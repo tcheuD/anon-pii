@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 
 use super::anthropic;
-use super::sse::{self, TokenBuffer};
+use super::sse::{self, TokenBuffer, TokenResolver};
 use super::ProxyState;
 
 /// Handle POST /v1/messages — the Anthropic Messages API endpoint.
@@ -142,14 +142,36 @@ async fn handle_non_streaming(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// Resolver that tries to read the latest mapping from shared state,
+/// falling back to a cached snapshot if the lock is contended.
+struct LiveResolver {
+    state: Arc<ProxyState>,
+    cached: crate::mapping::Mapping,
+}
+
+impl TokenResolver for LiveResolver {
+    fn restore(&self, text: &str) -> String {
+        // try_lock avoids blocking the stream on contended mutex
+        if let Ok(anonymizer) = self.state.anonymizer.try_lock() {
+            anonymizer.mapping.restore(text)
+        } else {
+            self.cached.restore(text)
+        }
+    }
+}
+
 async fn handle_streaming(
     state: Arc<ProxyState>,
     upstream_resp: reqwest::Response,
     status: reqwest::StatusCode,
     resp_headers: HeaderMap<HeaderValue>,
 ) -> Response {
-    let mapping = state.get_mapping_snapshot().await;
-    let mut token_buffer = TokenBuffer::new(mapping);
+    let cached = state.get_mapping_snapshot().await;
+    let resolver = LiveResolver {
+        state: state.clone(),
+        cached,
+    };
+    let mut token_buffer = TokenBuffer::new(resolver);
 
     // Read the SSE stream and process events
     let byte_stream = upstream_resp.bytes_stream();
