@@ -217,7 +217,11 @@ impl Anonymizer {
             Value::Object(map) => {
                 let new_map = map
                     .iter()
-                    .map(|(k, v)| (k.clone(), self.walk_json(v, detections)))
+                    .map(|(k, v)| {
+                        let (anon_key, key_dets) = self.anonymize_text(k);
+                        detections.extend(key_dets);
+                        (anon_key, self.walk_json(v, detections))
+                    })
                     .collect();
                 Value::Object(new_map)
             }
