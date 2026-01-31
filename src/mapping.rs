@@ -128,10 +128,14 @@ impl Mapping {
         }
 
         // Second pass: restore bare tokens (EMAIL_ADDRESS_1, CREW_CODE_1, etc.)
-        // Handles cases where LLMs strip brackets in markdown output
+        // Handles cases where LLMs strip brackets in markdown output.
+        // Sort by token length descending so IP_ADDRESS_10 is replaced before
+        // IP_ADDRESS_1 (avoids substring collision).
         if !bare_map.is_empty() {
-            for (bare, original) in &bare_map {
-                result = result.replace(bare, original);
+            let mut sorted_bare: Vec<_> = bare_map.into_iter().collect();
+            sorted_bare.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+            for (bare, original) in &sorted_bare {
+                result = result.replace(bare.as_str(), original);
             }
         }
 
