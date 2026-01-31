@@ -58,6 +58,11 @@ struct Cli {
     /// Language for detection
     #[arg(short, long, default_value = "en")]
     language: String,
+
+    /// Enable NER-based PERSON detection (requires ner or ner-lite feature)
+    #[cfg(any(feature = "ner", feature = "ner-lite"))]
+    #[arg(long)]
+    ner: bool,
 }
 
 #[derive(Subcommand)]
@@ -82,6 +87,13 @@ enum Commands {
     },
     /// List all supported entity types
     ListEntities,
+    /// Download NER model from HuggingFace
+    #[cfg(feature = "ner")]
+    DownloadModel {
+        /// Custom model directory
+        #[arg(long)]
+        model_dir: Option<PathBuf>,
+    },
     /// Start anonymizing proxy server
     Proxy {
         /// Port to listen on
@@ -255,6 +267,18 @@ fn main() -> io::Result<()> {
 
             eprintln!("Restored {} entities", mapping.mappings.len());
         }
+        #[cfg(feature = "ner")]
+        Some(Commands::DownloadModel { model_dir }) => {
+            let mut config = anon::ner::NerConfig::default();
+            if let Some(dir) = model_dir {
+                config.model_dir = dir;
+            }
+            eprintln!("Downloading NER model...");
+            if let Err(e) = anon::ner::download::download_model(&config) {
+                eprintln!("Error downloading model: {e}");
+                std::process::exit(1);
+            }
+        }
         Some(Commands::Proxy {
             port,
             upstream,
@@ -310,6 +334,15 @@ fn main() -> io::Result<()> {
                     );
                 }
             }
+            #[cfg(any(feature = "ner", feature = "ner-lite"))]
+            {
+                let backend = if cfg!(feature = "ner") { "ML" } else { "heuristic" };
+                eprintln!(
+                    "  {:<tw$}  NER-based person detection ({backend})",
+                    "PERSON".green(),
+                    tw = type_width
+                );
+            }
         }
         None => {
             if cli.input.is_none() && io::stdin().is_terminal() {
@@ -326,6 +359,40 @@ fn main() -> io::Result<()> {
             }
 
             let mut anonymizer = Anonymizer::new(cli.threshold);
+
+            // Wire up NER detector if requested (ML takes precedence over heuristic)
+            #[cfg(feature = "ner")]
+            if cli.ner {
+                let config = anon::ner::NerConfig::default();
+                // ort panics if libonnxruntime is not found; catch that gracefully
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    anon::ner::ml::MlNerDetector::new(&config)
+                })) {
+                    Ok(Ok(detector)) => {
+                        anonymizer.set_ner_detector(Box::new(detector));
+                        if cli.verbose {
+                            eprintln!("NER: ML backend enabled");
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("Warning: ML NER init failed: {e}");
+                        eprintln!("Hint: run `anon download-model` first");
+                    }
+                    Err(_) => {
+                        eprintln!("Warning: ONNX Runtime not found.");
+                        eprintln!("Install it:  brew install onnxruntime");
+                        eprintln!("Then set:    export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib");
+                    }
+                }
+            }
+            #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
+            if cli.ner {
+                let detector = anon::ner::heuristic::HeuristicNerDetector::new();
+                anonymizer.set_ner_detector(Box::new(detector));
+                if cli.verbose {
+                    eprintln!("NER: heuristic backend enabled");
+                }
+            }
 
             // Determine format and process
             let (parsed_json, format_name) = match cli.format {

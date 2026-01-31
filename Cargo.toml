@@ -20,6 +20,17 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 futures = "0.3"
 bytes = "1"
 
+# NER (ML-based) — behind "ner" feature
+ort = { version = "2.0.0-rc.11", features = ["load-dynamic"], optional = true }
+tokenizers = { version = "0.21", optional = true, default-features = false, features = ["fancy-regex"] }
+ndarray = { version = "0.16", optional = true }
+ureq = { version = "2", optional = true }
+
+[features]
+default = []
+ner = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:ureq"]
+ner-lite = []
+
 [profile.release]
 lto = true
 codegen-units = 1

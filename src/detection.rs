@@ -6,10 +6,15 @@ use crate::patterns::{
     CONTEXT_SCORE_BOOST, CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS, luhn_check,
 };
 
+#[cfg(any(feature = "ner", feature = "ner-lite"))]
+use crate::ner::NerDetector;
+
 pub struct Anonymizer {
     pub patterns: Vec<CompiledPattern>,
     pub mapping: Mapping,
     pub threshold: f64,
+    #[cfg(any(feature = "ner", feature = "ner-lite"))]
+    ner_detector: Option<Box<dyn NerDetector>>,
 }
 
 pub struct CompiledPattern {
@@ -50,7 +55,14 @@ impl Anonymizer {
             patterns,
             mapping: Mapping::new(),
             threshold,
+            #[cfg(any(feature = "ner", feature = "ner-lite"))]
+            ner_detector: None,
         }
+    }
+
+    #[cfg(any(feature = "ner", feature = "ner-lite"))]
+    pub fn set_ner_detector(&mut self, detector: Box<dyn NerDetector>) {
+        self.ner_detector = Some(detector);
     }
 
     fn has_context(&self, text: &str, start: usize, end: usize, keywords: &[&str]) -> bool {
@@ -129,6 +141,22 @@ impl Anonymizer {
                     end: mat.end(),
                     score: detection_score,
                 });
+            }
+        }
+
+        // Inject NER-based PERSON detections
+        #[cfg(any(feature = "ner", feature = "ner-lite"))]
+        if let Some(ref ner) = self.ner_detector {
+            for span in ner.detect_persons(text) {
+                if span.score >= self.threshold {
+                    detections.push(Detection {
+                        entity_type: "PERSON",
+                        original: span.text,
+                        start: span.start,
+                        end: span.end,
+                        score: span.score,
+                    });
+                }
             }
         }
 

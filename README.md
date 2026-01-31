@@ -5,8 +5,16 @@ Fast CLI tool to anonymize PII in debug data before sharing with AI tools.
 ## Installation
 
 ```bash
+# Default (regex-only, no NER)
 cargo build --release
-cp target/release/anon ~/.local/bin/  # or anywhere on your PATH
+cp target/release/anon ~/.local/bin/
+
+# With heuristic name detection (zero deps, +0 binary size)
+cargo build --release --features ner-lite
+
+# With ML name detection (requires ONNX Runtime)
+brew install onnxruntime
+cargo build --release --features ner
 ```
  
 ## Quick Start
@@ -21,9 +29,14 @@ echo '{"email": "john@example.com", "count": 42}' | anon
 # Output: {"count": 42, "email": "[EMAIL_ADDRESS_1]"}
 
 # Roundtrip: anonymize, share, restore
-cat debug.json | anon -m map.json > safe.json
-cat response.json | anon restore -m map.json
+cat debug.json | anon > safe.json
+cat response.json | anon restore
+
+# Pipe through Claude
+cat debug.json | anon | claude -p "explain this error" | anon restore
 ```
+
+Mapping is auto-saved to `~/.anon/mapping.json` — no need to pass `-m` manually.
 
 ## Usage
 
@@ -64,24 +77,25 @@ anon list-entities
 |--------|-------|---------|-------------|
 | `--input` | `-i` | stdin | Input file |
 | `--output` | `-o` | stdout | Output file |
-| `--mapping` | `-m` | | Save mapping to file for later restoration |
+| `--mapping` | `-m` | `~/.anon/mapping.json` | Save mapping to file for later restoration |
 | `--mapping-stderr` | | | Output mapping to stderr |
 | `--include-mapping` | | | Embed mapping as `/* MAPPING: ... */` comment in output |
 | `--verbose` | `-v` | | Show detected entities table on stderr |
 | `--format` | `-f` | `auto` | Force input format: `auto`, `json`, `text`, `sql`, `csv` |
 | `--threshold` | | `0.5` | Minimum confidence score (0.0-1.0) |
 | `--language` | `-l` | `en` | Language for NLP detection (reserved for future use) |
+| `--ner` | | | Enable NER-based PERSON detection (requires `ner` or `ner-lite` feature) |
 
 ### Restore
 
-| Option | Short | Required | Description |
-|--------|-------|----------|-------------|
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
 | `INPUT` | | | Positional input file |
 | `--input` | `-i` | | Input file flag (overrides positional) |
-| `--mapping` | `-m` | Yes | Mapping file for restoration |
+| `--mapping` | `-m` | `~/.anon/mapping.json` | Mapping file for restoration |
 | `--output` | `-o` | | Output file (stdout if omitted) |
 
-Both `anon restore INPUT -m map.json` and `anon restore -i INPUT -m map.json` work. Reads from stdin if neither is provided.
+Both `anon restore INPUT -m map.json` and `anon restore -i INPUT -m map.json` work. Reads from stdin if neither is provided. Mapping defaults to `~/.anon/mapping.json` when `-m` is omitted.
 
 ## Supported Entity Types
 
@@ -112,6 +126,15 @@ Both `anon restore INPUT -m map.json` and `anon restore -i INPUT -m map.json` wo
 | `AIRCRAFT_REGISTRATION` | French (F-XXXX), European, US N-numbers (context-aware) | 0.85 - 0.95 |
 | `FLIGHT_NUMBER` | Amelia codes (IZM, RLA, AME, GJT, AF), IATA/ICAO (context-aware) | 0.4 - 0.9 |
 | `CREW_CODE` | 3-letter crew codes (context-aware, with blocklist) | 0.85 |
+
+### Person Names (NER)
+
+| Entity | Backend | Score | Feature flag |
+|--------|---------|-------|--------------|
+| `PERSON` | ML — DistilBERT multilingual NER (ONNX, INT8) | 0.6 - 1.0 | `ner` |
+| `PERSON` | Heuristic — title patterns + name dictionary | 0.55 - 0.80 | `ner-lite` |
+
+Enabled with `--ner`. See [NER — Person Name Detection](#ner--person-name-detection) below.
 
 ## Format Handling
 
@@ -297,6 +320,46 @@ curl -s --no-buffer http://127.0.0.1:9100/v1/messages \
 - Host header validation blocks DNS rebinding attacks
 - Mapping file contains original PII — treat it as sensitive
 - API keys are forwarded but never logged or stored
+
+## NER — Person Name Detection
+
+Person names aren't reliably detectable with regex. The `--ner` flag enables NER-based detection with two backends, selected at compile time via feature flags.
+
+### Heuristic (`ner-lite`)
+
+Zero dependencies. Detects names using title patterns (M., Mme, Dr, Captain...) and a ~500 entry French/English first name dictionary.
+
+```bash
+cargo build --release --features ner-lite
+
+echo "M. Dupont est pilote, Dr Martin en copilote" | anon --ner
+# M. [PERSON_2] est pilote, Dr [PERSON_1] en copilote
+```
+
+### ML (`ner`)
+
+Uses DistilBERT multilingual NER (Davlan/distilbert-base-multilingual-cased-ner-hrl) via ONNX Runtime. INT8 quantized, ~130MB model.
+
+```bash
+# 1. Install ONNX Runtime
+brew install onnxruntime  # macOS
+# apt install libonnxruntime-dev  # Debian/Ubuntu
+
+# 2. Build with ner feature
+cargo build --release --features ner
+
+# 3. Download model (~130MB, cached at ~/.anon/models/)
+export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
+anon download-model
+
+# 4. Use
+echo "Jean Dupont called from Paris" | anon --ner
+# [PERSON_1] called from Paris
+```
+
+The ML backend detects names in French, English, German, Spanish, Portuguese, Dutch, Arabic, and Chinese without any keyword context.
+
+When both features are compiled (`--features ner,ner-lite`), ML takes precedence.
 
 ## Python Version
 

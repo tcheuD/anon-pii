@@ -1,0 +1,393 @@
+use std::collections::HashSet;
+
+use super::{NerDetector, NerSpan};
+
+const CONTEXT_WINDOW: usize = 80;
+const CONTEXT_BOOST: f64 = 0.15;
+
+const CONTEXT_KEYWORDS: &[&str] = &[
+    "passenger", "passager", "passagère", "name", "nom", "pilot", "pilote",
+    "captain", "capitaine", "commandant", "crew", "équipage", "equipage",
+    "copilot", "copilote", "member", "membre", "contact", "person", "personne",
+    "client", "patient", "employee", "employé", "employée", "salarié",
+];
+
+const TITLES_FR: &[&str] = &[
+    "M.", "Mme", "Mlle", "Dr", "Pr", "Me", "Capitaine", "Commandant",
+    "Lieutenant", "Colonel", "Général",
+];
+
+const TITLES_EN: &[&str] = &[
+    "Mr", "Mr.", "Mrs", "Mrs.", "Ms", "Ms.", "Miss", "Dr", "Dr.",
+    "Prof", "Prof.", "Captain", "Cpt", "Lt",
+];
+
+// Top French first names
+const FRENCH_FIRST_NAMES: &[&str] = &[
+    "Adrien", "Agathe", "Agnès", "Alain", "Albert", "Alexandre", "Alexis",
+    "Alice", "Aline", "Amélie", "Anaïs", "André", "Andrée", "Anne",
+    "Annie", "Antoine", "Arnaud", "Arthur", "Audrey", "Aurélien",
+    "Aurélie", "Baptiste", "Béatrice", "Benjamin", "Benoît", "Bernard",
+    "Bertrand", "Boris", "Brigitte", "Bruno", "Camille", "Caroline",
+    "Catherine", "Cécile", "Céline", "Charles", "Charlotte", "Chloé",
+    "Christian", "Christiane", "Christine", "Christophe", "Claire", "Clara",
+    "Claude", "Clément", "Colette", "Corinne", "Cyril", "Damien",
+    "Daniel", "Danielle", "David", "Denis", "Denise", "Didier",
+    "Dominique", "Edith", "Edouard", "Éliane", "Élisabeth", "Élise",
+    "Élodie", "Émile", "Émilie", "Emma", "Emmanuel", "Emmanuelle",
+    "Éric", "Étienne", "Eugène", "Ève", "Évelyne", "Fabien",
+    "Fabienne", "Fabrice", "Fanny", "Florence", "Florent", "Florian",
+    "Francis", "Franck", "François", "Françoise", "Frédéric", "Frédérique",
+    "Gabriel", "Gaëlle", "Georges", "Gérald", "Gérard", "Germain",
+    "Gilles", "Grégoire", "Grégory", "Guillaume", "Gustave", "Guy",
+    "Hélène", "Henri", "Hervé", "Hugo", "Hugues", "Inès",
+    "Isabelle", "Jacques", "Jade", "Jean", "Jeanne", "Jérôme",
+    "Joël", "Joëlle", "Joseph", "Josette", "Julie", "Julien",
+    "Juliette", "Justine", "Karine", "Laetitia", "Laura", "Laure",
+    "Laurent", "Laurence", "Léa", "Léon", "Liliane", "Lionel",
+    "Louis", "Louise", "Luc", "Luca", "Lucie", "Lucien",
+    "Lucienne", "Ludovic", "Madeleine", "Manon", "Marc", "Marcel",
+    "Marcelle", "Marguerite", "Maria", "Marianne", "Marie", "Marine",
+    "Marion", "Martine", "Mathieu", "Mathilde", "Matthieu", "Maurice",
+    "Maxime", "Michel", "Michèle", "Micheline", "Mireille", "Monique",
+    "Muriel", "Myriam", "Nadège", "Nadine", "Nathalie", "Nathan",
+    "Nicolas", "Nicole", "Noël", "Noémie", "Odette", "Olivier",
+    "Pascal", "Pascale", "Patricia", "Patrick", "Paul", "Paulette",
+    "Pauline", "Philippe", "Pierre", "Rachid", "Raphaël", "Raymond",
+    "Raymonde", "Régine", "Rémi", "Renaud", "René", "Renée",
+    "Richard", "Robert", "Roger", "Roland", "Romain", "Roselyne",
+    "Sabine", "Sabrina", "Samuel", "Sandrine", "Sarah", "Sébastien",
+    "Serge", "Simon", "Simone", "Sofia", "Solange", "Sophie",
+    "Stéphane", "Stéphanie", "Suzanne", "Sylvain", "Sylvie", "Thérèse",
+    "Thibault", "Thierry", "Thomas", "Valérie", "Véronique", "Victor",
+    "Vincent", "Virginie", "Viviane", "Xavier", "Yannick", "Yves",
+    "Yvette", "Yvonne",
+];
+
+// Top English first names
+const ENGLISH_FIRST_NAMES: &[&str] = &[
+    "Aaron", "Adam", "Adrian", "Alan", "Albert", "Alex", "Alexander",
+    "Alfred", "Alice", "Alison", "Amanda", "Amber", "Amy", "Andrea",
+    "Andrew", "Angela", "Ann", "Anna", "Anne", "Anthony", "Arthur",
+    "Ashley", "Barbara", "Barry", "Benjamin", "Bernard", "Betty",
+    "Beverly", "Bill", "Billy", "Bobby", "Bradley", "Brandon", "Brenda",
+    "Brian", "Bruce", "Bryan", "Carl", "Carol", "Caroline", "Carolyn",
+    "Catherine", "Charles", "Charlotte", "Cheryl", "Chris", "Christina",
+    "Christine", "Christopher", "Cindy", "Claire", "Clara", "Clarence",
+    "Craig", "Cynthia", "Dale", "Daniel", "Danny", "Darren",
+    "David", "Dawn", "Dean", "Deborah", "Debra", "Dennis", "Diana",
+    "Diane", "Donald", "Donna", "Dorothy", "Douglas", "Dylan", "Earl",
+    "Edward", "Eileen", "Eleanor", "Elizabeth", "Ellen", "Emily",
+    "Emma", "Eric", "Ernest", "Ethan", "Eugene", "Eva", "Evelyn",
+    "Frances", "Francis", "Frank", "Fred", "Frederick", "Gabriel",
+    "Gary", "George", "Gerald", "Gloria", "Gordon", "Grace", "Graham",
+    "Gregory", "Harold", "Harry", "Heather", "Helen", "Henry", "Howard",
+    "Ian", "Irene", "Isaac", "Jack", "Jacob", "Jacqueline", "James",
+    "Jane", "Janet", "Janice", "Jason", "Jean", "Jeffrey", "Jennifer",
+    "Jeremy", "Jerry", "Jesse", "Jessica", "Jill", "Jimmy", "Joan",
+    "Joanne", "Joe", "Joel", "John", "Jonathan", "Jordan", "Joseph",
+    "Joshua", "Joyce", "Judith", "Judy", "Julia", "Julie", "Justin",
+    "Karen", "Katherine", "Kathleen", "Kathryn", "Kathy", "Keith",
+    "Kelly", "Kenneth", "Kevin", "Kimberly", "Kyle", "Larry", "Laura",
+    "Lauren", "Lawrence", "Lee", "Leonard", "Leslie", "Lillian", "Linda",
+    "Lisa", "Lois", "Lorraine", "Louis", "Louise", "Lucas", "Lucy",
+    "Lynn", "Madison", "Margaret", "Maria", "Marilyn", "Marion", "Mark",
+    "Martha", "Martin", "Mary", "Mason", "Matthew", "Maureen", "Megan",
+    "Melissa", "Michael", "Michelle", "Mildred", "Nancy", "Natalie",
+    "Nathan", "Nicholas", "Nicole", "Noah", "Norma", "Norman", "Oliver",
+    "Olivia", "Oscar", "Pamela", "Patricia", "Patrick", "Paul", "Paula",
+    "Peggy", "Peter", "Philip", "Phillip", "Phyllis", "Rachel", "Ralph",
+    "Randy", "Raymond", "Rebecca", "Richard", "Rita", "Robert", "Robin",
+    "Rodney", "Roger", "Ronald", "Rose", "Roy", "Ruby", "Russell",
+    "Ruth", "Ryan", "Sally", "Samantha", "Samuel", "Sandra", "Sara",
+    "Sarah", "Scott", "Sean", "Sharon", "Sheila", "Shirley", "Sophia",
+    "Stephanie", "Stephen", "Steven", "Stuart", "Susan", "Suzanne",
+    "Tammy", "Teresa", "Terry", "Theresa", "Thomas", "Timothy", "Tina",
+    "Todd", "Tony", "Tracy", "Tyler", "Valerie", "Victor", "Victoria",
+    "Vincent", "Virginia", "Walter", "Wanda", "Wayne", "Wendy",
+    "William", "Willie", "Zachary",
+];
+
+pub struct HeuristicNerDetector {
+    first_names: HashSet<&'static str>,
+    min_score: f64,
+}
+
+impl HeuristicNerDetector {
+    pub fn new() -> Self {
+        let mut first_names = HashSet::new();
+        for name in FRENCH_FIRST_NAMES {
+            first_names.insert(*name);
+        }
+        for name in ENGLISH_FIRST_NAMES {
+            first_names.insert(*name);
+        }
+        Self {
+            first_names,
+            min_score: 0.5,
+        }
+    }
+
+    fn has_context(&self, text: &str, start: usize, end: usize) -> bool {
+        let mut ws = start.saturating_sub(CONTEXT_WINDOW);
+        let mut we = (end + CONTEXT_WINDOW).min(text.len());
+        while !text.is_char_boundary(ws) { ws += 1; }
+        while !text.is_char_boundary(we) { we -= 1; }
+        let window = text[ws..we].to_lowercase();
+        CONTEXT_KEYWORDS.iter().any(|kw| window.contains(kw))
+    }
+
+    fn is_capitalized_word(word: &str) -> bool {
+        let mut chars = word.chars();
+        match chars.next() {
+            Some(c) if c.is_uppercase() => chars.all(|c| c.is_lowercase() || c == '-' || c == '\''),
+            _ => false,
+        }
+    }
+
+    fn detect_title_patterns(&self, text: &str) -> Vec<NerSpan> {
+        let mut spans = Vec::new();
+
+        for title in TITLES_FR.iter().chain(TITLES_EN.iter()) {
+            let mut search_from = 0;
+            while let Some(pos) = text[search_from..].find(title) {
+                let abs_pos = search_from + pos;
+                // Must be at word boundary
+                if abs_pos > 0 {
+                    let prev = text[..abs_pos].chars().last().unwrap();
+                    if prev.is_alphanumeric() {
+                        search_from = abs_pos + title.len();
+                        continue;
+                    }
+                }
+
+                let after_title = abs_pos + title.len();
+                // Collect capitalized words after the title
+                let rest = &text[after_title..];
+                let mut name_parts: Vec<&str> = Vec::new();
+                let mut offset = 0;
+
+                // Skip whitespace
+                for ch in rest.chars() {
+                    if ch == ' ' { offset += 1; } else { break; }
+                }
+
+                for word in rest[offset..].split_whitespace().take(3) {
+                    if Self::is_capitalized_word(word) {
+                        name_parts.push(word);
+                    } else {
+                        break;
+                    }
+                }
+
+                if !name_parts.is_empty() {
+                    let full_name = name_parts.join(" ");
+                    let name_start = after_title + offset;
+                    let name_end = name_start + full_name.len();
+
+                    let base_score = if name_parts.len() >= 2 { 0.75 } else { 0.65 };
+                    let score = if self.has_context(text, abs_pos, name_end) {
+                        (base_score + CONTEXT_BOOST).min(1.0)
+                    } else {
+                        base_score
+                    };
+
+                    if score >= self.min_score {
+                        spans.push(NerSpan {
+                            text: full_name,
+                            start: name_start,
+                            end: name_end,
+                            score,
+                            label: "PERSON".to_string(),
+                        });
+                    }
+                }
+
+                search_from = abs_pos + title.len();
+            }
+        }
+
+        spans
+    }
+
+    fn detect_dictionary_patterns(&self, text: &str) -> Vec<NerSpan> {
+        let mut spans = Vec::new();
+        let words: Vec<(usize, &str)> = text
+            .split_whitespace()
+            .scan(0usize, |pos, word| {
+                let start = text[*pos..].find(word).map(|p| *pos + p).unwrap_or(*pos);
+                *pos = start + word.len();
+                Some((start, word))
+            })
+            .collect();
+
+        for i in 0..words.len() {
+            let (start, word) = words[i];
+            // Strip trailing punctuation for lookup
+            let clean = word.trim_end_matches(|c: char| c.is_ascii_punctuation());
+
+            if self.first_names.contains(clean) {
+                // Look for following capitalized word(s) to form full name
+                let mut name_parts = vec![clean];
+                let mut end = start + word.len();
+
+                for j in (i + 1)..words.len().min(i + 3) {
+                    let (_, next_word) = words[j];
+                    let next_clean = next_word.trim_end_matches(|c: char| c.is_ascii_punctuation());
+                    if Self::is_capitalized_word(next_clean) {
+                        name_parts.push(next_clean);
+                        end = words[j].0 + next_clean.len();
+                    } else {
+                        break;
+                    }
+                }
+
+                // Only emit if there's at least firstname + lastname
+                if name_parts.len() >= 2 {
+                    let full_name = text[start..end].to_string();
+
+                    let base_score = 0.55;
+                    let score = if self.has_context(text, start, end) {
+                        (base_score + CONTEXT_BOOST).min(1.0)
+                    } else {
+                        base_score
+                    };
+
+                    if score >= self.min_score {
+                        spans.push(NerSpan {
+                            text: full_name,
+                            start,
+                            end,
+                            score,
+                            label: "PERSON".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        spans
+    }
+}
+
+impl NerDetector for HeuristicNerDetector {
+    fn detect_persons(&self, text: &str) -> Vec<NerSpan> {
+        let mut spans = self.detect_title_patterns(text);
+        let dict_spans = self.detect_dictionary_patterns(text);
+
+        // Merge, keeping non-overlapping spans (title patterns take priority)
+        for ds in dict_spans {
+            let overlaps = spans.iter().any(|s| ds.start < s.end && ds.end > s.start);
+            if !overlaps {
+                spans.push(ds);
+            }
+        }
+
+        spans
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_title_french_m() {
+        let det = HeuristicNerDetector::new();
+        let spans = det.detect_persons("M. Dupont est arrivé.");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "Dupont");
+        assert_eq!(spans[0].label, "PERSON");
+    }
+
+    #[test]
+    fn test_title_french_mme() {
+        let det = HeuristicNerDetector::new();
+        let spans = det.detect_persons("Mme Martin est en retard.");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "Martin");
+    }
+
+    #[test]
+    fn test_title_english_dr() {
+        let det = HeuristicNerDetector::new();
+        let spans = det.detect_persons("Dr. Smith examined the patient.");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "Smith");
+    }
+
+    #[test]
+    fn test_title_with_full_name() {
+        let det = HeuristicNerDetector::new();
+        let spans = det.detect_persons("Capitaine Jean Dupont a décollé.");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "Jean Dupont");
+        assert!(spans[0].score >= 0.7);
+    }
+
+    #[test]
+    fn test_dictionary_french_name() {
+        let det = HeuristicNerDetector::new();
+        let spans = det.detect_persons("Contact Philippe Martin pour les détails.");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "Philippe Martin");
+    }
+
+    #[test]
+    fn test_dictionary_english_name() {
+        let det = HeuristicNerDetector::new();
+        let spans = det.detect_persons("Passenger Michael Johnson boarded.");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "Michael Johnson");
+    }
+
+    #[test]
+    fn test_no_false_positive_lowercase() {
+        let det = HeuristicNerDetector::new();
+        let spans = det.detect_persons("the server is running at full capacity");
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn test_no_false_positive_single_known_name() {
+        let det = HeuristicNerDetector::new();
+        // Single first name without a following capitalized word — should not match
+        let spans = det.detect_persons("Pierre est parti.");
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn test_context_boost() {
+        let det = HeuristicNerDetector::new();
+        // Without context
+        let spans1 = det.detect_persons("Philippe Martin a appelé.");
+        // With context
+        let spans2 = det.detect_persons("Le passager Philippe Martin a appelé.");
+        assert!(!spans1.is_empty());
+        assert!(!spans2.is_empty());
+        assert!(spans2[0].score > spans1[0].score);
+    }
+
+    #[test]
+    fn test_multiple_names() {
+        let det = HeuristicNerDetector::new();
+        let spans = det.detect_persons("M. Dupont et Mme Martin sont arrivés.");
+        assert_eq!(spans.len(), 2);
+    }
+
+    #[test]
+    fn test_title_not_mid_word() {
+        let det = HeuristicNerDetector::new();
+        // "OMr" should not trigger "Mr" title
+        let spans = det.detect_persons("The OMr code was invalid.");
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn test_accented_names() {
+        let det = HeuristicNerDetector::new();
+        let spans = det.detect_persons("Mme Héloïse Lefèvre est présente.");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "Héloïse Lefèvre");
+    }
+}
