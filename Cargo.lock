@@ -35,6 +35,7 @@ dependencies = [
 name = "anon"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "axum",
  "bytes",
  "clap",

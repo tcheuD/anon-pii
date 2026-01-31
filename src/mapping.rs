@@ -137,19 +137,38 @@ impl Mapping {
     pub fn restore(&self, text: &str) -> String {
         let mut result = self.restore_bracketed(text);
 
-        // Second pass: restore bare tokens at word boundaries only.
-        // Handles LLMs that strip brackets in markdown output.
-        // Sort by token length descending so IP_ADDRESS_10 is matched before
-        // IP_ADDRESS_1 (avoids substring collision).
+        // Second pass: restore bare tokens using single-pass aho-corasick.
+        // This prevents double-replacement where a restored value contains
+        // another bare token (e.g. EMAIL_ADDRESS_1 → "EMAIL_ADDRESS_2@test.com").
         let bare_map = self.bare_token_map();
         if !bare_map.is_empty() {
-            let mut sorted_bare: Vec<_> = bare_map.into_iter().collect();
-            sorted_bare.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-            for (bare, original) in &sorted_bare {
-                let pattern = format!(r"\b{}\b", regex::escape(&bare));
-                if let Ok(re) = regex::Regex::new(&pattern) {
-                    result = re.replace_all(&result, original.as_str()).into_owned();
+            let patterns: Vec<&str> = bare_map.keys().map(|s| s.as_str()).collect();
+            let mut builder = aho_corasick::AhoCorasick::builder();
+            builder.match_kind(aho_corasick::MatchKind::LeftmostLongest);
+            if let Ok(ac) = builder.build(&patterns) {
+                let mut output = String::with_capacity(result.len());
+                let mut last = 0;
+                for mat in ac.find_iter(&result) {
+                    let start = mat.start();
+                    let end = mat.end();
+                    // Word-boundary check: ensure match is not mid-word
+                    let before_ok = start == 0
+                        || !result.as_bytes()[start - 1].is_ascii_alphanumeric();
+                    let after_ok = end == result.len()
+                        || !result.as_bytes()[end].is_ascii_alphanumeric();
+                    if before_ok && after_ok {
+                        output.push_str(&result[last..start]);
+                        let matched = &result[start..end];
+                        if let Some(original) = bare_map.get(matched) {
+                            output.push_str(original);
+                        } else {
+                            output.push_str(matched);
+                        }
+                        last = end;
+                    }
                 }
+                output.push_str(&result[last..]);
+                result = output;
             }
         }
 
@@ -245,6 +264,23 @@ mod tests {
         // Bracketed token is restored, bare token is left intact
         assert!(result.contains("john@example.com"));
         assert!(result.contains("EMAIL_ADDRESS_1 in your input"));
+    }
+
+    #[test]
+    fn test_restore_no_double_replacement() {
+        // EMAIL_ADDRESS_1 restores to a value containing "EMAIL_ADDRESS_2"
+        // which should NOT be replaced again by the EMAIL_ADDRESS_2 mapping.
+        let mut m = Mapping::new();
+        m.mappings.insert("[EMAIL_ADDRESS_1]".to_string(), "EMAIL_ADDRESS_2@test.com".to_string());
+        m.mappings.insert("[EMAIL_ADDRESS_2]".to_string(), "real@secret.com".to_string());
+        m.rebuild_caches();
+
+        let result = m.restore("Found EMAIL_ADDRESS_1 and EMAIL_ADDRESS_2");
+        assert_eq!(
+            result,
+            "Found EMAIL_ADDRESS_2@test.com and real@secret.com",
+            "Single-pass replacement must not revisit already-replaced regions"
+        );
     }
 
     #[test]
