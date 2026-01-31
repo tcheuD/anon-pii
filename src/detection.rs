@@ -458,6 +458,46 @@ mod tests {
     }
 
     #[test]
+    fn test_credit_card_valid_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        // 4111111111111111 is a valid Visa test number (passes Luhn + valid prefix)
+        let (result, dets) = a.anonymize_text("carte bancaire 4111 1111 1111 1111");
+        assert!(dets.iter().any(|d| d.entity_type == "CREDIT_CARD"));
+        assert!(result.contains("[CREDIT_CARD_1]"));
+    }
+
+    #[test]
+    fn test_credit_card_rejected_without_context() {
+        let mut a = Anonymizer::new(0.0);
+        // Valid card number but no context keyword — context_required gate blocks it
+        let (_, dets) = a.anonymize_text("number 4111 1111 1111 1111 here");
+        assert!(!dets.iter().any(|d| d.entity_type == "CREDIT_CARD"));
+    }
+
+    #[test]
+    fn test_credit_card_rejected_invalid_prefix() {
+        let mut a = Anonymizer::new(0.0);
+        // 16-digit number starting with 9 — no known issuer, even with context + Luhn
+        // 9000000000000008 passes Luhn but has no valid card prefix
+        let (_, dets) = a.anonymize_text("payment card 9000 0000 0000 0008");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
+            "Should reject 16-digit number with unknown issuer prefix"
+        );
+    }
+
+    #[test]
+    fn test_credit_card_rejected_fails_luhn() {
+        let mut a = Anonymizer::new(0.0);
+        // Visa prefix but fails Luhn (last digit wrong)
+        let (_, dets) = a.anonymize_text("carte credit 4111 1111 1111 1112");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
+            "Should reject card number that fails Luhn check"
+        );
+    }
+
+    #[test]
     fn test_utf8_email_in_accented_text() {
         let mut a = Anonymizer::new(0.0);
         let input = "Héloïse a envoyé un mail à héloïse@example.com depuis Zürich";
