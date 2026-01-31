@@ -7,7 +7,7 @@ pub struct Mapping {
     pub created_at: String,
     pub mappings: HashMap<String, String>,
     #[serde(skip)]
-    pub reverse: HashMap<String, String>,
+    pub reverse: HashMap<(String, String), String>,
     #[serde(skip)]
     pub counters: HashMap<String, usize>,
 }
@@ -62,7 +62,8 @@ impl Mapping {
     }
 
     pub fn add(&mut self, entity_type: &str, original: &str) -> String {
-        if let Some(token) = self.reverse.get(original) {
+        let key = (entity_type.to_string(), original.to_string());
+        if let Some(token) = self.reverse.get(&key) {
             return token.clone();
         }
 
@@ -71,7 +72,7 @@ impl Mapping {
         let token = format!("[{}_{counter}]", entity_type);
 
         self.mappings.insert(token.clone(), original.to_string());
-        self.reverse.insert(original.to_string(), token.clone());
+        self.reverse.insert(key, token.clone());
         token
     }
 
@@ -79,13 +80,17 @@ impl Mapping {
         self.reverse.clear();
         self.counters.clear();
         for (token, original) in &self.mappings {
-            self.reverse.insert(original.clone(), token.clone());
             if let Some(inner) = token.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
                 if let Some(pos) = inner.rfind('_') {
+                    let entity_type = &inner[..pos];
                     if let Ok(n) = inner[pos + 1..].parse::<usize>() {
-                        let counter = self.counters.entry(inner[..pos].to_string()).or_insert(0);
+                        let counter = self.counters.entry(entity_type.to_string()).or_insert(0);
                         *counter = (*counter).max(n);
                     }
+                    self.reverse.insert(
+                        (entity_type.to_string(), original.clone()),
+                        token.clone(),
+                    );
                 }
             }
         }
@@ -281,6 +286,28 @@ mod tests {
             "Found EMAIL_ADDRESS_2@test.com and real@secret.com",
             "Single-pass replacement must not revisit already-replaced regions"
         );
+    }
+
+    #[test]
+    fn test_add_same_value_different_entity_types() {
+        let mut m = Mapping::new();
+        // Same original value matched by two different entity types
+        let token1 = m.add("UUID", "550e8400-e29b-41d4-a716-446655440000");
+        let token2 = m.add("CRYPTO", "550e8400-e29b-41d4-a716-446655440000");
+        // Should produce distinct tokens
+        assert_eq!(token1, "[UUID_1]");
+        assert_eq!(token2, "[CRYPTO_1]");
+        assert_ne!(token1, token2);
+    }
+
+    #[test]
+    fn test_add_same_value_same_entity_type_is_consistent() {
+        let mut m = Mapping::new();
+        let token1 = m.add("EMAIL_ADDRESS", "john@example.com");
+        let token2 = m.add("EMAIL_ADDRESS", "john@example.com");
+        // Same entity type + same value = same token (consistency)
+        assert_eq!(token1, token2);
+        assert_eq!(token1, "[EMAIL_ADDRESS_1]");
     }
 
     #[test]
