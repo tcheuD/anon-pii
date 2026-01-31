@@ -1,5 +1,6 @@
 use regex::Regex;
 use serde_json::Value;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::mapping::Mapping;
 use crate::patterns::{
@@ -84,6 +85,12 @@ impl Anonymizer {
     }
 
     pub fn anonymize_text(&mut self, text: &str) -> (String, Vec<Detection>) {
+        // NFKC normalization converts fullwidth digits, confusable homoglyphs,
+        // and other Unicode variants to their canonical ASCII equivalents so
+        // that regex patterns match consistently.
+        let normalized: String = text.nfkc().collect();
+        let text = normalized.as_str();
+
         let mut detections: Vec<Detection> = Vec::new();
 
         for pat in &self.patterns {
@@ -554,6 +561,42 @@ mod tests {
             result["a"]["b"]["c"].as_str().unwrap(),
             "[EMAIL_ADDRESS_1]"
         );
+    }
+
+    #[test]
+    fn test_unicode_fullwidth_email_detected() {
+        let mut a = Anonymizer::new(0.0);
+        // Fullwidth '@' (U+FF20) should be NFKC-normalized to ASCII '@'
+        let input = "contact user\u{FF20}example.com now";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
+            "Fullwidth @ should be normalized and detected as email"
+        );
+        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+    }
+
+    #[test]
+    fn test_unicode_fullwidth_digits_detected() {
+        let mut a = Anonymizer::new(0.0);
+        // Fullwidth digits U+FF10..U+FF19 for IP address
+        let input = "server at \u{FF11}\u{FF19}\u{FF12}.\u{FF11}\u{FF16}\u{FF18}.\u{FF11}.\u{FF11}\u{FF10}\u{FF10}";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "Fullwidth digits should be normalized and detected as IP: {:?}",
+            dets
+        );
+        assert!(result.contains("[IP_ADDRESS_1]"));
+    }
+
+    #[test]
+    fn test_unicode_normalization_preserves_ascii() {
+        let mut a = Anonymizer::new(0.0);
+        // Pure ASCII input should be unchanged by NFKC
+        let (result, dets) = a.anonymize_text("contact john@example.com now");
+        assert_eq!(dets.len(), 1);
+        assert!(result.contains("[EMAIL_ADDRESS_1]"));
     }
 
     #[test]

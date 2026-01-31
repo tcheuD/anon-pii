@@ -14,6 +14,12 @@ use super::ProxyState;
 /// Maximum request body size for `/v1/messages` (10 MB).
 const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024;
 
+/// Maximum SSE stream duration (10 minutes).
+const SSE_STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Maximum size for internal SSE buffers (utf8_buf, line_buf) — 1 MB each.
+const MAX_SSE_BUFFER_SIZE: usize = 1 * 1024 * 1024;
+
 /// Headers allowed to be forwarded to the upstream API.
 /// Everything else is dropped to prevent leaking cookies, internal routing
 /// headers, proxy headers, and client IP addresses.
@@ -225,6 +231,14 @@ async fn handle_streaming(
             Ok(chunk) => {
                 utf8_buf.extend_from_slice(&chunk);
 
+                // Guard against unbounded buffer growth from upstream
+                if utf8_buf.len() > MAX_SSE_BUFFER_SIZE {
+                    eprintln!("Warning: SSE utf8_buf exceeded {} bytes, truncating", MAX_SSE_BUFFER_SIZE);
+                    utf8_buf.clear();
+                    line_buf.clear();
+                    return Ok::<_, reqwest::Error>(Bytes::new());
+                }
+
                 // Find the last valid UTF-8 boundary
                 let valid_up_to = match std::str::from_utf8(&utf8_buf) {
                     Ok(_) => utf8_buf.len(),
@@ -255,6 +269,12 @@ async fn handle_streaming(
                     }
                 }
 
+                // Guard line_buf growth
+                if line_buf.len() > MAX_SSE_BUFFER_SIZE {
+                    eprintln!("Warning: SSE line_buf exceeded {} bytes, flushing", MAX_SSE_BUFFER_SIZE);
+                    line_buf.clear();
+                }
+
                 utf8_buf = remainder;
 
                 Ok::<_, reqwest::Error>(Bytes::from(output))
@@ -263,7 +283,14 @@ async fn handle_streaming(
         }
     });
 
-    let body = Body::from_stream(processed_stream);
+    // Wrap stream with a total duration timeout to prevent indefinite connections.
+    // When the deadline expires, the stream ends cleanly.
+    let deadline = tokio::time::Instant::now() + SSE_STREAM_TIMEOUT;
+    let timed_stream = processed_stream.take_while(move |_| {
+        std::future::ready(tokio::time::Instant::now() < deadline)
+    });
+
+    let body = Body::from_stream(timed_stream);
 
     let mut response = Response::builder().status(status.as_u16());
     for (name, value) in &resp_headers {
@@ -482,6 +509,12 @@ mod tests {
         let body = to_bytes(resp.into_body(), 1024).await.unwrap();
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("byte limit"), "Response should mention the limit: {text}");
+    }
+
+    #[test]
+    fn test_sse_constants_are_bounded() {
+        assert!(SSE_STREAM_TIMEOUT.as_secs() <= 900, "SSE timeout should not exceed 15 minutes");
+        assert!(MAX_SSE_BUFFER_SIZE <= 10 * 1024 * 1024, "SSE buffer limit should not exceed 10MB");
     }
 
     #[tokio::test]

@@ -240,7 +240,7 @@ pub const CREW_CODE_BLOCKLIST: &[&str] = &[
 
 pub const CONTEXT_WINDOW: usize = 80;
 pub const CONTEXT_SCORE_BOOST: f64 = 0.15;
-pub const MAX_INPUT_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
+pub const MAX_INPUT_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
 
 pub fn luhn_check(number: &str) -> bool {
     let digits: Vec<u32> = number
@@ -418,5 +418,11 @@ mod tests {
         assert!(!valid_card_prefix("9999999999999999"));
         // 1234567890123456 — prefix 1 is not a known issuer
         assert!(!valid_card_prefix("1234567890123456"));
+    }
+
+    #[test]
+    fn test_max_input_size_is_50mb() {
+        assert_eq!(MAX_INPUT_SIZE, 50 * 1024 * 1024);
+        assert!(MAX_INPUT_SIZE <= 100 * 1024 * 1024, "MAX_INPUT_SIZE should not exceed 100MB");
     }
 }
