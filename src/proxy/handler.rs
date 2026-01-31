@@ -369,6 +369,11 @@ pub async fn passthrough(
         .map(|pq: &axum::http::uri::PathAndQuery| pq.as_str().to_string())
         .unwrap_or_default();
 
+    // Reject path traversal attempts
+    if path.contains("..") {
+        return (StatusCode::BAD_REQUEST, "Bad request: path traversal not allowed").into_response();
+    }
+
     // Reject paths that don't match known API prefixes
     if !ALLOWED_PASSTHROUGH_PREFIXES
         .iter()
@@ -515,6 +520,67 @@ mod tests {
     fn test_sse_constants_are_bounded() {
         assert!(SSE_STREAM_TIMEOUT.as_secs() <= 900, "SSE timeout should not exceed 15 minutes");
         assert!(MAX_SSE_BUFFER_SIZE <= 10 * 1024 * 1024, "SSE buffer limit should not exceed 10MB");
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_rejects_path_traversal() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-traversal"),
+        ));
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/../../internal/admin")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("path traversal"), "Response should mention path traversal: {text}");
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_allows_valid_v1_path() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-traversal-ok"),
+        ));
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/models")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+        // Should NOT be 400 (traversal) or 403 (forbidden) — will be 502 (upstream unreachable)
+        assert_ne!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_passthrough_rejects_encoded_traversal() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-traversal-enc"),
+        ));
+
+        // Even with valid prefix, .. in query or later segments should be blocked
+        let req = Request::builder()
+            .method("GET")
+            .uri("/v1/../v1/../../etc/passwd")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
