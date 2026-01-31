@@ -186,38 +186,38 @@ fn create_private_dir(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Write mapping file atomically via temp-file-then-rename.
+/// This eliminates TOCTOU races: no window between check and open, and
+/// rename() replaces the directory entry atomically (even if target is a symlink,
+/// the symlink itself is replaced, not followed).
 fn write_mapping_file(path: &PathBuf, content: &str) -> io::Result<()> {
-    // Refuse to write through symlinks — prevents TOCTOU PII exfiltration
-    if path.is_symlink() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("Refusing to write mapping: {:?} is a symlink", path),
-        ));
-    }
+    let dir = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "mapping path has no parent directory")
+    })?;
+
+    // Write to a temp file in the same directory (same filesystem = atomic rename)
+    let tmp_path = dir.join(".mapping.json.tmp");
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         let mut file = fs::OpenOptions::new()
             .write(true)
-            .create_new(true)
+            .create(true)
+            .truncate(true)
             .mode(0o600)
-            .open(path)
-            .or_else(|_| {
-                // File already exists and is not a symlink — truncate and rewrite
-                fs::OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .mode(0o600)
-                    .open(path)
-            })?;
+            .open(&tmp_path)?;
         file.write_all(content.as_bytes())?;
-        return Ok(());
+        file.sync_all()?;
     }
     #[cfg(not(unix))]
     {
-        fs::write(path, content)
+        fs::write(&tmp_path, content)?;
     }
+
+    // Atomic rename — replaces target directory entry, never follows symlinks
+    fs::rename(&tmp_path, path)?;
+    Ok(())
 }
 
 // ─── Verbose output ─────────────────────────────────────────────────────────
@@ -513,4 +513,86 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_mapping_file_creates_new() {
+        let dir = std::env::temp_dir().join("anon-test-toctou-new");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("mapping.json");
+        write_mapping_file(&path, r#"{"test": true}"#).unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"test": true}"#);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_mapping_file_overwrites_existing() {
+        let dir = std::env::temp_dir().join("anon-test-toctou-overwrite");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("mapping.json");
+        fs::write(&path, "old content").unwrap();
+
+        write_mapping_file(&path, "new content").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new content");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_mapping_file_replaces_symlink_atomically() {
+        use std::os::unix::fs as unix_fs;
+
+        // The atomic rename pattern replaces the symlink directory entry
+        // itself rather than following it. Verify the symlink is gone
+        // and the file contains the correct content.
+        let dir = std::env::temp_dir().join("anon-test-toctou-symlink");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let target = dir.join("attacker-controlled.txt");
+        fs::write(&target, "attacker file").unwrap();
+
+        let path = dir.join("mapping.json");
+        unix_fs::symlink(&target, &path).unwrap();
+        assert!(path.is_symlink());
+
+        // write_mapping_file should replace the symlink with a regular file
+        write_mapping_file(&path, "safe content").unwrap();
+
+        // The path should now be a regular file, not a symlink
+        assert!(!path.is_symlink());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "safe content");
+
+        // The attacker's file should NOT have been modified
+        assert_eq!(fs::read_to_string(&target).unwrap(), "attacker file");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_write_mapping_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join("anon-test-toctou-perms");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("mapping.json");
+        write_mapping_file(&path, "secret PII").unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "mapping file should be owner-only (0o600), got {:o}", mode);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

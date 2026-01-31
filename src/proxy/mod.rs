@@ -36,40 +36,38 @@ impl ProxyState {
         }
     }
 
+    /// Dump mapping to disk atomically via temp-file-then-rename.
+    /// Eliminates TOCTOU symlink races — rename replaces the directory entry,
+    /// never following symlinks at the target path.
     pub async fn dump_mapping(&self) -> std::io::Result<()> {
         let anonymizer = self.anonymizer.lock().await;
         let mapping_json = serde_json::to_string_pretty(&anonymizer.mapping)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         let path = self.session_dir.join("mapping.json");
+        let tmp_path = self.session_dir.join(".mapping.json.tmp");
 
-        // Refuse to write through symlinks
-        if path.is_symlink() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("Refusing to write mapping: {:?} is a symlink", path),
-            ));
-        }
-
-        // Write with restricted permissions (0o600) on Unix
+        // Write to temp file, then atomic rename
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
             let mut file = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
                 .mode(0o600)
-                .open(&path)
+                .open(&tmp_path)
                 .await?;
             tokio::io::AsyncWriteExt::write_all(&mut file, mapping_json.as_bytes()).await?;
-            return Ok(());
+            tokio::io::AsyncWriteExt::flush(&mut file).await?;
+            file.sync_all().await?;
         }
         #[cfg(not(unix))]
         {
-            tokio::fs::write(&path, &mapping_json).await?;
-            Ok(())
+            tokio::fs::write(&tmp_path, &mapping_json).await?;
         }
+
+        tokio::fs::rename(&tmp_path, &path).await?;
+        Ok(())
     }
 
     pub async fn get_mapping_snapshot(&self) -> Mapping {
