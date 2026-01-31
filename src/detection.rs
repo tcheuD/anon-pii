@@ -201,13 +201,21 @@ impl Anonymizer {
         (result, filtered)
     }
 
+    /// Maximum JSON nesting depth for `walk_json`. Matches serde_json's default
+    /// recursion limit. Prevents stack overflow on deeply nested input.
+    const MAX_JSON_DEPTH: usize = 128;
+
     pub fn anonymize_json_value(&mut self, value: &Value) -> (Value, Vec<Detection>) {
         let mut all_detections = Vec::new();
-        let new_value = self.walk_json(value, &mut all_detections);
+        let new_value = self.walk_json(value, &mut all_detections, 0);
         (new_value, all_detections)
     }
 
-    fn walk_json(&mut self, value: &Value, detections: &mut Vec<Detection>) -> Value {
+    fn walk_json(&mut self, value: &Value, detections: &mut Vec<Detection>, depth: usize) -> Value {
+        if depth >= Self::MAX_JSON_DEPTH {
+            return value.clone();
+        }
+
         match value {
             Value::String(s) => {
                 let (anonymized, dets) = self.anonymize_text(s);
@@ -215,7 +223,7 @@ impl Anonymizer {
                 Value::String(anonymized)
             }
             Value::Array(arr) => {
-                let new_arr: Vec<Value> = arr.iter().map(|v| self.walk_json(v, detections)).collect();
+                let new_arr: Vec<Value> = arr.iter().map(|v| self.walk_json(v, detections, depth + 1)).collect();
                 Value::Array(new_arr)
             }
             Value::Object(map) => {
@@ -224,7 +232,7 @@ impl Anonymizer {
                     .map(|(k, v)| {
                         let (anon_key, key_dets) = self.anonymize_text(k);
                         detections.extend(key_dets);
-                        (anon_key, self.walk_json(v, detections))
+                        (anon_key, self.walk_json(v, detections, depth + 1))
                     })
                     .collect();
                 Value::Object(new_map)
@@ -506,5 +514,66 @@ mod tests {
         // Verify the surrounding accented text is preserved
         assert!(result.contains("Héloïse"));
         assert!(result.contains("Zürich"));
+    }
+
+    #[test]
+    fn test_walk_json_depth_limit_no_crash() {
+        // Build a JSON value nested beyond MAX_JSON_DEPTH (128).
+        // Without the depth limit this would stack overflow.
+        let mut value = serde_json::json!("leaf@example.com");
+        for _ in 0..200 {
+            value = serde_json::json!({ "n": value });
+        }
+
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_json_value(&value);
+
+        // Structure should be preserved — no crash
+        assert!(result.is_object());
+
+        // Values within the depth limit should be anonymized
+        // Navigate to depth 50 (well within limit)
+        let mut cursor = &result;
+        for _ in 0..50 {
+            cursor = &cursor["n"];
+        }
+        assert!(cursor.is_object() || cursor.is_string());
+    }
+
+    #[test]
+    fn test_walk_json_within_limit_anonymized() {
+        // Nesting within the limit — PII should be anonymized
+        let value = serde_json::json!({
+            "a": { "b": { "c": "john@example.com" } }
+        });
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_json_value(&value);
+
+        assert_eq!(dets.len(), 1);
+        assert_eq!(
+            result["a"]["b"]["c"].as_str().unwrap(),
+            "[EMAIL_ADDRESS_1]"
+        );
+    }
+
+    #[test]
+    fn test_walk_json_beyond_limit_not_anonymized() {
+        // Build nesting at exactly MAX_JSON_DEPTH (128) — the leaf should
+        // be returned as-is (cloned, not anonymized).
+        let mut value = serde_json::json!("deep@example.com");
+        for _ in 0..130 {
+            value = serde_json::json!({ "n": value });
+        }
+
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_json_value(&value);
+
+        // Navigate to the deepest leaf
+        let mut cursor = &result;
+        for _ in 0..130 {
+            cursor = &cursor["n"];
+        }
+        // Beyond depth 128, the value is cloned as-is (not anonymized)
+        assert_eq!(cursor.as_str().unwrap(), "deep@example.com");
     }
 }
