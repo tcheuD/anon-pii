@@ -4,6 +4,7 @@ use serde_json::Value;
 use crate::mapping::Mapping;
 use crate::patterns::{
     CONTEXT_SCORE_BOOST, CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS, luhn_check,
+    valid_card_prefix,
 };
 
 #[cfg(any(feature = "ner", feature = "ner-lite"))]
@@ -117,9 +118,12 @@ impl Anonymizer {
                     }
                 }
 
-                // Credit card Luhn validation
-                if pat.entity_type == "CREDIT_CARD" && !luhn_check(mat.as_str()) {
-                    continue;
+                // Credit card validation: Luhn checksum + known issuer prefix
+                if pat.entity_type == "CREDIT_CARD" {
+                    let matched = mat.as_str();
+                    if !luhn_check(matched) || !valid_card_prefix(matched) {
+                        continue;
+                    }
                 }
 
                 // Compute detection score with optional context boost

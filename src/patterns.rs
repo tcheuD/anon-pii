@@ -266,3 +266,157 @@ pub fn luhn_check(number: &str) -> bool {
         .sum();
     sum % 10 == 0
 }
+
+/// Validate that a matched number starts with a known card issuer prefix (IIN/BIN).
+/// Covers Visa, Mastercard, Amex, Discover, Diners Club, JCB, UnionPay, and Maestro.
+pub fn valid_card_prefix(number: &str) -> bool {
+    let digits: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 13 {
+        return false;
+    }
+
+    let d = digits.as_bytes();
+    let d1 = d[0];
+    let d2 = &digits[..2];
+    let d4 = if digits.len() >= 4 { &digits[..4] } else { "" };
+    let d6 = if digits.len() >= 6 { &digits[..6] } else { "" };
+
+    // Visa: starts with 4
+    if d1 == b'4' {
+        return true;
+    }
+
+    // Mastercard: 51-55 or 2221-2720
+    if let Ok(n2) = d2.parse::<u32>() {
+        if (51..=55).contains(&n2) {
+            return true;
+        }
+    }
+    if d4.len() == 4 {
+        if let Ok(n4) = d4.parse::<u32>() {
+            if (2221..=2720).contains(&n4) {
+                return true;
+            }
+        }
+    }
+
+    // Amex: 34, 37
+    if d2 == "34" || d2 == "37" {
+        return true;
+    }
+
+    // Discover: 6011, 622126-622925, 644-649, 65
+    if d4 == "6011" || d2 == "65" {
+        return true;
+    }
+    if let Ok(n3) = digits[..3].parse::<u32>() {
+        if (644..=649).contains(&n3) {
+            return true;
+        }
+    }
+    if d6.len() == 6 {
+        if let Ok(n6) = d6.parse::<u64>() {
+            if (622126..=622925).contains(&n6) {
+                return true;
+            }
+        }
+    }
+
+    // JCB: 3528-3589
+    if d4.len() == 4 {
+        if let Ok(n4) = d4.parse::<u32>() {
+            if (3528..=3589).contains(&n4) {
+                return true;
+            }
+        }
+    }
+
+    // UnionPay: 62
+    if d2 == "62" {
+        return true;
+    }
+
+    // Maestro: 5018, 5020, 5038, 5893, 6304, 6759, 6761, 6762, 6763
+    if matches!(
+        d4,
+        "5018" | "5020" | "5038" | "5893" | "6304" | "6759" | "6761" | "6762" | "6763"
+    ) {
+        return true;
+    }
+
+    // Diners Club: 300-305, 36, 38
+    if d2 == "36" || d2 == "38" {
+        return true;
+    }
+    if digits.len() >= 3 {
+        if let Ok(n3) = digits[..3].parse::<u32>() {
+            if (300..=305).contains(&n3) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_luhn_valid_cards() {
+        // Known valid test card numbers
+        assert!(luhn_check("4111111111111111")); // Visa
+        assert!(luhn_check("5500000000000004")); // Mastercard
+        assert!(luhn_check("340000000000009"));  // Amex (15 digits)
+        assert!(luhn_check("6011000000000004")); // Discover
+    }
+
+    #[test]
+    fn test_luhn_invalid() {
+        assert!(!luhn_check("4111111111111112")); // off by one
+        assert!(!luhn_check("1234567890123456")); // random
+        assert!(!luhn_check("123"));              // too short
+    }
+
+    #[test]
+    fn test_valid_card_prefix_known_issuers() {
+        assert!(valid_card_prefix("4111111111111111")); // Visa
+        assert!(valid_card_prefix("5100000000000000")); // Mastercard 51
+        assert!(valid_card_prefix("5500000000000000")); // Mastercard 55
+        assert!(valid_card_prefix("2221000000000000")); // Mastercard 2221
+        assert!(valid_card_prefix("2720000000000000")); // Mastercard 2720
+        assert!(valid_card_prefix("340000000000000"));  // Amex 34
+        assert!(valid_card_prefix("370000000000000"));  // Amex 37
+        assert!(valid_card_prefix("6011000000000000")); // Discover
+        assert!(valid_card_prefix("6500000000000000")); // Discover 65
+        assert!(valid_card_prefix("3528000000000000")); // JCB
+        assert!(valid_card_prefix("6200000000000000")); // UnionPay
+        assert!(valid_card_prefix("3600000000000000")); // Diners 36
+    }
+
+    #[test]
+    fn test_valid_card_prefix_rejects_unknown() {
+        // Numbers starting with digits not assigned to any major issuer
+        assert!(!valid_card_prefix("0000000000000000"));
+        assert!(!valid_card_prefix("1000000000000000"));
+        assert!(!valid_card_prefix("7000000000000000"));
+        assert!(!valid_card_prefix("8000000000000000"));
+        assert!(!valid_card_prefix("9000000000000000"));
+    }
+
+    #[test]
+    fn test_valid_card_prefix_with_separators() {
+        // Digits are filtered, so separators shouldn't matter
+        assert!(valid_card_prefix("4111 1111 1111 1111"));
+        assert!(valid_card_prefix("4111-1111-1111-1111"));
+    }
+
+    #[test]
+    fn test_combined_luhn_and_prefix_rejects_random_16_digit() {
+        // 9999999999999999 — no valid prefix, even if it somehow passed Luhn
+        assert!(!valid_card_prefix("9999999999999999"));
+        // 1234567890123456 — prefix 1 is not a known issuer
+        assert!(!valid_card_prefix("1234567890123456"));
+    }
+}
