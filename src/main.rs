@@ -336,8 +336,8 @@ fn main() -> io::Result<()> {
             session_dir,
         }) => {
             let session_dir = session_dir.unwrap_or_else(|| {
-                let dir = std::env::temp_dir().join("anon-proxy");
-                dir
+                let suffix = anon::mapping::crypto_random_hex(8);
+                std::env::temp_dir().join(format!("anon-proxy-{suffix}"))
             });
 
             let state = Arc::new(proxy::ProxyState::new(
@@ -613,6 +613,51 @@ mod tests {
     fn test_mask_pii_three_chars() {
         let masked = mask_pii("abc");
         assert_eq!(masked, "a***c");
+    }
+
+    #[test]
+    fn test_default_session_dir_has_random_suffix() {
+        // Simulate what the proxy command does: generate a random session dir name
+        let suffix = anon::mapping::crypto_random_hex(8);
+        let dir = std::env::temp_dir().join(format!("anon-proxy-{suffix}"));
+        let name = dir.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("anon-proxy-"), "dir name should start with anon-proxy-");
+        // 8 bytes = 16 hex chars
+        let hex_part = &name["anon-proxy-".len()..];
+        assert_eq!(hex_part.len(), 16, "random suffix should be 16 hex chars");
+        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_default_session_dir_is_unique() {
+        let dirs: std::collections::HashSet<String> = (0..50)
+            .map(|_| {
+                let suffix = anon::mapping::crypto_random_hex(8);
+                format!("anon-proxy-{suffix}")
+            })
+            .collect();
+        assert!(dirs.len() >= 48, "50 generated dirs should be nearly all unique");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_create_dir_rejects_symlink() {
+        use std::os::unix::fs as unix_fs;
+        let base = std::env::temp_dir().join("anon-test-symlink-dir");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+
+        let target = base.join("real-dir");
+        fs::create_dir_all(&target).unwrap();
+
+        let symlink_path = base.join("symlink-dir");
+        unix_fs::symlink(&target, &symlink_path).unwrap();
+
+        // create_dir should fail because the path already exists (as a symlink)
+        let result = fs::create_dir(&symlink_path);
+        assert!(result.is_err(), "create_dir should reject existing symlink");
+
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[cfg(unix)]

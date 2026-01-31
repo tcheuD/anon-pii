@@ -107,7 +107,26 @@ async fn validate_host(req: Request, next: Next) -> Response {
 
 pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
     // Ensure session dir exists with restricted permissions
-    tokio::fs::create_dir_all(&state.session_dir).await?;
+    // Use create_dir (not create_dir_all) so it fails if the path already
+    // exists — prevents symlink race where an attacker pre-creates the path.
+    match tokio::fs::create_dir(&state.session_dir).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // If the user explicitly passed --session-dir, allow reuse
+            // but verify it's actually a directory (not a symlink to elsewhere).
+            let meta = tokio::fs::symlink_metadata(&state.session_dir).await?;
+            if !meta.is_dir() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!(
+                        "session dir {:?} exists but is not a directory",
+                        state.session_dir
+                    ),
+                ));
+            }
+        }
+        Err(e) => return Err(e),
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
