@@ -1,0 +1,22 @@
+{
+  "error": "AuthenticationFailed",
+  "user": {
+    "email": "marie.durand@demoair-aviation.fr",
+    "phone": "+33 6 78 45 12 90",
+    "ip": "10.42.8.201"
+  },
+  "request": {
+    "url": "https://api.internal.example-air.com/v2/crew/roster",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJSUzI1NiJ9.fake-token",
+      "X-Forwarded-For": "192.168.12.55"
+    }
+  },
+  "context": {
+    "flight": "IZM4412",
+    "aircraft": "F-HOPA",
+    "pilot": "JDU",
+    "copilot": "MMA",
+    "message": "Crew member JDU failed auth at gate B12, contact marie.durand@demoair-aviation.fr or call 06 78 45 12 90"
+  }
+}

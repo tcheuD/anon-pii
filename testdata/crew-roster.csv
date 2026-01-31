@@ -1,0 +1,5 @@
+crew_code,name,email,phone,iban,flight,aircraft
+JDU,Jean Dupont,jean.dupont@example-air.com,+33 6 12 34 56 78,FR7630006000011234567890189,IZM4401,F-HOPA
+MMA,Marie Martin,marie.martin@example-air.com,06 98 76 54 32,FR7612345678901234567890123,IZM4401,F-HOPA
+PBR,Pierre Bernard,pierre.bernard@example-air.com,+33 6 55 44 33 22,FR7698765432109876543210987,RLA302,F-GRHK
+ALR,Amélie Leroy,amelie.leroy@example-air.com,0678901234,FR7611223344556677889900112,AME1050,F-HBXK

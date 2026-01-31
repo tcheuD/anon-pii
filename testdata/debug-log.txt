@@ -1,0 +1,10 @@
+2024-03-15 08:42:01 [ERROR] Flight IZM4412 departure delayed — pilot JDU not checked in
+2024-03-15 08:42:01 [INFO]  Contact: jean.dupont@example-air.com / +33 6 12 34 56 78
+2024-03-15 08:42:15 [WARN]  Aircraft F-HOPA MEL item pending, maintenance notified at ops-maintenance@example-air.com
+2024-03-15 08:43:22 [ERROR] Passenger data sync failed from 10.42.8.201 to 192.168.1.50
+2024-03-15 08:43:22 [DEBUG] Passenger SSN: 2 85 12 75 123 456 78 — needs manual verification
+2024-03-15 08:44:01 [INFO]  Copilot MMA checked in via mobile app (IP: 172.16.0.89)
+2024-03-15 08:44:30 [ERROR] Payment failed for booking ref BK-98234: card 4532 0151 2345 6789 declined
+2024-03-15 08:45:12 [INFO]  Replacement crew member PBR assigned, passport: 12AB34567
+2024-03-15 08:45:30 [WARN]  IBAN mismatch for crew payroll: expected FR7630006000011234567890189, got FR7612345678901234567890123
+2024-03-15 08:46:00 [INFO]  Flight IZM4412 cleared for departure, aircraft F-HOPA taxiing to runway 27L
