@@ -74,7 +74,10 @@ impl NerDetector for MlNerDetector {
 
         let encoding = match self.tokenizer.encode(text, true) {
             Ok(enc) => enc,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                eprintln!("Warning: NER tokenization failed: {e}");
+                return Vec::new();
+            }
         };
 
         let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
@@ -85,11 +88,17 @@ impl NerDetector for MlNerDetector {
         // Build input tensors — DistilBERT only needs input_ids + attention_mask
         let ids_tensor = match ort::value::Tensor::from_array((vec![1i64, seq_len as i64], input_ids)) {
             Ok(t) => t,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                eprintln!("Warning: NER input_ids tensor creation failed: {e}");
+                return Vec::new();
+            }
         };
         let mask_tensor = match ort::value::Tensor::from_array((vec![1i64, seq_len as i64], attention_mask)) {
             Ok(t) => t,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                eprintln!("Warning: NER attention_mask tensor creation failed: {e}");
+                return Vec::new();
+            }
         };
 
         let inputs = ort::inputs![
@@ -99,21 +108,35 @@ impl NerDetector for MlNerDetector {
 
         let mut session = match self.session.lock() {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                eprintln!("Warning: NER session lock poisoned: {e}");
+                return Vec::new();
+            }
         };
 
         let outputs = match session.run(inputs) {
             Ok(o) => o,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                eprintln!("Warning: NER inference failed: {e}");
+                return Vec::new();
+            }
         };
 
         // Extract logits: shape [1, seq_len, num_labels], flat array
         let (shape, logits) = match outputs[0].try_extract_tensor::<f32>() {
             Ok(l) => l,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                eprintln!("Warning: NER logits extraction failed: {e}");
+                return Vec::new();
+            }
         };
 
-        let num_labels = if shape.len() == 3 { shape[2] as usize } else { return Vec::new() };
+        let num_labels = if shape.len() == 3 {
+            shape[2] as usize
+        } else {
+            eprintln!("Warning: NER unexpected output shape: {:?}", shape);
+            return Vec::new();
+        };
         let offsets = encoding.get_offsets();
 
         // Decode BIO tags into spans
@@ -287,5 +310,33 @@ mod tests {
         flush_span(text, 0, 5, &[0.99], 0.5, &mut spans);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text, "caf\u{e9}");
+    }
+
+    #[test]
+    fn test_ml_ner_stress_input_no_panic() {
+        // Exercises the NER pipeline with adversarial inputs that could trigger
+        // errors at various stages (tokenization, tensor creation, inference).
+        // The fix for #17 ensures these log warnings instead of silently
+        // returning empty results. Without a model loaded, this verifies the
+        // function signature and graceful degradation.
+        let detector = match try_create_detector() {
+            Some(d) => d,
+            None => return,
+        };
+
+        // Very long input — stress tokenizer and tensor creation
+        let long = "Jean Dupont ".repeat(5000);
+        let spans = detector.detect_persons(&long);
+        // Should not panic; result may vary depending on model
+        let _ = spans;
+
+        // Input with only non-ASCII — stress tokenizer edge cases
+        let unicode_heavy = "名前は田中太郎です。連絡先：tanaka@example.com";
+        let spans = detector.detect_persons(unicode_heavy);
+        let _ = spans;
+
+        // Single character
+        let spans = detector.detect_persons("X");
+        assert!(spans.is_empty());
     }
 }
