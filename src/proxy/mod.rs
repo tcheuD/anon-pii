@@ -59,16 +59,24 @@ impl ProxyState {
 
 // Host header validation middleware — DNS rebinding defense
 async fn validate_host(req: Request, next: Next) -> Response {
-    if let Some(host) = req.headers().get("host").and_then(|h| h.to_str().ok()) {
-        // Strip port
-        let hostname = host.split(':').next().unwrap_or(host);
-        if !MAX_ALLOWED_HOSTS.contains(&hostname) {
+    let host = match req.headers().get("host").and_then(|h| h.to_str().ok()) {
+        Some(h) => h,
+        None => {
             return (
                 axum::http::StatusCode::FORBIDDEN,
-                "Forbidden: invalid Host header",
+                "Forbidden: missing Host header",
             )
                 .into_response();
         }
+    };
+    // Strip port
+    let hostname = host.split(':').next().unwrap_or(host);
+    if !MAX_ALLOWED_HOSTS.contains(&hostname) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Forbidden: invalid Host header",
+        )
+            .into_response();
     }
     next.run(req).await
 }
