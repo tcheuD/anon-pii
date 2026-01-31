@@ -4,7 +4,7 @@ use dirs;
 use serde::Serialize;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anon::detection::{Anonymizer, Detection};
@@ -163,16 +163,42 @@ fn write_output(path: Option<&PathBuf>, content: &str) -> io::Result<()> {
     }
 }
 
+/// Create directory with mode 0o700 (owner-only) on Unix.
+fn create_private_dir(dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 fn write_mapping_file(path: &PathBuf, content: &str) -> io::Result<()> {
+    // Refuse to write through symlinks — prevents TOCTOU PII exfiltration
+    if path.is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Refusing to write mapping: {:?} is a symlink", path),
+        ));
+    }
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         let mut file = fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .mode(0o600)
-            .open(path)?;
+            .open(path)
+            .or_else(|_| {
+                // File already exists and is not a symlink — truncate and rewrite
+                fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(path)
+            })?;
         file.write_all(content.as_bytes())?;
         return Ok(());
     }
@@ -447,7 +473,7 @@ fn main() -> io::Result<()> {
             // Save mapping file (contains original PII — restrict permissions)
             let mapping_path = cli.mapping.unwrap_or_else(default_mapping_path);
             if let Some(parent) = mapping_path.parent() {
-                fs::create_dir_all(parent)?;
+                create_private_dir(parent)?;
             }
             let mapping_json = serde_json::to_string_pretty(&anonymizer.mapping)?;
             write_mapping_file(&mapping_path, &mapping_json)?;
