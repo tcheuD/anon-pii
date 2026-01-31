@@ -17,13 +17,26 @@ pub fn detect_format(content: &str) -> DetectedFormat {
         }
     }
 
-    // SQL
+    // SQL — require a leading keyword AND a confirming SQL keyword
     if let Some(first_word) = trimmed.split_whitespace().next() {
-        match first_word.to_uppercase().as_str() {
-            "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "DROP" => {
+        let upper_first = first_word.to_uppercase();
+        let is_sql_lead = matches!(
+            upper_first.as_str(),
+            "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "DROP"
+        );
+        if is_sql_lead {
+            let upper = trimmed.to_uppercase();
+            let has_confirming = upper.contains(" FROM ")
+                || upper.contains(" INTO ")
+                || upper.contains(" SET ")
+                || upper.contains(" TABLE ")
+                || upper.contains(" WHERE ")
+                || upper.contains(" VALUES ")
+                || upper.contains(" JOIN ")
+                || upper.contains(" INDEX ");
+            if has_confirming {
                 return DetectedFormat::Sql;
             }
-            _ => {}
         }
     }
 
