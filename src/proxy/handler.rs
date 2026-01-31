@@ -14,6 +14,38 @@ use super::ProxyState;
 /// Maximum request body size for `/v1/messages` (10 MB).
 const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024;
 
+/// Headers allowed to be forwarded to the upstream API.
+/// Everything else is dropped to prevent leaking cookies, internal routing
+/// headers, proxy headers, and client IP addresses.
+const ALLOWED_UPSTREAM_HEADERS: &[&str] = &[
+    "x-api-key",
+    "authorization",
+    "content-type",
+    "accept",
+    "anthropic-version",
+    "anthropic-beta",
+    "user-agent",
+];
+
+/// Filter headers to only include those in the upstream allowlist.
+fn filter_headers_for_upstream(
+    headers: &HeaderMap,
+    builder: reqwest::RequestBuilder,
+) -> reqwest::RequestBuilder {
+    let mut req = builder;
+    for (name, value) in headers.iter() {
+        let name_str = name.as_str();
+        if ALLOWED_UPSTREAM_HEADERS.contains(&name_str) {
+            if let Ok(rn) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
+                if let Ok(rv) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
+                    req = req.header(rn, rv);
+                }
+            }
+        }
+    }
+    req
+}
+
 /// Handle POST /v1/messages — the Anthropic Messages API endpoint.
 ///
 /// Flow:
@@ -74,17 +106,8 @@ pub async fn handle_messages(
     let upstream_url = format!("{}/v1/messages", state.upstream);
     let mut upstream_req = state.client.post(&upstream_url);
 
-    // Forward relevant headers (auth, content type, anthropic-specific)
-    for (name, value) in &headers {
-        let name_str = name.as_str().to_lowercase();
-        match name_str.as_str() {
-            "x-api-key" | "anthropic-version" | "anthropic-beta" | "content-type"
-            | "authorization" => {
-                upstream_req = upstream_req.header(name.clone(), value.clone());
-            }
-            _ => {}
-        }
-    }
+    // Forward only allowlisted headers
+    upstream_req = filter_headers_for_upstream(&headers, upstream_req);
 
     upstream_req = upstream_req.body(anonymized_body);
 
@@ -343,26 +366,8 @@ pub async fn passthrough(
         &upstream_url,
     );
 
-    // Forward only safe headers — strip auth headers to prevent credential leakage
-    for (name, value) in headers.iter() {
-        let name_str: &str = name.as_str();
-        match name_str {
-            "host" | "connection" => continue,
-            "x-api-key" | "authorization" => {
-                upstream_req = upstream_req.header(
-                    reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()).unwrap(),
-                    reqwest::header::HeaderValue::from_bytes(value.as_bytes()).unwrap(),
-                );
-            }
-            _ => {
-                if let Ok(rn) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
-                    if let Ok(rv) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
-                        upstream_req = upstream_req.header(rn, rv);
-                    }
-                }
-            }
-        }
-    }
+    // Forward only allowlisted headers
+    upstream_req = filter_headers_for_upstream(&headers, upstream_req);
 
     if !body_bytes.is_empty() {
         upstream_req = upstream_req.body(body_bytes.to_vec());
@@ -400,6 +405,60 @@ pub async fn passthrough(
 mod tests {
     use super::*;
     use axum::body::to_bytes;
+
+    #[test]
+    fn test_allowed_upstream_headers_allowlist() {
+        // Verify that sensitive headers are NOT in the allowlist
+        let sensitive = [
+            "cookie",
+            "set-cookie",
+            "proxy-authorization",
+            "x-forwarded-for",
+            "x-real-ip",
+            "x-forwarded-host",
+            "forwarded",
+            "referer",
+        ];
+        for h in &sensitive {
+            assert!(
+                !ALLOWED_UPSTREAM_HEADERS.contains(h),
+                "Sensitive header '{h}' must not be in the upstream allowlist"
+            );
+        }
+    }
+
+    #[test]
+    fn test_filter_headers_drops_sensitive() {
+        let client = reqwest::Client::new();
+        let mut headers = HeaderMap::new();
+        // Allowed
+        headers.insert("x-api-key", HeaderValue::from_static("sk-test"));
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+        headers.insert("anthropic-version", HeaderValue::from_static("2024-01-01"));
+        // Sensitive — must be dropped
+        headers.insert("cookie", HeaderValue::from_static("session=secret"));
+        headers.insert("x-forwarded-for", HeaderValue::from_static("10.0.0.1"));
+        headers.insert("proxy-authorization", HeaderValue::from_static("Basic abc"));
+        headers.insert("referer", HeaderValue::from_static("http://internal.corp"));
+
+        let builder = client.post("http://localhost/test");
+        let filtered = filter_headers_for_upstream(&headers, builder);
+
+        // Build the request to inspect headers
+        let req = filtered.build().unwrap();
+        let fwd_headers = req.headers();
+
+        // Allowed headers are present
+        assert_eq!(fwd_headers.get("x-api-key").unwrap(), "sk-test");
+        assert_eq!(fwd_headers.get("content-type").unwrap(), "application/json");
+        assert_eq!(fwd_headers.get("anthropic-version").unwrap(), "2024-01-01");
+
+        // Sensitive headers are absent
+        assert!(fwd_headers.get("cookie").is_none(), "cookie must be dropped");
+        assert!(fwd_headers.get("x-forwarded-for").is_none(), "x-forwarded-for must be dropped");
+        assert!(fwd_headers.get("proxy-authorization").is_none(), "proxy-authorization must be dropped");
+        assert!(fwd_headers.get("referer").is_none(), "referer must be dropped");
+    }
 
     #[tokio::test]
     async fn test_handle_messages_rejects_oversized_body() {
