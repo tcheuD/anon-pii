@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>anon — Anonymisation PII</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  :root {
+    --bg: #FAFAFA;
+    --bg-surface: #F5F5F5;
+    --bg-elevated: #FFFFFF;
+    --border: #E0E0E0;
+    --border-subtle: #EEEEEE;
+    --text: #212121;
+    --text-body: #616161;
+    --text-secondary: #757575;
+    --text-muted: #9E9E9E;
+    --primary: #005450;
+    --primary-hover: #004440;
+    --accent: #00BEB5;
+    --accent-light: #7EC4CC;
+    --accent-soft: #E8F5F4;
+    --primary-text: #FFFFFF;
+    --badge-bg: rgba(0, 84, 80, 0.1);
+    --badge-text: #005450;
+    --success: #16a34a;
+    --warning: #ca8a04;
+    --error: #dc2626;
+    --error-bg: #fef2f2;
+    --error-border: #fecaca;
+    --error-text: #dc2626;
+    --textarea-bg: #F5F5F5;
+    --shadow: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-hover: 0 4px 6px rgba(0,0,0,0.1);
+    --font: 'Work Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+
+
+  html { font-size: 15px; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 1.25rem 2rem;
+  }
+
+  /* --- Header --- */
+  header {
+    padding: 1.25rem 0 1rem;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+  header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--primary);
+    font-family: var(--font);
+  }
+  header .sep {
+    color: var(--border);
+    font-weight: 300;
+    font-size: 1.3rem;
+  }
+  header .subtitle {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+  .header-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .demo-badge {
+    font-size: 0.68rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    letter-spacing: 0.03em;
+  }
+
+  /* --- Panels --- */
+  .panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+  }
+  @media (max-width: 768px) {
+    .panels { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    transition: box-shadow 150ms ease;
+  }
+  .panel-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 340px;
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.6;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--textarea-bg);
+    color: var(--text);
+    outline: none;
+    transition: border-color 150ms ease;
+  }
+  textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0,190,181,0.15);
+  }
+  textarea::placeholder {
+    color: var(--text-muted);
+    font-family: var(--font);
+    font-size: 0.82rem;
+  }
+
+  /* --- Controls row --- */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  select, .btn {
+    font-family: var(--font);
+    font-size: 0.82rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text);
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+    transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+    outline: none;
+  }
+  select:focus, .btn:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0,190,181,0.15);
+  }
+
+  .btn { font-weight: 500; white-space: nowrap; }
+  .btn:hover { border-color: var(--accent-light); background: var(--accent-soft); }
+  .btn:active { transform: scale(0.98); }
+
+  .btn-primary {
+    background: var(--primary);
+    color: var(--primary-text);
+    border-color: var(--primary);
+    font-weight: 600;
+    padding: 0.5rem 1.4rem;
+    box-shadow: var(--shadow);
+  }
+  .btn-primary:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+    box-shadow: var(--shadow-hover);
+  }
+  .btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* --- Threshold slider --- */
+  .threshold-group {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .threshold-group label {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .threshold-group input[type="range"] {
+    width: 100px;
+    accent-color: var(--primary);
+    cursor: pointer;
+  }
+  .threshold-val {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    min-width: 2.2em;
+    text-align: right;
+  }
+
+  /* --- Error banner --- */
+  .error-banner {
+    display: none;
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    background: var(--error-bg);
+    border: 1px solid var(--error-border);
+    color: var(--error-text);
+    font-size: 0.82rem;
+  }
+  .error-banner.visible { display: block; }
+
+  /* --- Detection section --- */
+  .detection-section {
+    display: none;
+    margin-top: 1.5rem;
+  }
+  .detection-section.visible { display: block; }
+
+  .section-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .section-header {
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .table-wrap {
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  thead th {
+    text-align: left;
+    padding: 0.55rem 1rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--bg-surface);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  tbody td {
+    padding: 0.5rem 1rem;
+    border-top: 1px solid var(--border-subtle);
+    vertical-align: middle;
+    color: var(--text-body);
+  }
+  tbody tr:hover { background: var(--bg-surface); }
+
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    font-family: var(--mono);
+    background: var(--badge-bg);
+    color: var(--badge-text);
+    white-space: nowrap;
+  }
+  .masked-value {
+    font-family: var(--mono);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+  }
+  .score { font-weight: 600; font-size: 0.82rem; font-family: var(--mono); }
+  .score-high { color: var(--success); }
+  .score-mid { color: var(--warning); }
+  .score-low { color: var(--error); }
+
+  /* --- Mapping viewer --- */
+  .mapping-section {
+    margin-top: 0;
+  }
+  .collapsible-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0.6rem 1rem;
+    width: 100%;
+    text-align: left;
+    font-family: var(--font);
+    transition: color 150ms ease;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .collapsible-toggle:hover { color: var(--text); }
+  .collapsible-toggle .arrow {
+    display: inline-block;
+    transition: transform 200ms ease;
+    font-size: 0.65rem;
+  }
+  .collapsible-toggle.open .arrow { transform: rotate(90deg); }
+
+  .mapping-body {
+    display: none;
+    padding: 0 1rem 0.75rem;
+  }
+  .mapping-body.visible { display: block; }
+
+  .mapping-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    font-family: var(--mono);
+  }
+  .mapping-table td {
+    padding: 0.35rem 0.75rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .mapping-table .token { color: var(--badge-text); font-weight: 500; }
+  .mapping-table .original { color: var(--text-secondary); }
+
+  /* --- Misc --- */
+  .spacer { flex: 1; }
+  .copy-feedback {
+    font-size: 0.78rem;
+    color: var(--success);
+    font-weight: 500;
+    opacity: 0;
+    transition: opacity 200ms ease;
+  }
+  .copy-feedback.show { opacity: 1; }
+
+  .mapping-status {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.4rem;
+    padding: 0 0.1rem;
+  }
+  .mapping-status.loaded {
+    color: var(--success);
+  }
+
+  .kbd {
+    font-size: 0.65rem;
+    color: rgba(255,255,255,0.5);
+    margin-left: 0.5rem;
+    font-weight: 400;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="brand">
+      <h1>anon</h1>
+      <span class="sep">|</span>
+      <span class="subtitle">Anonymisation PII</span>
+    </div>
+    <div class="header-right">
+      <span class="demo-badge">Demo Airline</span>
+    </div>
+  </header>
+
+  <div class="panels">
+    <!-- Input Panel -->
+    <div class="panel">
+      <div class="panel-label">Saisie</div>
+      <textarea id="inputText" placeholder="Collez du texte, JSON, SQL ou CSV ici..." spellcheck="false"></textarea>
+      <div id="inputError" class="error-banner"></div>
+      <div class="controls">
+        <select id="formatSelect">
+          <option value="auto">Auto</option>
+          <option value="text">Texte</option>
+          <option value="json">JSON</option>
+          <option value="sql">SQL</option>
+          <option value="csv">CSV</option>
+        </select>
+        <div class="threshold-group">
+          <label for="thresholdRange">Seuil</label>
+          <input type="range" id="thresholdRange" min="0" max="1" step="0.05" value="0.5">
+          <span id="thresholdVal" class="threshold-val">0.50</span>
+        </div>
+        <div class="spacer"></div>
+        <button id="anonymizeBtn" class="btn btn-primary" type="button">Anonymiser<span class="kbd">Ctrl+Entrée</span></button>
+      </div>
+    </div>
+
+    <!-- Output Panel -->
+    <div class="panel">
+      <div class="panel-label">Résultat</div>
+      <textarea id="outputText" placeholder="Le résultat anonymisé apparaîtra ici... ou collez un texte anonymisé pour le restaurer." spellcheck="false"></textarea>
+      <div id="outputError" class="error-banner"></div>
+      <div class="controls">
+        <button id="copyBtn" class="btn" type="button">Copier</button>
+        <span id="copyFeedback" class="copy-feedback">Copié !</span>
+        <button id="restoreBtn" class="btn" type="button">Restaurer</button>
+        <button id="loadMappingBtn" class="btn" type="button">Charger correspondance</button>
+        <div class="spacer"></div>
+        <button id="clearBtn" class="btn" type="button">Effacer</button>
+      </div>
+      <div id="mappingStatus" class="mapping-status"></div>
+    </div>
+  </div>
+
+  <!-- Detection Results -->
+  <div id="detectionSection" class="detection-section">
+    <div class="section-card">
+      <div class="section-header">
+        <span>Détections</span>
+        <span id="detectionCount" style="font-weight:400;font-size:0.78rem;color:var(--text-muted)"></span>
+      </div>
+      <div id="timingBar" style="display:none;padding:0.35rem 0.75rem;font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border);"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Type d'entité</th><th>Original (masqué)</th><th>Score</th></tr>
+          </thead>
+          <tbody id="detectionBody"></tbody>
+        </table>
+      </div>
+
+      <!-- Mapping Viewer -->
+      <div class="mapping-section">
+        <button id="mappingToggle" class="collapsible-toggle" type="button">
+          <span class="arrow">&#9654;</span> Correspondances
+        </button>
+        <div id="mappingBody" class="mapping-body">
+          <table class="mapping-table">
+            <tbody id="mappingTableBody"></tbody>
+          </table>
+          <div style="margin-top:0.5rem;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+            <button id="copyMappingBtn" class="btn" type="button" style="font-size:0.78rem;">Copier</button>
+            <span id="copyMappingFeedback" class="copy-feedback">Copié !</span>
+            <button id="downloadMappingBtn" class="btn" type="button" style="font-size:0.78rem;">Télécharger</button>
+            <label class="btn" style="font-size:0.78rem;margin:0;display:inline-flex;align-items:center;">
+              Importer
+              <input id="uploadMappingInput" type="file" accept=".json" style="display:none;">
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  var inputText = document.getElementById("inputText");
+  var outputText = document.getElementById("outputText");
+  var formatSelect = document.getElementById("formatSelect");
+  var thresholdRange = document.getElementById("thresholdRange");
+  var thresholdVal = document.getElementById("thresholdVal");
+  var anonymizeBtn = document.getElementById("anonymizeBtn");
+  var copyBtn = document.getElementById("copyBtn");
+  var copyFeedback = document.getElementById("copyFeedback");
+  var restoreBtn = document.getElementById("restoreBtn");
+  var clearBtn = document.getElementById("clearBtn");
+  var inputError = document.getElementById("inputError");
+  var outputError = document.getElementById("outputError");
+  var detectionSection = document.getElementById("detectionSection");
+  var detectionBody = document.getElementById("detectionBody");
+  var detectionCount = document.getElementById("detectionCount");
+  var mappingToggle = document.getElementById("mappingToggle");
+  var mappingBody = document.getElementById("mappingBody");
+  var mappingTableBody = document.getElementById("mappingTableBody");
+  var copyMappingBtn = document.getElementById("copyMappingBtn");
+  var copyMappingFeedback = document.getElementById("copyMappingFeedback");
+  var downloadMappingBtn = document.getElementById("downloadMappingBtn");
+  var uploadMappingInput = document.getElementById("uploadMappingInput");
+  var loadMappingBtn = document.getElementById("loadMappingBtn");
+  var mappingStatus = document.getElementById("mappingStatus");
+  var timingBar = document.getElementById("timingBar");
+
+  var currentMapping = null;
+
+  thresholdRange.addEventListener("input", function() {
+    thresholdVal.textContent = parseFloat(this.value).toFixed(2);
+  });
+
+  function showError(el, msg) {
+    el.textContent = msg;
+    el.classList.add("visible");
+  }
+  function hideError(el) {
+    el.textContent = "";
+    el.classList.remove("visible");
+  }
+
+  function maskValue(str) {
+    if (!str || str.length <= 2) return "***";
+    return str.charAt(0) + "***" + str.charAt(str.length - 1);
+  }
+
+  function scoreClass(score) {
+    if (score > 0.8) return "score-high";
+    if (score > 0.6) return "score-mid";
+    return "score-low";
+  }
+
+  function flashFeedback(el) {
+    el.classList.add("show");
+    setTimeout(function() { el.classList.remove("show"); }, 1500);
+  }
+
+  async function anonymize() {
+    var text = inputText.value.trim();
+    if (!text) { inputText.focus(); return; }
+
+    hideError(inputError);
+    hideError(outputError);
+    anonymizeBtn.disabled = true;
+    anonymizeBtn.textContent = "Anonymisation\u2026";
+
+    try {
+      var t0 = performance.now();
+      var res = await fetch("/api/anonymize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: text,
+          format: formatSelect.value,
+          threshold: parseFloat(thresholdRange.value)
+        })
+      });
+
+      if (!res.ok) {
+        var errText = await res.text();
+        showError(inputError, errText || "Erreur d'anonymisation (status " + res.status + ")");
+        return;
+      }
+
+      var data = await res.json();
+      var totalMs = performance.now() - t0;
+      var serverMs = data.processing_time_ms || 0;
+      var networkMs = Math.max(0, totalMs - serverMs);
+
+      outputText.value = data.result || "";
+      currentMapping = data.mapping || null;
+
+      renderDetections(data.detections || []);
+      renderMapping(data.mapping || {});
+      timingBar.textContent = "Serveur : " + serverMs.toFixed(1) + " ms  |  Réseau : " + networkMs.toFixed(1) + " ms  |  Total : " + totalMs.toFixed(1) + " ms";
+      timingBar.style.display = "";
+      detectionSection.classList.add("visible");
+
+    } catch (err) {
+      showError(inputError, "Erreur de requête : " + err.message);
+    } finally {
+      anonymizeBtn.disabled = false;
+      anonymizeBtn.innerHTML = "Anonymiser<span class=\"kbd\">Ctrl+Entrée</span>";
+    }
+  }
+
+  function renderDetections(detections) {
+    detectionBody.innerHTML = "";
+
+    var seen = {};
+    var unique = [];
+    for (var i = 0; i < detections.length; i++) {
+      var d = detections[i];
+      var key = d.entity_type + "|" + d.original;
+      if (!seen[key]) {
+        seen[key] = true;
+        unique.push(d);
+      }
+    }
+
+    detectionCount.textContent = unique.length + " détection" + (unique.length !== 1 ? "s" : "") + " unique" + (unique.length !== 1 ? "s" : "");
+
+    for (var j = 0; j < unique.length; j++) {
+      var det = unique[j];
+      var tr = document.createElement("tr");
+
+      var tdType = document.createElement("td");
+      var badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = det.entity_type;
+      tdType.appendChild(badge);
+
+      var tdOriginal = document.createElement("td");
+      var masked = document.createElement("span");
+      masked.className = "masked-value";
+      masked.textContent = maskValue(det.original);
+      tdOriginal.appendChild(masked);
+
+      var tdScore = document.createElement("td");
+      var scoreSpan = document.createElement("span");
+      var pct = Math.round(det.score * 100);
+      scoreSpan.className = "score " + scoreClass(det.score);
+      scoreSpan.textContent = pct + "%";
+      tdScore.appendChild(scoreSpan);
+
+      tr.appendChild(tdType);
+      tr.appendChild(tdOriginal);
+      tr.appendChild(tdScore);
+      detectionBody.appendChild(tr);
+    }
+  }
+
+  function renderMapping(mapping) {
+    mappingTableBody.innerHTML = "";
+    var keys = Object.keys(mapping);
+    if (keys.length === 0) return;
+
+    for (var i = 0; i < keys.length; i++) {
+      var tr = document.createElement("tr");
+
+      var tdToken = document.createElement("td");
+      tdToken.className = "token";
+      tdToken.textContent = keys[i];
+
+      var tdOrig = document.createElement("td");
+      tdOrig.className = "original";
+      tdOrig.textContent = mapping[keys[i]];
+
+      tr.appendChild(tdToken);
+      tr.appendChild(tdOrig);
+      mappingTableBody.appendChild(tr);
+    }
+  }
+
+  async function restore() {
+    var text = outputText.value.trim();
+    if (!text) { outputText.focus(); return; }
+
+    hideError(outputError);
+    restoreBtn.disabled = true;
+    restoreBtn.textContent = "Restauration\u2026";
+
+    try {
+      var payload = { text: text };
+      if (currentMapping) {
+        payload.mapping = currentMapping;
+      }
+
+      var res = await fetch("/api/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        var errText = await res.text();
+        showError(outputError, errText || "Erreur de restauration (status " + res.status + ")");
+        return;
+      }
+
+      var data = await res.json();
+      outputText.value = data.result || "";
+    } catch (err) {
+      showError(outputError, "Erreur de requête : " + err.message);
+    } finally {
+      restoreBtn.disabled = false;
+      restoreBtn.textContent = "Restaurer";
+    }
+  }
+
+  function copyOutput() {
+    if (!outputText.value) return;
+    navigator.clipboard.writeText(outputText.value).then(function() {
+      flashFeedback(copyFeedback);
+    });
+  }
+
+  function copyMappingJSON() {
+    if (!currentMapping) return;
+    navigator.clipboard.writeText(JSON.stringify(currentMapping, null, 2)).then(function() {
+      flashFeedback(copyMappingFeedback);
+    });
+  }
+
+  function clearAll() {
+    inputText.value = "";
+    outputText.value = "";
+    currentMapping = null;
+    hideError(inputError);
+    hideError(outputError);
+    detectionSection.classList.remove("visible");
+    detectionBody.innerHTML = "";
+    mappingTableBody.innerHTML = "";
+    mappingBody.classList.remove("visible");
+    mappingToggle.classList.remove("open");
+    mappingStatus.textContent = "";
+    mappingStatus.className = "mapping-status";
+    timingBar.style.display = "none";
+    timingBar.textContent = "";
+    inputText.focus();
+  }
+
+  mappingToggle.addEventListener("click", function() {
+    var isOpen = mappingBody.classList.contains("visible");
+    if (isOpen) {
+      mappingBody.classList.remove("visible");
+      mappingToggle.classList.remove("open");
+    } else {
+      mappingBody.classList.add("visible");
+      mappingToggle.classList.add("open");
+    }
+  });
+
+  // -- Download mapping as JSON file --
+  function downloadMapping() {
+    if (!currentMapping) return;
+    var blob = new Blob([JSON.stringify(currentMapping, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "mapping.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // -- Upload mapping from JSON file --
+  function handleUploadMapping(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var data = JSON.parse(e.target.result);
+        if (data.mappings && typeof data.mappings === "object") {
+          currentMapping = data.mappings;
+        } else if (typeof data === "object" && !Array.isArray(data)) {
+          currentMapping = data;
+        } else {
+          showError(outputError, "Format de fichier invalide");
+          return;
+        }
+        showMappingStatus("Correspondance importée (" + Object.keys(currentMapping).length + " entrées)");
+      } catch (err) {
+        showError(outputError, "Fichier JSON invalide : " + err.message);
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = "";
+  }
+
+  // -- Load last saved mapping from server --
+  async function loadSavedMapping() {
+    hideError(outputError);
+    loadMappingBtn.disabled = true;
+    loadMappingBtn.textContent = "Chargement\u2026";
+
+    try {
+      var res = await fetch("/api/mapping");
+      if (!res.ok) {
+        showError(outputError, "Aucune correspondance sauvegardée");
+        return;
+      }
+      var data = await res.json();
+      currentMapping = data.mapping;
+      showMappingStatus("Correspondance chargée — session " + data.session_id + " (" + Object.keys(data.mapping).length + " entrées)");
+    } catch (err) {
+      showError(outputError, "Erreur : " + err.message);
+    } finally {
+      loadMappingBtn.disabled = false;
+      loadMappingBtn.textContent = "Charger correspondance";
+    }
+  }
+
+  function showMappingStatus(msg) {
+    mappingStatus.textContent = msg;
+    mappingStatus.className = "mapping-status loaded";
+  }
+
+  // -- Event bindings --
+  anonymizeBtn.addEventListener("click", anonymize);
+  copyBtn.addEventListener("click", copyOutput);
+  restoreBtn.addEventListener("click", restore);
+  clearBtn.addEventListener("click", clearAll);
+  copyMappingBtn.addEventListener("click", copyMappingJSON);
+  downloadMappingBtn.addEventListener("click", downloadMapping);
+  uploadMappingInput.addEventListener("change", handleUploadMapping);
+  loadMappingBtn.addEventListener("click", loadSavedMapping);
+
+  document.addEventListener("keydown", function(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      anonymize();
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
