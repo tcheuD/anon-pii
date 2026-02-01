@@ -10,7 +10,8 @@ use crate::mapping::Mapping;
 /// - `messages[].content` (string or array of content blocks)
 ///
 /// Content blocks have `type: "text"` with a `text` field,
-/// or `type: "tool_result"` with `content` (string or array).
+/// `type: "tool_result"` with `content` (string or array),
+/// or `type: "tool_use"` with an `input` JSON object.
 pub fn anonymize_request(body: &mut Value, anonymizer: &mut Anonymizer) {
     // system field
     if let Some(system) = body.get_mut("system") {
@@ -62,6 +63,7 @@ fn anonymize_field(field: &mut Value, anonymizer: &mut Anonymizer) {
 /// Handles:
 /// - `{ "type": "text", "text": "..." }`
 /// - `{ "type": "tool_result", "content": "..." | [...] }`
+/// - `{ "type": "tool_use", "input": { ... } }`
 fn anonymize_content_block(block: &mut Value, anonymizer: &mut Anonymizer) {
     let block_type = block
         .get("type")
@@ -79,6 +81,12 @@ fn anonymize_content_block(block: &mut Value, anonymizer: &mut Anonymizer) {
         "tool_result" => {
             if let Some(content) = block.get_mut("content") {
                 anonymize_field(content, anonymizer);
+            }
+        }
+        "tool_use" => {
+            if let Some(input) = block.get("input") {
+                let (anon_input, _) = anonymizer.anonymize_json_value(input);
+                block["input"] = anon_input;
             }
         }
         _ => {}
@@ -185,6 +193,74 @@ mod tests {
         let text = response["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("john@example.com"));
         assert!(!text.contains("[EMAIL_ADDRESS_1]"));
+    }
+
+    #[test]
+    fn test_anonymize_tool_use_input() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_abc123",
+                            "name": "get_user",
+                            "input": {
+                                "email": "john@example.com",
+                                "phone": "+33 6 12 34 56 78"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+        let mut anonymizer = Anonymizer::new(0.0);
+        anonymize_request(&mut body, &mut anonymizer);
+
+        let input = &body["messages"][0]["content"][0]["input"];
+        let email = input["email"].as_str().unwrap();
+        assert!(!email.contains("john@example.com"), "email PII should be anonymized");
+        assert!(email.contains("[EMAIL_ADDRESS_1]"));
+
+        // id and name should be preserved
+        assert_eq!(body["messages"][0]["content"][0]["id"], "toolu_abc123");
+        assert_eq!(body["messages"][0]["content"][0]["name"], "get_user");
+    }
+
+    #[test]
+    fn test_anonymize_tool_use_nested_input() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_xyz",
+                            "name": "search",
+                            "input": {
+                                "query": "Find user with IP 10.0.0.42",
+                                "filters": {
+                                    "contact": "admin@secret.org"
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+        let mut anonymizer = Anonymizer::new(0.0);
+        anonymize_request(&mut body, &mut anonymizer);
+
+        let input = &body["messages"][0]["content"][0]["input"];
+        let query = input["query"].as_str().unwrap();
+        assert!(!query.contains("10.0.0.42"), "nested IP should be anonymized");
+
+        let contact = input["filters"]["contact"].as_str().unwrap();
+        assert!(!contact.contains("admin@secret.org"), "nested email should be anonymized");
     }
 
     #[test]
