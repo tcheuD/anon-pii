@@ -45,6 +45,43 @@ fn decode_unicode_escapes(input: &str) -> String {
     result
 }
 
+/// Decode URL percent-encoded sequences (`%XX`) into their UTF-8 equivalents.
+/// Only decodes valid two-hex-digit sequences for ASCII-range bytes (0x00-0x7F).
+/// Malformed sequences and non-ASCII encodings are left as-is.
+fn decode_percent_encoding(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let remaining: String = chars.as_str().chars().take(2).collect();
+            if remaining.len() == 2
+                && remaining.chars().all(|h| h.is_ascii_hexdigit())
+            {
+                let val = (hex_val(remaining.as_bytes()[0]) << 4)
+                    | hex_val(remaining.as_bytes()[1]);
+                if val < 0x80 {
+                    result.push(val as char);
+                    chars.nth(1); // skip the two hex chars
+                    continue;
+                }
+            }
+            result.push('%');
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+fn hex_val(b: u8) -> u8 {
+    match b {
+        b'0'..=b'9' => b - b'0',
+        b'a'..=b'f' => b - b'a' + 10,
+        b'A'..=b'F' => b - b'A' + 10,
+        _ => 0,
+    }
+}
+
 #[cfg(any(feature = "ner", feature = "ner-lite"))]
 use crate::ner::NerDetector;
 
@@ -160,6 +197,9 @@ impl Anonymizer {
         // Decode JSON-style \uXXXX escape sequences (e.g. \u0040 → @) so that
         // PII hidden behind unicode escapes in log lines is detected.
         let normalized = decode_unicode_escapes(&normalized);
+        // Decode URL percent-encoding (e.g. %40 → @) so that PII in HTTP
+        // access log query strings is detected.
+        let normalized = decode_percent_encoding(&normalized);
         let text = normalized.as_str();
 
         let mut detections: Vec<Detection> = Vec::new();
@@ -971,6 +1011,55 @@ mod tests {
         assert_eq!(decode_unicode_escapes(r"\u00GG"), r"\u00GG");
         // Just backslash not followed by u
         assert_eq!(decode_unicode_escapes(r"\n"), r"\n");
+    }
+
+    #[test]
+    fn test_percent_encoded_email_detected() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("email=j.smith%40provider.net&loyalty_id=9928374");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
+            "Email with %40 should be detected: {:?}", dets
+        );
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_percent_encoded_phone_detected() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("tel=%2B33612345678");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
+            "Phone with %2B should be detected: {:?}", dets
+        );
+        assert!(result.contains("[FR_PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_percent_encoded_no_double_mask() {
+        let mut a = Anonymizer::new(0.0);
+        // Plain email (no encoding) should still work
+        let (result, dets) = a.anonymize_text("email=j.smith@provider.net");
+        assert_eq!(dets.iter().filter(|d| d.entity_type == "EMAIL_ADDRESS").count(), 1);
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_decode_percent_encoding_basic() {
+        assert_eq!(decode_percent_encoding("j.smith%40provider.net"), "j.smith@provider.net");
+        assert_eq!(decode_percent_encoding("%2B33"), "+33");
+        assert_eq!(decode_percent_encoding("hello%20world"), "hello world");
+        assert_eq!(decode_percent_encoding("no encoding"), "no encoding");
+    }
+
+    #[test]
+    fn test_decode_percent_encoding_malformed() {
+        // Trailing %
+        assert_eq!(decode_percent_encoding("end%"), "end%");
+        // Only one hex digit
+        assert_eq!(decode_percent_encoding("end%4"), "end%4");
+        // Non-hex
+        assert_eq!(decode_percent_encoding("%GG"), "%GG");
     }
 
     #[test]
