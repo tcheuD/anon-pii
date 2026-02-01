@@ -1210,6 +1210,43 @@ mod tests {
     }
 
     #[test]
+    fn test_multiline_credit_card_detected() {
+        let mut a = Anonymizer::new(0.0);
+        // 4111111111111111 is valid Visa (passes Luhn), split across newline
+        let input = "Body: User: Alice | CC: 4111\n1111 1111 1111 (Credit card split across newline)";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
+            "Credit card split across newline should be detected: {:?}", dets
+        );
+        assert!(result.contains("[CREDIT_CARD_"));
+    }
+
+    #[test]
+    fn test_multiline_iban_detected() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "IBAN: FR76 3000\n6000 0112 3456 7890 123";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_IBAN"),
+            "IBAN split across newline should be detected: {:?}", dets
+        );
+        assert!(result.contains("[FR_IBAN_"));
+    }
+
+    #[test]
+    fn test_multiline_no_false_positive() {
+        let mut a = Anonymizer::new(0.0);
+        // Unrelated numbers on separate lines should NOT merge into a credit card
+        let input = "count: 4111\ntotal: 1111";
+        let (_, dets) = a.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
+            "Unrelated numbers on separate lines should not be a credit card: {:?}", dets
+        );
+    }
+
+    #[test]
     fn test_parse_csv_line_basic() {
         let cells = parse_csv_line("a,b,c");
         assert_eq!(cells, vec!["a", "b", "c"]);
