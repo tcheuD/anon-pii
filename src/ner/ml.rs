@@ -95,18 +95,10 @@ impl MlNerDetector {
             .map(|n| n.get())
             .unwrap_or(1);
 
-        let mut builder = ort::session::Session::builder()?
+        let session = ort::session::Session::builder()?
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
-            .with_intra_threads(num_cores)?;
-
-        #[cfg(target_os = "macos")]
-        {
-            builder = builder.with_execution_providers([
-                ort::ep::CoreML::default().build(),
-            ])?;
-        }
-
-        let session = builder.commit_from_file(&model_path)?;
+            .with_intra_threads(num_cores)?
+            .commit_from_file(&model_path)?;
 
         let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| format!("Failed to load tokenizer: {e}"))?;
@@ -556,15 +548,15 @@ mod tests {
     }
 
     #[test]
-    fn test_ml_ner_loads_with_threading_and_ep() {
-        // Verify the detector loads successfully with intra-op threading and
-        // CoreML EP (on macOS). This catches API misuse or missing features.
+    fn test_ml_ner_loads_with_threading() {
+        // Verify the detector loads successfully with intra-op threading.
+        // This catches API misuse (e.g. wrong with_intra_threads signature).
         let detector = match try_create_detector() {
             Some(d) => d,
             None => return,
         };
         let spans = detector.detect_persons("Captain Pierre Duval reported the incident.");
-        assert!(!spans.is_empty(), "Detector with threading/EP should still detect persons");
+        assert!(!spans.is_empty(), "Detector with threading should still detect persons");
     }
 
     #[test]
