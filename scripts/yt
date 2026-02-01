@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# --- Validate environment ---
+YOUTRACK_URL="${YOUTRACK_URL:?Set YOUTRACK_URL env var}"
+YOUTRACK_TOKEN="${YOUTRACK_TOKEN:?Set YOUTRACK_TOKEN env var}"
+
+if [[ ! "$YOUTRACK_URL" =~ ^https://[a-zA-Z0-9._-]+(:[0-9]+)?$ ]]; then
+  echo "Error: YOUTRACK_URL must be https://hostname[:port] with no path, query, or userinfo" >&2
+  exit 1
+fi
+
+# --- Hide token from process list ---
+curl_cfg=$(mktemp)
+chmod 600 "$curl_cfg"
+trap 'rm -f "$curl_cfg"' EXIT INT TERM HUP
+printf 'header = "Authorization: Bearer %s"\n' "$YOUTRACK_TOKEN" > "$curl_cfg"
+
+CURL_OPTS=(--proto '=https' --tlsv1.2 -sf --config "$curl_cfg" --max-redirs 0)
+
+# --- Input validation ---
+validate_issue_id() {
+  if [[ ! "$1" =~ ^[A-Za-z]+-[0-9]+$ ]]; then
+    echo "Error: invalid issue ID format (expected e.g. PROJ-123)" >&2
+    exit 1
+  fi
+}
+
+usage() {
+  echo "Usage: yt <command> <arg>" >&2
+  echo "" >&2
+  echo "Commands:" >&2
+  echo "  get <issue-id>      Fetch issue by ID" >&2
+  echo "  search <query>      Search issues (max 25)" >&2
+  echo "  comments <issue-id> Get issue comments" >&2
+  exit 1
+}
+
+[[ $# -ge 1 ]] || usage
+cmd="$1"; shift
+
+# --- Fetch and anonymize in a single pipe (no raw PII in shell variable) ---
+case "$cmd" in
+  get)
+    [[ $# -ge 1 ]] || { echo "Usage: yt get <issue-id>" >&2; exit 1; }
+    validate_issue_id "$1"
+    safe=$(curl "${CURL_OPTS[@]}" \
+      "$YOUTRACK_URL/api/issues/$1?fields=idReadable,summary,description,reporter(login,fullName)" \
+      | anon --ner --format json) || { echo "FATAL: fetch or anonymization failed." >&2; exit 1; }
+    ;;
+  search)
+    [[ $# -ge 1 ]] || { echo "Usage: yt search <query>" >&2; exit 1; }
+    if [[ ${#1} -gt 500 ]]; then
+      echo "Error: search query too long (max 500 chars)" >&2; exit 1
+    fi
+    safe=$(curl "${CURL_OPTS[@]}" \
+      --data-urlencode "query=$1" \
+      "${YOUTRACK_URL}/api/issues?fields=idReadable,summary"'&$top=25' \
+      | anon --ner --format json) || { echo "FATAL: fetch or anonymization failed." >&2; exit 1; }
+    ;;
+  comments)
+    [[ $# -ge 1 ]] || { echo "Usage: yt comments <issue-id>" >&2; exit 1; }
+    validate_issue_id "$1"
+    safe=$(curl "${CURL_OPTS[@]}" \
+      "$YOUTRACK_URL/api/issues/$1/comments?fields=text,author(fullName),created" \
+      | anon --ner --format json) || { echo "FATAL: fetch or anonymization failed." >&2; exit 1; }
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2; usage ;;
+esac
+
+# --- Validate anonymization output ---
+if [[ -z "$safe" ]]; then
+  echo "FATAL: anon produced empty output. No data sent." >&2
+  exit 1
+fi
+
+if ! printf '%s' "$safe" | jq empty 2>/dev/null; then
+  echo "FATAL: anon produced invalid JSON. No data sent." >&2
+  exit 1
+fi
+
+# --- Human review on /dev/tty ---
+echo "--- Anonymized output ---" >/dev/tty
+printf '%s' "$safe" | jq . >/dev/tty
+echo "-------------------------" >/dev/tty
+read -rp "Send to stdout? [y/N] " confirm </dev/tty
+
+if [[ "$confirm" =~ ^[Yy]$ ]]; then
+  printf '%s\n' "$safe"
+else
+  echo "Aborted." >/dev/tty
+  exit 1
+fi

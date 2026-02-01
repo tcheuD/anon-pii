@@ -1,0 +1,75 @@
+# Supported Entity Types
+
+[Back to README](../README.md)
+
+## Common
+
+| Entity | Description | Score |
+|--------|-------------|-------|
+| `EMAIL_ADDRESS` | Email addresses | 0.9 |
+| `URL` | HTTP/HTTPS URLs | 0.9 |
+| `IP_ADDRESS` | IPv4 addresses | 0.9 |
+| `CREDIT_CARD` | 16-digit card numbers (Luhn validated, context-aware) | 0.7 |
+| `UUID` | Standard UUIDs | 0.95 |
+| `CRYPTO` | Bitcoin and Ethereum addresses | 0.9 |
+
+## French
+
+| Entity | Description | Score |
+|--------|-------------|-------|
+| `FR_PHONE_NUMBER` | French phone numbers — intl, national, compact (+33, 06, 0612345678) | 0.6 - 0.9 |
+| `FR_IBAN` | French IBANs — spaced and compact (FR76...) | 0.9 - 0.95 |
+| `FR_SSN` | Social security numbers (NIR) — spaced and compact, Corsica support | 0.8 - 0.85 |
+| `FR_PASSPORT` | French passport numbers (context-aware) | 0.7 |
+
+## Aviation
+
+| Entity | Description | Score |
+|--------|-------------|-------|
+| `AIRCRAFT_REGISTRATION` | French (F-XXXX), European, US N-numbers (context-aware) | 0.85 - 0.95 |
+| `FLIGHT_NUMBER` | Amelia codes (IZM, RLA, AME, GJT, AF), IATA/ICAO (context-aware) | 0.4 - 0.9 |
+| `CREW_CODE` | 3-letter crew codes (context-aware, with blocklist) | 0.85 |
+
+## Person Names (NER)
+
+| Entity | Backend | Score | Feature flag |
+|--------|---------|-------|--------------|
+| `PERSON` | ML — DistilBERT multilingual NER (ONNX, INT8) | 0.6 - 1.0 | `ner` |
+| `PERSON` | Heuristic — title patterns + name dictionary | 0.55 - 0.80 | `ner-lite` |
+
+Enabled with `--ner`. See [NER setup](ner.md).
+
+## Format Handling
+
+Format is auto-detected by default (`--format auto`):
+
+- **JSON** — Detected when content starts with `{` or `[` and parses as valid JSON. Recursively processes the JSON tree, anonymizing only string values. Numbers, booleans, and structure are preserved. Original indentation is maintained.
+- **SQL** — Detected when the first word is a SQL keyword (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP). Processed as text.
+- **CSV** — Detected when multiple lines have consistent comma counts. Processed as text.
+- **Text** — Default fallback. Applies regex patterns across the full text.
+
+Force a format with `--format json`, `--format text`, `--format sql`, or `--format csv`.
+
+## Context-Aware Detection
+
+Context keywords work in two modes:
+
+**Required** — Pattern only matches when a keyword appears within 80 characters:
+
+| Entity | Context keywords |
+|--------|-----------------|
+| `CREW_CODE` | crew, pilot, equipage, captain, roster, planning, duty... |
+| `FR_PASSPORT` | passeport, passport, document, identite |
+| `FLIGHT_NUMBER` (IATA/ICAO) | flight, vol, departure, arrival, schedule, rotation |
+| `AIRCRAFT_REGISTRATION` (US) | aircraft, avion, registration, immat, immatriculation, tail |
+| `CREDIT_CARD` | card, carte, credit, debit, payment, paiement, cb |
+
+**Score boost** — Pattern always matches, but confidence gets +0.15 when keywords are nearby:
+
+| Entity | Context keywords |
+|--------|-----------------|
+| `FR_PHONE_NUMBER` | telephone, tel, phone, mobile, contact, appeler, numero, portable |
+| `FR_IBAN` | iban, compte, account, virement, bank, banque, bancaire |
+| `FR_SSN` | secu, securite sociale, ssn, nir, carte vitale, numero, immatriculation |
+
+Crew codes also use a blocklist to avoid matching common 3-letter words (THE, AND, FOR, VOL, PAX, ETA, UTC, AOG, etc.).
