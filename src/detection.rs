@@ -1063,6 +1063,54 @@ mod tests {
     }
 
     #[test]
+    fn test_jwt_three_segments_detected() {
+        let mut a = Anonymizer::new(0.0);
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let input = format!("Authorization: Bearer {jwt}");
+        let (result, dets) = a.anonymize_text(&input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),
+            "JWT with 3 segments should be detected: {:?}", dets
+        );
+        assert!(result.contains("[AUTH_TOKEN_"));
+    }
+
+    #[test]
+    fn test_jwt_two_segments_detected() {
+        let mut a = Anonymizer::new(0.0);
+        // JWT without signature (2 segments) — common in URL params
+        let input = "token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0&cc_last4=4242";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),
+            "JWT with 2 segments should be detected: {:?}", dets
+        );
+        assert!(result.contains("[AUTH_TOKEN_"));
+    }
+
+    #[test]
+    fn test_jwt_not_detected_single_segment() {
+        let mut a = Anonymizer::new(0.0);
+        // Only 1 segment — not a JWT
+        let (_, dets) = a.anonymize_text("version=eyJub3QiOiJhIHRva2VuIn0");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),
+            "Single base64 segment should not be detected as JWT"
+        );
+    }
+
+    #[test]
+    fn test_jwt_not_detected_short_segments() {
+        let mut a = Anonymizer::new(0.0);
+        // Segments too short (< 10 chars each)
+        let (_, dets) = a.anonymize_text("file.name.extension");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),
+            "Short dot-separated words should not be detected as JWT"
+        );
+    }
+
+    #[test]
     fn test_parse_csv_line_basic() {
         let cells = parse_csv_line("a,b,c");
         assert_eq!(cells, vec!["a", "b", "c"]);

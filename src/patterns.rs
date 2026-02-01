@@ -227,6 +227,17 @@ pub const PATTERNS: &[PiiPattern] = &[
         context_keywords: &[],
         context_required: false,
     },
+    // ── JWT / Auth tokens ──
+    PiiPattern {
+        name: "jwt",
+        entity_type: "AUTH_TOKEN",
+        pattern: r"eyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{10,}){1,2}",
+        score: 0.95,
+        context_keywords: &[
+            "token", "bearer", "authorization", "auth", "jwt", "session", "cookie",
+        ],
+        context_required: false,
+    },
 ];
 
 pub const CREW_CODE_BLOCKLIST: &[&str] = &[
