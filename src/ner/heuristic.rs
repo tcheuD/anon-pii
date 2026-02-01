@@ -110,21 +110,47 @@ const ENGLISH_FIRST_NAMES: &[&str] = &[
 ];
 
 pub struct HeuristicNerDetector {
-    first_names: HashSet<&'static str>,
+    first_names: HashSet<String>,
+    last_names: HashSet<String>,
     min_score: f64,
 }
 
 impl HeuristicNerDetector {
     pub fn new() -> Self {
-        let mut first_names = HashSet::new();
+        let mut first_names: HashSet<String> = HashSet::new();
         for name in FRENCH_FIRST_NAMES {
-            first_names.insert(*name);
+            first_names.insert(name.to_string());
         }
         for name in ENGLISH_FIRST_NAMES {
-            first_names.insert(*name);
+            first_names.insert(name.to_string());
         }
+
+        let mut last_names: HashSet<String> = HashSet::new();
+
+        // Load custom names from ~/.anon/firstnames.txt and ~/.anon/lastnames.txt
+        if let Some(home) = dirs::home_dir() {
+            let anon_dir = home.join(".anon");
+            if let Ok(content) = std::fs::read_to_string(anon_dir.join("firstnames.txt")) {
+                for line in content.lines() {
+                    let name = line.trim();
+                    if !name.is_empty() && !name.starts_with('#') {
+                        first_names.insert(name.to_string());
+                    }
+                }
+            }
+            if let Ok(content) = std::fs::read_to_string(anon_dir.join("lastnames.txt")) {
+                for line in content.lines() {
+                    let name = line.trim();
+                    if !name.is_empty() && !name.starts_with('#') {
+                        last_names.insert(name.to_string());
+                    }
+                }
+            }
+        }
+
         Self {
             first_names,
+            last_names,
             min_score: 0.5,
         }
     }
@@ -239,11 +265,15 @@ impl HeuristicNerDetector {
                 // Look for following capitalized word(s) to form full name
                 let mut name_parts = vec![clean];
                 let mut end = start + word.len();
+                let mut has_known_lastname = false;
 
                 for j in (i + 1)..words.len().min(i + 3) {
                     let (_, next_word) = words[j];
                     let next_clean = next_word.trim_end_matches(|c: char| c.is_ascii_punctuation());
                     if Self::is_capitalized_word(next_clean) {
+                        if self.last_names.contains(next_clean) {
+                            has_known_lastname = true;
+                        }
                         name_parts.push(next_clean);
                         end = words[j].0 + next_clean.len();
                     } else {
@@ -253,9 +283,10 @@ impl HeuristicNerDetector {
 
                 if name_parts.len() >= 2 {
                     // Firstname + lastname: confident match
+                    // Higher confidence if lastname is in the custom list
                     let full_name = text[start..end].to_string();
 
-                    let base_score = 0.55;
+                    let base_score = if has_known_lastname { 0.70 } else { 0.55 };
                     let score = if self.has_context(text, start, end) {
                         (base_score + CONTEXT_BOOST).min(1.0)
                     } else {

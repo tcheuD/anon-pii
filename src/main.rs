@@ -94,6 +94,22 @@ enum Commands {
         #[arg(long)]
         model_dir: Option<PathBuf>,
     },
+    /// Start web UI for interactive anonymization
+    Ui {
+        /// Port to listen on
+        #[arg(short, long, default_value = "9200")]
+        port: u16,
+    },
+    /// Import first/last names from a CSV file into ~/.anon/ for heuristic NER
+    UpdateNames {
+        /// CSV file with firstname,lastname columns (one pair per row)
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+
+        /// Replace existing name lists instead of merging
+        #[arg(long)]
+        replace: bool,
+    },
     /// Start anonymizing proxy server
     Proxy {
         /// Port to listen on
@@ -328,6 +344,85 @@ fn main() -> io::Result<()> {
                 eprintln!("Error downloading model: {e}");
                 std::process::exit(1);
             }
+        }
+        Some(Commands::UpdateNames { file, replace }) => {
+            let content = fs::read_to_string(&file).map_err(|e| {
+                io::Error::new(e.kind(), format!("cannot read {}: {e}", file.display()))
+            })?;
+
+            let mut firstnames: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let mut lastnames: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+            for (i, line) in content.lines().enumerate() {
+                let line = line.trim();
+                if line.is_empty() { continue; }
+                // Skip header row
+                if i == 0 {
+                    let lower = line.to_lowercase();
+                    if lower.contains("firstname") || lower.contains("lastname")
+                        || lower.contains("first_name") || lower.contains("last_name")
+                        || lower.contains("prénom") || lower.contains("nom")
+                    {
+                        continue;
+                    }
+                }
+                let parts: Vec<&str> = line.splitn(2, ',').collect();
+                if parts.len() == 2 {
+                    let first = parts[0].trim();
+                    let last = parts[1].trim();
+                    if !first.is_empty() { firstnames.insert(first.to_string()); }
+                    if !last.is_empty() { lastnames.insert(last.to_string()); }
+                } else {
+                    // Single column — treat as firstname
+                    let name = parts[0].trim();
+                    if !name.is_empty() { firstnames.insert(name.to_string()); }
+                }
+            }
+
+            let anon_dir = default_mapping_dir();
+            create_private_dir(&anon_dir)?;
+
+            let first_path = anon_dir.join("firstnames.txt");
+            let last_path = anon_dir.join("lastnames.txt");
+
+            // Merge with existing if not --replace
+            if !replace {
+                if let Ok(existing) = fs::read_to_string(&first_path) {
+                    for line in existing.lines() {
+                        let name = line.trim();
+                        if !name.is_empty() && !name.starts_with('#') {
+                            firstnames.insert(name.to_string());
+                        }
+                    }
+                }
+                if let Ok(existing) = fs::read_to_string(&last_path) {
+                    for line in existing.lines() {
+                        let name = line.trim();
+                        if !name.is_empty() && !name.starts_with('#') {
+                            lastnames.insert(name.to_string());
+                        }
+                    }
+                }
+            }
+
+            let first_content: Vec<&str> = firstnames.iter().map(|s| s.as_str()).collect();
+            let last_content: Vec<&str> = lastnames.iter().map(|s| s.as_str()).collect();
+
+            fs::write(&first_path, first_content.join("\n") + "\n")?;
+            fs::write(&last_path, last_content.join("\n") + "\n")?;
+
+            eprintln!(
+                "Updated: {} firstnames, {} lastnames ({})",
+                firstnames.len(),
+                lastnames.len(),
+                if replace { "replaced" } else { "merged" },
+            );
+            eprintln!("  {}", first_path.display());
+            eprintln!("  {}", last_path.display());
+        }
+        Some(Commands::Ui { port }) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(anon::ui::run(port))?;
         }
         Some(Commands::Proxy {
             port,
