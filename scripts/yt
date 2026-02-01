@@ -16,7 +16,7 @@ chmod 600 "$curl_cfg"
 trap 'rm -f "$curl_cfg"' EXIT INT TERM HUP
 printf 'header = "Authorization: Bearer %s"\n' "$YOUTRACK_TOKEN" > "$curl_cfg"
 
-CURL_OPTS=(--proto '=https' --tlsv1.2 -sf --config "$curl_cfg" --max-redirs 0)
+CURL_OPTS=(--proto '=https' --tlsv1.2 -s --config "$curl_cfg" --max-redirs 0)
 
 # --- Input validation ---
 validate_issue_id() {
@@ -44,30 +44,50 @@ case "$cmd" in
   get)
     [[ $# -ge 1 ]] || { echo "Usage: yt get <issue-id>" >&2; exit 1; }
     validate_issue_id "$1"
-    safe=$(curl "${CURL_OPTS[@]}" \
-      "$YOUTRACK_URL/api/issues/$1?fields=idReadable,summary,description,reporter(login,fullName)" \
-      | anon --ner --format json) || { echo "FATAL: fetch or anonymization failed." >&2; exit 1; }
+    raw=$(curl "${CURL_OPTS[@]}" -w '\n%{http_code}' \
+      "$YOUTRACK_URL/api/issues/$1?fields=idReadable,summary,description,reporter(fullName)")
     ;;
   search)
     [[ $# -ge 1 ]] || { echo "Usage: yt search <query>" >&2; exit 1; }
     if [[ ${#1} -gt 500 ]]; then
       echo "Error: search query too long (max 500 chars)" >&2; exit 1
     fi
-    safe=$(curl "${CURL_OPTS[@]}" \
+    raw=$(curl "${CURL_OPTS[@]}" -w '\n%{http_code}' -G \
       --data-urlencode "query=$1" \
-      "${YOUTRACK_URL}/api/issues?fields=idReadable,summary"'&$top=25' \
-      | anon --ner --format json) || { echo "FATAL: fetch or anonymization failed." >&2; exit 1; }
+      --data-urlencode 'fields=idReadable,summary' \
+      --data-urlencode '$top=25' \
+      "${YOUTRACK_URL}/api/issues")
     ;;
   comments)
     [[ $# -ge 1 ]] || { echo "Usage: yt comments <issue-id>" >&2; exit 1; }
     validate_issue_id "$1"
-    safe=$(curl "${CURL_OPTS[@]}" \
-      "$YOUTRACK_URL/api/issues/$1/comments?fields=text,author(fullName),created" \
-      | anon --ner --format json) || { echo "FATAL: fetch or anonymization failed." >&2; exit 1; }
+    raw=$(curl "${CURL_OPTS[@]}" -w '\n%{http_code}' \
+      "$YOUTRACK_URL/api/issues/$1/comments?fields=text,author(fullName),created")
     ;;
   *)
     echo "Unknown command: $cmd" >&2; usage ;;
 esac
+
+# --- Check HTTP response ---
+http_code=$(printf '%s' "$raw" | tail -1)
+body=$(printf '%s' "$raw" | sed '$d')
+
+if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
+  echo "Error: YouTrack API returned HTTP $http_code" >&2
+  printf '%s\n' "$body" | head -5 >&2
+  exit 1
+fi
+
+if [[ -z "$body" ]]; then
+  echo "Error: YouTrack API returned empty response." >&2
+  exit 1
+fi
+
+# --- Anonymize ---
+safe=$(printf '%s' "$body" | anon --ner --format json) || {
+  echo "FATAL: anonymization failed." >&2
+  exit 1
+}
 
 # --- Validate anonymization output ---
 if [[ -z "$safe" ]]; then

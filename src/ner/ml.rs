@@ -133,13 +133,19 @@ fn load_id2label(config_path: &Path) -> Result<Vec<String>, Box<dyn std::error::
     Ok(labels)
 }
 
+/// DistilBERT max sequence length (including [CLS] and [SEP] tokens).
+const MAX_SEQ_LEN: usize = 512;
+/// Overlap between chunks in tokens. Enough to capture names split at boundaries.
+const CHUNK_OVERLAP: usize = 50;
+
 impl NerDetector for MlNerDetector {
     fn detect_persons(&self, text: &str) -> Vec<NerSpan> {
         if text.is_empty() {
             return Vec::new();
         }
 
-        let encoding = match self.tokenizer.encode(text, true) {
+        // Tokenize the full text without truncation to get offsets
+        let full_encoding = match self.tokenizer.encode(text, false) {
             Ok(enc) => enc,
             Err(e) => {
                 eprintln!("Warning: NER tokenization failed: {e}");
@@ -147,12 +153,62 @@ impl NerDetector for MlNerDetector {
             }
         };
 
-        let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-        let attention_mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&m| m as i64).collect();
+        let total_tokens = full_encoding.get_ids().len();
+        // 2 special tokens: [CLS] and [SEP]
+        let max_content_tokens = MAX_SEQ_LEN - 2;
+
+        if total_tokens <= max_content_tokens {
+            // Fits in a single chunk — fast path
+            return self.run_inference_chunk(text, &full_encoding, 0, total_tokens);
+        }
+
+        // Sliding window over tokens
+        let mut all_spans: Vec<NerSpan> = Vec::new();
+        let mut start = 0;
+
+        while start < total_tokens {
+            let end = (start + max_content_tokens).min(total_tokens);
+            let chunk_spans = self.run_inference_chunk(text, &full_encoding, start, end);
+            all_spans.extend(chunk_spans);
+
+            if end >= total_tokens {
+                break;
+            }
+            start = end - CHUNK_OVERLAP;
+        }
+
+        // Deduplicate overlapping spans (from chunk overlap regions)
+        dedup_spans(&mut all_spans);
+
+        all_spans
+    }
+}
+
+impl MlNerDetector {
+    /// Run inference on a slice of the full encoding [token_start..token_end].
+    /// Adds [CLS] and [SEP] wrapper tokens for the model.
+    fn run_inference_chunk(
+        &self,
+        text: &str,
+        full_encoding: &tokenizers::Encoding,
+        token_start: usize,
+        token_end: usize,
+    ) -> Vec<NerSpan> {
+        let all_ids = full_encoding.get_ids();
+        let all_offsets = full_encoding.get_offsets();
+
+        let chunk_ids = &all_ids[token_start..token_end];
+        let chunk_offsets = &all_offsets[token_start..token_end];
+
+        // Wrap with special tokens: [CLS]=101, [SEP]=102
+        let mut input_ids: Vec<i64> = Vec::with_capacity(chunk_ids.len() + 2);
+        input_ids.push(101); // [CLS]
+        input_ids.extend(chunk_ids.iter().map(|&id| id as i64));
+        input_ids.push(102); // [SEP]
 
         let seq_len = input_ids.len();
+        let attention_mask: Vec<i64> = vec![1i64; seq_len];
 
-        // Build input tensors — DistilBERT only needs input_ids + attention_mask
         let ids_tensor = match ort::value::Tensor::from_array((vec![1i64, seq_len as i64], input_ids)) {
             Ok(t) => t,
             Err(e) => {
@@ -189,7 +245,6 @@ impl NerDetector for MlNerDetector {
             }
         };
 
-        // Extract logits: shape [1, seq_len, num_labels], flat array
         let (shape, logits) = match outputs[0].try_extract_tensor::<f32>() {
             Ok(l) => l,
             Err(e) => {
@@ -204,16 +259,17 @@ impl NerDetector for MlNerDetector {
             eprintln!("Warning: NER unexpected output shape: {:?}", shape);
             return Vec::new();
         };
-        let offsets = encoding.get_offsets();
 
-        // Decode BIO tags into spans
+        // Decode BIO tags into spans (skip [CLS] at index 0 and [SEP] at end)
         let mut spans: Vec<NerSpan> = Vec::new();
         let mut current_start: Option<usize> = None;
         let mut current_end: usize = 0;
         let mut current_scores: Vec<f32> = Vec::new();
 
-        for i in 0..seq_len {
-            let (off_start, off_end) = offsets[i];
+        for (chunk_i, &(off_start, off_end)) in chunk_offsets.iter().enumerate() {
+            // logits index is chunk_i + 1 (skip [CLS])
+            let logit_i = chunk_i + 1;
+
             if off_start == off_end {
                 if let Some(start) = current_start.take() {
                     flush_span(text, start, current_end, &current_scores, self.min_score, &mut spans);
@@ -222,8 +278,7 @@ impl NerDetector for MlNerDetector {
                 continue;
             }
 
-            // Find predicted label (argmax)
-            let row_offset = i * num_labels;
+            let row_offset = logit_i * num_labels;
             let mut max_idx = 0usize;
             let mut max_val = f32::NEG_INFINITY;
             for j in 0..num_labels {
@@ -263,6 +318,26 @@ impl NerDetector for MlNerDetector {
 
         spans
     }
+}
+
+/// Deduplicate spans from overlapping chunks. When two spans overlap,
+/// keep the one with the higher score.
+fn dedup_spans(spans: &mut Vec<NerSpan>) {
+    if spans.len() <= 1 {
+        return;
+    }
+    spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)));
+    let mut deduped: Vec<NerSpan> = Vec::with_capacity(spans.len());
+    for span in spans.drain(..) {
+        if let Some(last) = deduped.last() {
+            // Overlapping or identical span — skip if the existing one covers it
+            if span.start < last.end {
+                continue;
+            }
+        }
+        deduped.push(span);
+    }
+    *spans = deduped;
 }
 
 fn softmax_score(logits: &[f32], row_offset: usize, label_idx: usize, num_labels: usize) -> f32 {
@@ -381,21 +456,16 @@ mod tests {
 
     #[test]
     fn test_ml_ner_stress_input_no_panic() {
-        // Exercises the NER pipeline with adversarial inputs that could trigger
-        // errors at various stages (tokenization, tensor creation, inference).
-        // The fix for #17 ensures these log warnings instead of silently
-        // returning empty results. Without a model loaded, this verifies the
-        // function signature and graceful degradation.
         let detector = match try_create_detector() {
             Some(d) => d,
             None => return,
         };
 
-        // Very long input — stress tokenizer and tensor creation
+        // Very long input — triggers sliding window chunking (>512 tokens)
         let long = "Jean Dupont ".repeat(5000);
         let spans = detector.detect_persons(&long);
-        // Should not panic; result may vary depending on model
-        let _ = spans;
+        // Should not panic and should detect persons across chunks
+        assert!(!spans.is_empty(), "Should detect persons in long repeated input");
 
         // Input with only non-ASCII — stress tokenizer edge cases
         let unicode_heavy = "名前は田中太郎です。連絡先：tanaka@example.com";
@@ -405,6 +475,39 @@ mod tests {
         // Single character
         let spans = detector.detect_persons("X");
         assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn test_ml_ner_chunking_detects_across_boundary() {
+        let detector = match try_create_detector() {
+            Some(d) => d,
+            None => return,
+        };
+
+        // Build text where a name appears deep in the text (past 512 tokens)
+        // ~3 tokens per word on average, so 200 filler words ≈ 600 tokens
+        let filler = "The quick brown fox jumps over the lazy dog. ".repeat(50);
+        let text = format!("{filler}Captain Marie Lefebvre reported an incident.");
+        let spans = detector.detect_persons(&text);
+        assert!(
+            spans.iter().any(|s| s.text.contains("Marie") || s.text.contains("Lefebvre")),
+            "Should detect person name past the 512 token boundary, got: {:?}",
+            spans
+        );
+    }
+
+    #[test]
+    fn test_dedup_spans_removes_overlapping() {
+        let mut spans = vec![
+            NerSpan { text: "Jean Dupont".into(), start: 0, end: 11, score: 0.95, label: "PERSON".into() },
+            NerSpan { text: "Jean Dupont".into(), start: 0, end: 11, score: 0.90, label: "PERSON".into() },
+            NerSpan { text: "Marie".into(), start: 20, end: 25, score: 0.85, label: "PERSON".into() },
+        ];
+        dedup_spans(&mut spans);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].start, 0);
+        assert_eq!(spans[0].score, 0.95); // higher score kept
+        assert_eq!(spans[1].start, 20);
     }
 
     #[test]

@@ -22,7 +22,7 @@ ln -sf /path/to/anon-pii/scripts/yt ~/.local/bin/yt
 security add-generic-password -a "$USER" -s youtrack-token -w
 
 # 3. Add to ~/.zshrc
-export YOUTRACK_URL="https://your-instance.youtrack.cloud"
+export YOUTRACK_URL="https://amelia.youtrack.cloud"
 
 yt() {
   YOUTRACK_TOKEN=$(security find-generic-password -a "$USER" -s youtrack-token -w) \
@@ -43,7 +43,7 @@ secret-tool store --label="YouTrack Token" service youtrack account token
 # Pastes interactively
 
 # 3. Add to ~/.bashrc or ~/.zshrc
-export YOUTRACK_URL="https://your-instance.youtrack.cloud"
+export YOUTRACK_URL="https://amelia.youtrack.cloud"
 
 yt() {
   YOUTRACK_TOKEN=$(secret-tool lookup service youtrack account token) \
@@ -76,7 +76,7 @@ Use from Git Bash or WSL:
 
 ```bash
 # Git Bash — read from Credential Manager via cmdkey
-export YOUTRACK_URL="https://your-instance.youtrack.cloud"
+export YOUTRACK_URL="https://amelia.youtrack.cloud"
 
 yt() {
   YOUTRACK_TOKEN=$(cmdkey /list:youtrack-token 2>/dev/null | grep -oP 'Password: *\K.*' || \

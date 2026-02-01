@@ -8,6 +8,7 @@ pub mod heuristic;
 use std::path::PathBuf;
 
 /// A span detected by NER.
+#[derive(Debug)]
 pub struct NerSpan {
     pub text: String,
     pub start: usize, // byte offset
