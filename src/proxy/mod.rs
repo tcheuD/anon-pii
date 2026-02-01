@@ -31,6 +31,32 @@ impl ProxyState {
     pub fn new(upstream: String, threshold: f64, session_dir: PathBuf) -> Self {
         let mut anonymizer = Anonymizer::new(threshold);
         anonymizer.mapping = anonymizer.mapping.with_max_entries(DEFAULT_MAX_MAPPING_ENTRIES);
+
+        // Auto-enable NER based on compiled features
+        #[cfg(feature = "ner")]
+        {
+            use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
+            let config = NerConfig::default();
+            if model_exists(&config) {
+                match std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
+                    Ok(Ok(det)) => {
+                        anonymizer.set_ner_detector(Box::new(det));
+                        eprintln!("NER: ML (DistilBERT) enabled");
+                    }
+                    Ok(Err(e)) => eprintln!("warning: ML NER init failed: {e}"),
+                    Err(_) => eprintln!("warning: ONNX Runtime not found, set ORT_DYLIB_PATH"),
+                }
+            } else {
+                eprintln!("warning: NER model not downloaded, run `anon download-model`");
+            }
+        }
+        #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
+        {
+            use crate::ner::heuristic::HeuristicNerDetector;
+            anonymizer.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+            eprintln!("NER: heuristic (ner-lite) enabled");
+        }
+
         Self {
             client: reqwest::Client::new(),
             anonymizer: Mutex::new(anonymizer),
@@ -81,7 +107,6 @@ impl ProxyState {
         let mut snapshot = Mapping::new();
         snapshot.mappings = anonymizer.mapping.mappings.clone();
         snapshot.reverse = anonymizer.mapping.reverse.clone();
-        snapshot.counters = anonymizer.mapping.counters.clone();
         snapshot
     }
 }

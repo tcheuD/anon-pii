@@ -423,6 +423,9 @@
           <option value="sql">SQL</option>
           <option value="csv">CSV</option>
         </select>
+        <select id="nerSelect" title="Mode de détection NER">
+          <option value="off">Regex seul</option>
+        </select>
         <div class="threshold-group">
           <label for="thresholdRange">Seuil</label>
           <input type="range" id="thresholdRange" min="0" max="1" step="0.05" value="0.5">
@@ -499,6 +502,7 @@
   var inputText = document.getElementById("inputText");
   var outputText = document.getElementById("outputText");
   var formatSelect = document.getElementById("formatSelect");
+  var nerSelect = document.getElementById("nerSelect");
   var thresholdRange = document.getElementById("thresholdRange");
   var thresholdVal = document.getElementById("thresholdVal");
   var anonymizeBtn = document.getElementById("anonymizeBtn");
@@ -570,7 +574,8 @@
         body: JSON.stringify({
           text: text,
           format: formatSelect.value,
-          threshold: parseFloat(thresholdRange.value)
+          threshold: parseFloat(thresholdRange.value),
+          ner: nerSelect.value
         })
       });
 
@@ -832,6 +837,22 @@
       anonymize();
     }
   });
+
+  // -- Fetch available NER modes from backend --
+  var nerLabels = { off: "Regex seul", heuristic: "NER heuristique", ml: "NER ML" };
+  fetch("/api/capabilities").then(function(res) {
+    return res.json();
+  }).then(function(data) {
+    nerSelect.innerHTML = "";
+    var modes = data.ner_modes || ["off"];
+    for (var i = 0; i < modes.length; i++) {
+      var opt = document.createElement("option");
+      opt.value = modes[i];
+      opt.textContent = nerLabels[modes[i]] || modes[i];
+      nerSelect.appendChild(opt);
+    }
+    nerSelect.value = data.default_ner || "off";
+  }).catch(function() {});
 
 })();
 </script>

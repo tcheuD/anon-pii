@@ -126,9 +126,9 @@ Typical results (Apple Silicon):
 
 | Feature | Throughput | Simple avg | Complex avg | Penalty |
 |---------|-----------|-----------|-------------|---------|
-| none | 248k lines/s | 2.8 μs | 8.9 μs | 3.1x |
-| ner-lite | 226k lines/s | 2.8 μs | 10.8 μs | 3.8x |
-| ner | 246k lines/s | 2.8 μs | 9.0 μs | 3.2x |
+| none | 251k lines/s | 2.8 μs | 8.9 μs | 3.2x |
+| ner-lite | 184k lines/s | 3.9 μs | 11.4 μs | 2.9x |
+| ner | 247k lines/s | 2.8 μs | 8.9 μs | 3.1x |
 
 ## Python Version
 

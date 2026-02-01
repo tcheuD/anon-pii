@@ -1418,6 +1418,55 @@ mod tests {
         assert!(!result.contains("4111"));
     }
 
+    // ── NER integration tests ──
+    // These verify that Anonymizer produces PERSON detections when NER is wired up.
+    // Without the feature flag, the tests are not compiled.
+
+    #[cfg(feature = "ner-lite")]
+    #[test]
+    fn test_ner_lite_person_detected() {
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        let (result, dets) = a.anonymize_text("Le pilote M. Dupont a décollé.");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON"),
+            "NER-lite should detect PERSON in 'M. Dupont': {:?}", dets
+        );
+        assert!(result.contains("[PERSON_"));
+    }
+
+    #[cfg(feature = "ner-lite")]
+    #[test]
+    fn test_ner_lite_no_person_without_detector() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("Le pilote M. Dupont a décollé.");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PERSON"),
+            "Without NER detector, PERSON should not be detected: {:?}", dets
+        );
+    }
+
+    #[cfg(feature = "ner-lite")]
+    #[test]
+    fn test_ner_lite_person_in_complex_log() {
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        let input = "2024-03-15 [INFO] Passager Philippe Martin a embarqué, email: phil@example.com";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON"),
+            "PERSON should be detected alongside other PII: {:?}", dets
+        );
+        assert!(
+            dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
+            "EMAIL should still be detected with NER active: {:?}", dets
+        );
+        assert!(result.contains("[PERSON_"));
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+    }
+
     #[test]
     fn test_parse_csv_line_basic() {
         let cells = parse_csv_line("a,b,c");
