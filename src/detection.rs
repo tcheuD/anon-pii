@@ -8,6 +8,54 @@ use crate::patterns::{
     valid_card_prefix,
 };
 
+/// Patterns that may span across line breaks in wrapped log output.
+const MULTILINE_ENTITY_TYPES: &[&str] = &["CREDIT_CARD", "FR_IBAN"];
+
+/// Collapse `\s*\n\s*` sequences into a single space and build a mapping from
+/// collapsed byte offsets back to original byte offsets. Returns `None` when the
+/// input contains no newlines (no work to do).
+fn collapse_newlines(text: &str) -> Option<(String, Vec<usize>)> {
+    if !text.contains('\n') {
+        return None;
+    }
+    let mut collapsed = String::with_capacity(text.len());
+    // Maps each byte index in `collapsed` to the corresponding byte index in `text`.
+    let mut pos_map: Vec<usize> = Vec::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Detect whitespace runs containing a newline and collapse to one space.
+        if bytes[i].is_ascii_whitespace() {
+            let run_start = i;
+            let mut found_newline = bytes[i] == b'\n';
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                if bytes[j] == b'\n' {
+                    found_newline = true;
+                }
+                j += 1;
+            }
+            if found_newline {
+                collapsed.push(' ');
+                pos_map.push(run_start);
+                i = j;
+            } else {
+                // Whitespace run without a newline — keep as-is.
+                while i < j {
+                    collapsed.push(bytes[i] as char);
+                    pos_map.push(i);
+                    i += 1;
+                }
+            }
+        } else {
+            collapsed.push(bytes[i] as char);
+            pos_map.push(i);
+            i += 1;
+        }
+    }
+    Some((collapsed, pos_map))
+}
+
 /// Decode JSON-style `\uXXXX` escape sequences into their UTF-8 equivalents.
 /// Only decodes BMP codepoints (U+0000..U+FFFF). Malformed sequences are left as-is.
 fn decode_unicode_escapes(input: &str) -> String {
@@ -273,6 +321,75 @@ impl Anonymizer {
                     end: mat.end(),
                     score: detection_score,
                 });
+            }
+        }
+
+        // Multiline second pass: collapse whitespace+newline runs into a single
+        // space and re-run patterns that can span line breaks (credit cards, IBANs).
+        // Detections are mapped back to original byte positions.
+        if let Some((collapsed, pos_map)) = collapse_newlines(text) {
+            for pat in &self.patterns {
+                if !MULTILINE_ENTITY_TYPES.contains(&pat.entity_type) {
+                    continue;
+                }
+                let max_score = if !pat.context_keywords.is_empty() && !pat.context_required {
+                    (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
+                } else {
+                    pat.score
+                };
+                if max_score < self.threshold {
+                    continue;
+                }
+                for mat in pat.regex.find_iter(&collapsed) {
+                    // Only consider matches that actually span a newline
+                    let orig_start = pos_map[mat.start()];
+                    let orig_end_idx = (mat.end() - 1).min(pos_map.len() - 1);
+                    let orig_end_byte = pos_map[orig_end_idx];
+                    let orig_span = &text[orig_start..=orig_end_byte];
+                    if !orig_span.contains('\n') {
+                        continue; // Already found by the single-line pass
+                    }
+
+                    // Compute original end as one past the last byte
+                    let orig_end = if mat.end() < pos_map.len() {
+                        pos_map[mat.end()]
+                    } else {
+                        text.len()
+                    };
+
+                    let matched = mat.as_str();
+
+                    if pat.entity_type == "CREDIT_CARD" {
+                        if !luhn_check(matched) || !valid_card_prefix(matched) {
+                            continue;
+                        }
+                    }
+
+                    let has_ctx = if !pat.context_keywords.is_empty() {
+                        self.has_context(text, orig_start, orig_end, pat.context_keywords)
+                    } else {
+                        false
+                    };
+                    if pat.context_required && !pat.context_keywords.is_empty() && !has_ctx {
+                        continue;
+                    }
+                    let detection_score = if !pat.context_required && !pat.context_keywords.is_empty() && has_ctx {
+                        (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
+                    } else {
+                        pat.score
+                    };
+                    if detection_score < self.threshold {
+                        continue;
+                    }
+
+                    detections.push(Detection {
+                        entity_type: pat.entity_type,
+                        original: matched.to_string(),
+                        start: orig_start,
+                        end: orig_end,
+                        score: detection_score,
+                    });
+                }
             }
         }
 
@@ -1235,6 +1352,44 @@ mod tests {
     }
 
     #[test]
+    fn test_multiline_credit_card_trailing_space() {
+        let mut a = Anonymizer::new(0.0);
+        // Trailing space before newline — real-world log wrapping
+        let input = "Body: User: Alice | CC: 4111 \n1111 1111 1111 (Valid Visa split across newline)";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
+            "Credit card with trailing space before newline should be detected: {:?}", dets
+        );
+        assert!(result.contains("[CREDIT_CARD_"));
+    }
+
+    #[test]
+    fn test_multiline_credit_card_indented_continuation() {
+        let mut a = Anonymizer::new(0.0);
+        // Indented continuation line — common in log dumps
+        let input = "CC: 4111\n    1111 1111 1111";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
+            "Credit card with indented continuation should be detected: {:?}", dets
+        );
+        assert!(result.contains("[CREDIT_CARD_"));
+    }
+
+    #[test]
+    fn test_multiline_iban_trailing_space() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "IBAN: FR76 3000 \n6000 0112 3456 7890 123";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_IBAN"),
+            "IBAN with trailing space before newline should be detected: {:?}", dets
+        );
+        assert!(result.contains("[FR_IBAN_"));
+    }
+
+    #[test]
     fn test_multiline_no_false_positive() {
         let mut a = Anonymizer::new(0.0);
         // Unrelated numbers on separate lines should NOT merge into a credit card
@@ -1244,6 +1399,23 @@ mod tests {
             !dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
             "Unrelated numbers on separate lines should not be a credit card: {:?}", dets
         );
+    }
+
+    #[test]
+    fn test_multiline_full_stress_payload() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "2024-03-15 10:20:01 [INFO]  Dumping raw socket content:\n\
+                      Beginning of message...\n\
+                      Body: User: Alice | CC: 4111 \n\
+                      1111 1111 1111 (Valid Visa split across a newline)\n\
+                      End of message.";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
+            "Credit card in full log payload should be detected: {:?}", dets
+        );
+        assert!(result.contains("[CREDIT_CARD_"));
+        assert!(!result.contains("4111"));
     }
 
     #[test]
