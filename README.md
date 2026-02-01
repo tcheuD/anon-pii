@@ -79,7 +79,7 @@ anon list-entities
 
 ## Detected entities
 
-Emails, URLs, IPs, UUIDs, credit cards, crypto addresses, French phones, IBANs, SSNs, passports, aircraft registrations, flight numbers, crew codes, and person names (with `--ner`).
+Emails, URLs, IPs, UUIDs, credit cards, crypto addresses, French phones, IBANs, SSNs, passports, aircraft registrations, flight numbers, crew codes, JWT/auth tokens, and person names (with `--ner`). Detection works through URL-encoded and Unicode-escaped text.
 
 See [docs/entities.md](docs/entities.md) for the full reference with confidence scores and context keywords.
 
@@ -91,6 +91,21 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 | [Proxy mode](docs/proxy.md) | Anonymizing reverse proxy for the Anthropic API |
 | [NER setup](docs/ner.md) | Person name detection — heuristic and ML backends |
 | [YouTrack integration](docs/youtrack.md) | `scripts/yt` — fetch issues with human review |
+
+## Development
+
+```bash
+# Run tests (default — regex-only, no NER)
+cargo test
+
+# Run tests including NER heuristic tests
+cargo test --features ner-lite
+
+# Build release binary
+cargo build --release
+```
+
+`cargo test` without feature flags runs all tests except NER-specific ones. This is the standard check after any change.
 
 ## Python Version
 
