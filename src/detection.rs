@@ -1467,6 +1467,25 @@ mod tests {
         assert!(result.contains("[EMAIL_ADDRESS_"));
     }
 
+    #[cfg(feature = "ner-lite")]
+    #[test]
+    fn test_ner_lite_standalone_alice_with_user_context() {
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        // This is the benchmark complex log line — "User: Alice" should trigger PERSON
+        let input = r#"2024-03-15 10:20:01 [INFO] Dumping raw socket:
+    Header: Auth-Token=XYZ-123
+    Body: User: Alice | CC: 4111
+    1111 1111 1111
+    {"metadata": "{\"source\": \"partner_api\", \"raw\": \"client%40email.com\"}"}"#;
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON"),
+            "Alice should be detected as PERSON with 'User:' context.\nDetections: {:?}\nResult: {}", dets, result
+        );
+    }
+
     #[test]
     fn test_parse_csv_line_basic() {
         let cells = parse_csv_line("a,b,c");

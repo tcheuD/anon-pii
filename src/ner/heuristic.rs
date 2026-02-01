@@ -10,6 +10,7 @@ const CONTEXT_KEYWORDS: &[&str] = &[
     "captain", "capitaine", "commandant", "crew", "équipage", "equipage",
     "copilot", "copilote", "member", "membre", "contact", "person", "personne",
     "client", "patient", "employee", "employé", "employée", "salarié",
+    "user", "utilisateur", "utilisatrice", "author", "auteur",
 ];
 
 const TITLES_FR: &[&str] = &[
@@ -250,8 +251,8 @@ impl HeuristicNerDetector {
                     }
                 }
 
-                // Only emit if there's at least firstname + lastname
                 if name_parts.len() >= 2 {
+                    // Firstname + lastname: confident match
                     let full_name = text[start..end].to_string();
 
                     let base_score = 0.55;
@@ -270,6 +271,17 @@ impl HeuristicNerDetector {
                             label: "PERSON".to_string(),
                         });
                     }
+                } else if name_parts.len() == 1 && self.has_context(text, start, start + clean.len()) {
+                    // Standalone known first name with nearby context keyword
+                    // e.g. "User: Alice", "passenger Alice", "contact Alice"
+                    let name_end = start + clean.len();
+                    spans.push(NerSpan {
+                        text: clean.to_string(),
+                        start,
+                        end: name_end,
+                        score: 0.50,
+                        label: "PERSON".to_string(),
+                    });
                 }
             }
         }
@@ -397,6 +409,24 @@ mod tests {
         let spans = det.detect_persons("Mme Héloïse Lefèvre est présente.");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text, "Héloïse Lefèvre");
+    }
+
+    #[test]
+    fn test_standalone_first_name_with_context() {
+        let det = HeuristicNerDetector::new();
+        // "User: Alice" — known first name with context keyword nearby
+        let spans = det.detect_persons("Body: User: Alice | CC: 4111");
+        assert_eq!(spans.len(), 1, "Expected Alice detected: {:?}", spans);
+        assert_eq!(spans[0].text, "Alice");
+        assert_eq!(spans[0].label, "PERSON");
+    }
+
+    #[test]
+    fn test_standalone_first_name_no_context() {
+        let det = HeuristicNerDetector::new();
+        // "Alice" alone without context — should NOT match (too many false positives)
+        let spans = det.detect_persons("Alice went to the store.");
+        assert!(spans.is_empty(), "Standalone name without context should not match: {:?}", spans);
     }
 
     #[test]

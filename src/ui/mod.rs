@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use axum::extract::Request;
@@ -18,60 +19,94 @@ use crate::patterns::MAX_INPUT_SIZE;
 
 // ─── NER capability detection ────────────────────────────────────────────────
 
+/// Test ML NER runtime availability (model + ONNX Runtime).
+/// Called once at startup; result is cached.
+fn probe_ml_ner() -> bool {
+    #[cfg(feature = "ner")]
+    {
+        use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
+        let config = NerConfig::default();
+        if !model_exists(&config) {
+            eprintln!("warning: NER model not downloaded, run `anon download-model`");
+            return false;
+        }
+        match std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
+            Ok(Ok(_)) => {
+                eprintln!("NER: ML (DistilBERT) available");
+                return true;
+            }
+            Ok(Err(e)) => eprintln!("warning: ML NER init failed: {e}"),
+            Err(_) => eprintln!("warning: ONNX Runtime not found, set ORT_DYLIB_PATH"),
+        }
+    }
+    false
+}
+
 /// Create an Anonymizer with the requested NER mode, falling back gracefully.
-fn make_anonymizer(threshold: f64, ner_mode: &str) -> Anonymizer {
+/// Returns (anonymizer, actual_ner_mode).
+#[allow(unused_variables)]
+fn make_anonymizer(threshold: f64, ner_mode: &str, ml_available: bool) -> (Anonymizer, &'static str) {
     #[allow(unused_mut)]
     let mut anonymizer = Anonymizer::new(threshold);
 
     match ner_mode {
         #[cfg(feature = "ner")]
-        "ml" => {
-            use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
+        "ml" if ml_available => {
+            use crate::ner::{NerConfig, ml::MlNerDetector};
             let config = NerConfig::default();
-            if model_exists(&config) {
-                match std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
-                    Ok(Ok(det)) => {
-                        anonymizer.set_ner_detector(Box::new(det));
-                    }
-                    Ok(Err(e)) => eprintln!("warning: ML NER init failed: {e}"),
-                    Err(_) => eprintln!("warning: ONNX Runtime not found"),
-                }
+            if let Ok(Ok(det)) = std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
+                anonymizer.set_ner_detector(Box::new(det));
+                return (anonymizer, "ml");
             }
+            return (anonymizer, "off");
         }
         #[cfg(feature = "ner-lite")]
         "heuristic" => {
             use crate::ner::heuristic::HeuristicNerDetector;
             anonymizer.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+            return (anonymizer, "heuristic");
         }
-        _ => {} // "off" or unknown — regex-only
+        _ => {}
     }
 
-    anonymizer
+    (anonymizer, "off")
 }
 
-/// Available NER modes based on compiled features.
-fn available_ner_modes() -> Vec<&'static str> {
+/// Available NER modes based on compiled features AND runtime availability.
+#[allow(unused_variables)]
+fn available_ner_modes(ml_available: bool) -> Vec<&'static str> {
     #[allow(unused_mut)]
     let mut modes = vec!["off"];
     #[cfg(feature = "ner-lite")]
     modes.push("heuristic");
     #[cfg(feature = "ner")]
-    modes.push("ml");
+    if ml_available {
+        modes.push("ml");
+    }
     modes
 }
 
-/// Default NER mode: best available.
-fn default_ner_mode() -> &'static str {
-    #[cfg(feature = "ner")]
-    { return "ml"; }
-    #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
+/// Default NER mode: heuristic is preferred (fast, good coverage).
+/// ML is available as an option but not default (slow, marginal gains).
+#[allow(unused_variables)]
+fn default_ner_mode(ml_available: bool) -> &'static str {
+    #[cfg(feature = "ner-lite")]
     { return "heuristic"; }
+    #[cfg(all(feature = "ner", not(feature = "ner-lite")))]
+    if ml_available { return "ml"; }
     #[allow(unreachable_code)]
     "off"
 }
 
 const INDEX_HTML: &str = include_str!("index.html");
 const MAX_ALLOWED_HOSTS: &[&str] = &["127.0.0.1", "localhost", "[::1]"];
+
+/// Cached result of ML NER probe (tested once at first use).
+static ML_NER_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+fn is_ml_available() -> bool {
+    *ML_NER_AVAILABLE.get_or_init(probe_ml_ner)
+}
 
 // ─── Mapping persistence (same path as CLI) ─────────────────────────────────
 
@@ -175,6 +210,7 @@ struct AnonymizeResponse {
     compute_time_ms: f64,
     io_time_ms: f64,
     server_time_ms: f64,
+    ner_mode: String,
 }
 
 #[derive(Deserialize)]
@@ -219,8 +255,9 @@ async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
 
     let threshold = req.threshold.unwrap_or(0.5).clamp(0.0, 1.0);
     let format = req.format.as_deref().unwrap_or("auto");
-    let ner_mode = req.ner.as_deref().unwrap_or(default_ner_mode());
-    let mut anonymizer = make_anonymizer(threshold, ner_mode);
+    let ml = is_ml_available();
+    let ner_mode = req.ner.as_deref().unwrap_or(default_ner_mode(ml));
+    let (mut anonymizer, actual_ner) = make_anonymizer(threshold, ner_mode, ml);
 
     let (parsed_json, format_name) = match format {
         "json" => match serde_json::from_str::<serde_json::Value>(req.text.trim()) {
@@ -280,6 +317,7 @@ async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
         compute_time_ms,
         io_time_ms,
         server_time_ms,
+        ner_mode: actual_ner.to_string(),
     })
     .into_response()
 }
@@ -317,14 +355,15 @@ async fn get_mapping() -> Response {
 }
 
 async fn capabilities() -> impl IntoResponse {
+    let ml = is_ml_available();
     #[derive(Serialize)]
     struct Capabilities {
         ner_modes: Vec<&'static str>,
         default_ner: &'static str,
     }
     Json(Capabilities {
-        ner_modes: available_ner_modes(),
-        default_ner: default_ner_mode(),
+        ner_modes: available_ner_modes(ml),
+        default_ner: default_ner_mode(ml),
     })
 }
 

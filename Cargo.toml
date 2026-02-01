@@ -32,10 +32,13 @@ sha2 = { version = "0.10", optional = true }
 
 [features]
 default = []
-ner = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:ureq", "dep:sha2"]
+ner = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:ureq", "dep:sha2", "ner-lite"]
 ner-lite = []
 
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["util"] }

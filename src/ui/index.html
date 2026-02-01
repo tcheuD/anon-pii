@@ -597,7 +597,9 @@
 
       renderDetections(data.detections || []);
       renderMapping(data.mapping || {});
-      timingBar.textContent = "Compute : " + computeMs.toFixed(1) + " ms  |  I/O : " + ioMs.toFixed(1) + " ms  |  Réseau : " + networkMs.toFixed(1) + " ms  |  Total : " + totalMs.toFixed(1) + " ms";
+      var nerUsed = data.ner_mode || "off";
+      var nerLabel = nerLabels[nerUsed] || nerUsed;
+      timingBar.textContent = "NER : " + nerLabel + "  |  Compute : " + computeMs.toFixed(1) + " ms  |  I/O : " + ioMs.toFixed(1) + " ms  |  Réseau : " + networkMs.toFixed(1) + " ms  |  Total : " + totalMs.toFixed(1) + " ms";
       timingBar.style.display = "";
       detectionSection.classList.add("visible");
 
