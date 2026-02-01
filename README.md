@@ -6,16 +6,24 @@ Fast CLI tool to anonymize PII in debug data before sharing with AI tools.
 
 ```bash
 # Default (regex-only, no NER)
-cargo build --release
-cp target/release/anon ~/.local/bin/
+cargo install --path .
 
 # With heuristic name detection (zero deps, +0 binary size)
-cargo build --release --features ner-lite
+cargo install --path . --features ner-lite
 
 # With ML name detection (requires ONNX Runtime)
 brew install onnxruntime
-cargo build --release --features ner
+export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
+cargo install --path . --features ner
 ```
+
+This installs to `~/.cargo/bin/anon`. If your PATH uses a different directory (e.g. `~/.local/bin`), create a symlink:
+
+```bash
+ln -sf ~/.cargo/bin/anon ~/.local/bin/anon
+```
+
+To update after code changes, re-run the same `cargo install` command.
  
 ## Quick Start
 
@@ -239,7 +247,7 @@ All prompts are anonymized before reaching the API. Responses have tokens restor
 | `--port` | `-p` | `9100` | Port to listen on |
 | `--upstream` | `-u` | `https://api.anthropic.com` | Upstream API URL |
 | `--threshold` | | `0.5` | Minimum confidence score (0.0-1.0) |
-| `--session-dir` | | `/tmp/anon-proxy` | Directory for mapping files |
+| `--session-dir` | | `/tmp/anon-proxy-<random>` | Directory for mapping files |
 
 ### Testing without an API key
 
@@ -273,14 +281,15 @@ The echo server prints the anonymized body — `[EMAIL_ADDRESS_1]` instead of `j
 
 ### Monitoring
 
-The mapping file is written after each request and on shutdown:
+The mapping file is written after each request and on shutdown. The session directory path is printed at startup:
 
 ```bash
-# Watch the mapping grow
-watch -n1 'jq . /tmp/anon-proxy/mapping.json 2>/dev/null'
+# Watch the mapping grow (use the path printed by the proxy)
+watch -n1 'jq . /tmp/anon-proxy-*/mapping.json 2>/dev/null'
 
-# Check how many entities were captured
-jq '.mappings | length' /tmp/anon-proxy/mapping.json
+# Or use a fixed session dir
+anon proxy --session-dir /tmp/my-session
+watch -n1 'jq . /tmp/my-session/mapping.json'
 ```
 
 ### Test with curl
@@ -330,7 +339,7 @@ Person names aren't reliably detectable with regex. The `--ner` flag enables NER
 Zero dependencies. Detects names using title patterns (M., Mme, Dr, Captain...) and a ~500 entry French/English first name dictionary.
 
 ```bash
-cargo build --release --features ner-lite
+cargo install --path . --features ner-lite
 
 echo "M. Dupont est pilote, Dr Martin en copilote" | anon --ner
 # M. [PERSON_2] est pilote, Dr [PERSON_1] en copilote
@@ -344,12 +353,12 @@ Uses DistilBERT multilingual NER (Davlan/distilbert-base-multilingual-cased-ner-
 # 1. Install ONNX Runtime
 brew install onnxruntime  # macOS
 # apt install libonnxruntime-dev  # Debian/Ubuntu
+export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
 
-# 2. Build with ner feature
-cargo build --release --features ner
+# 2. Install with ner feature
+cargo install --path . --features ner
 
 # 3. Download model (~130MB, cached at ~/.anon/models/)
-export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
 anon download-model
 
 # 4. Use
