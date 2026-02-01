@@ -27,6 +27,15 @@ uv run mypy src/            # type check (strict mode)
 
 Note: `cargo test` (no features) runs all tests except NER-specific ones. Always run the default `cargo test` after changes — it covers patterns, detection, normalization, format handling, mapping, and proxy.
 
+```bash
+# Benchmark (100k lines, simple vs complex)
+cargo run --release --example benchmark
+cargo run --release --features ner-lite --example benchmark
+cargo run --release --features ner --example benchmark
+```
+
+NER ML setup: `brew install onnxruntime`, then persist `ORT_DYLIB_PATH` in `~/.zshrc`. Model cached at `~/.anon/models/distilbert-ner-int8/` after `anon download-model`.
+
 ## Architecture
 
 ### Rust (multi-module)

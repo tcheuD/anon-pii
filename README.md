@@ -15,6 +15,13 @@ cargo install --path . --features ner-lite
 brew install onnxruntime
 export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
 cargo install --path . --features ner
+anon download-model  # one-time, cached at ~/.anon/models/
+```
+
+To make `ORT_DYLIB_PATH` persist across terminal sessions, add it to your shell profile:
+
+```bash
+echo 'export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib' >> ~/.zshrc
 ```
 
 This installs to `~/.cargo/bin/anon`. If your PATH uses a different directory (e.g. `~/.local/bin`), create a symlink:
@@ -106,6 +113,22 @@ cargo build --release
 ```
 
 `cargo test` without feature flags runs all tests except NER-specific ones. This is the standard check after any change.
+
+### Benchmark
+
+```bash
+cargo run --release --example benchmark
+cargo run --release --features ner-lite --example benchmark
+cargo run --release --features ner --example benchmark
+```
+
+Typical results (Apple Silicon):
+
+| Feature | Throughput | Simple avg | Complex avg | Penalty |
+|---------|-----------|-----------|-------------|---------|
+| none | 248k lines/s | 2.8 μs | 8.9 μs | 3.1x |
+| ner-lite | 226k lines/s | 2.8 μs | 10.8 μs | 3.8x |
+| ner | 246k lines/s | 2.8 μs | 9.0 μs | 3.2x |
 
 ## Python Version
 
