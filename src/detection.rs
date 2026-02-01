@@ -8,6 +8,43 @@ use crate::patterns::{
     valid_card_prefix,
 };
 
+/// Decode JSON-style `\uXXXX` escape sequences into their UTF-8 equivalents.
+/// Only decodes BMP codepoints (U+0000..U+FFFF). Malformed sequences are left as-is.
+fn decode_unicode_escapes(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'u') {
+            chars.next(); // consume 'u'
+            let mut hex = String::with_capacity(4);
+            for _ in 0..4 {
+                match chars.peek() {
+                    Some(&h) if h.is_ascii_hexdigit() => {
+                        hex.push(h);
+                        chars.next();
+                    }
+                    _ => break,
+                }
+            }
+            if hex.len() == 4 {
+                if let Ok(cp) = u32::from_str_radix(&hex, 16) {
+                    if let Some(decoded) = char::from_u32(cp) {
+                        result.push(decoded);
+                        continue;
+                    }
+                }
+            }
+            // Malformed — emit the original characters
+            result.push('\\');
+            result.push('u');
+            result.push_str(&hex);
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 #[cfg(any(feature = "ner", feature = "ner-lite"))]
 use crate::ner::NerDetector;
 
@@ -120,6 +157,9 @@ impl Anonymizer {
         // and other Unicode variants to their canonical ASCII equivalents so
         // that regex patterns match consistently.
         let normalized: String = text.nfkc().collect();
+        // Decode JSON-style \uXXXX escape sequences (e.g. \u0040 → @) so that
+        // PII hidden behind unicode escapes in log lines is detected.
+        let normalized = decode_unicode_escapes(&normalized);
         let text = normalized.as_str();
 
         let mut detections: Vec<Detection> = Vec::new();
@@ -872,6 +912,65 @@ mod tests {
         assert!(dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "PLR"),
             "Real crew code PLR should still be detected");
         assert!(result.contains("[CREW_CODE_"));
+    }
+
+    #[test]
+    fn test_unicode_escape_email_detected() {
+        let mut a = Anonymizer::new(0.0);
+        // \u0040 is @ — should be decoded and detected as email
+        let (result, dets) = a.anonymize_text(r"client\u0040company.com requested refund");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
+            "Email with \\u0040 should be detected: {:?}", dets
+        );
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_unicode_escape_multiple_sequences() {
+        let mut a = Anonymizer::new(0.0);
+        // Multiple unicode escapes in one email
+        let (result, dets) = a.anonymize_text(r"user\u0040domain\u002Ecom");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
+            "Email with multiple unicode escapes should be detected: {:?}", dets
+        );
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_unicode_escape_no_double_mask() {
+        let mut a = Anonymizer::new(0.0);
+        // Plain email (no escapes) should still work normally
+        let (result, dets) = a.anonymize_text("contact jane@example.com here");
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].entity_type, "EMAIL_ADDRESS");
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_unicode_escape_malformed_passthrough() {
+        // Malformed \u sequences should pass through without panic
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_text(r"bad escape \u00 and \u00GG here");
+        assert!(result.contains(r"\u00"));
+    }
+
+    #[test]
+    fn test_decode_unicode_escapes_basic() {
+        assert_eq!(decode_unicode_escapes(r"hello\u0040world"), "hello@world");
+        assert_eq!(decode_unicode_escapes(r"\u002B33 6 12"), "+33 6 12");
+        assert_eq!(decode_unicode_escapes("no escapes"), "no escapes");
+    }
+
+    #[test]
+    fn test_decode_unicode_escapes_malformed() {
+        // Too short
+        assert_eq!(decode_unicode_escapes(r"\u00"), r"\u00");
+        // Non-hex
+        assert_eq!(decode_unicode_escapes(r"\u00GG"), r"\u00GG");
+        // Just backslash not followed by u
+        assert_eq!(decode_unicode_escapes(r"\n"), r"\n");
     }
 
     #[test]
