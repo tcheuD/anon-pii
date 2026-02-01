@@ -314,6 +314,53 @@ impl Anonymizer {
         // Sort by position for display
         filtered.sort_by(|a, b| a.start.cmp(&b.start));
 
+        // Extract inner PII from URL query parameters for audit visibility.
+        // These are reported in the detection list but not used for replacement
+        // (the entire URL is already masked as [URL_...]).
+        let mut url_inner_detections: Vec<Detection> = Vec::new();
+        for det in &filtered {
+            if det.entity_type == "URL" {
+                if let Some(qpos) = det.original.find('?') {
+                    let query = &det.original[qpos + 1..];
+                    for param in query.split('&') {
+                        if let Some(eq) = param.find('=') {
+                            let value = &param[eq + 1..];
+                            if value.is_empty() {
+                                continue;
+                            }
+                            let decoded = decode_percent_encoding(value);
+                            for pat in &self.patterns {
+                                if pat.entity_type == "URL" {
+                                    continue;
+                                }
+                                for mat in pat.regex.find_iter(&decoded) {
+                                    if pat.entity_type == "CREDIT_CARD" {
+                                        if !luhn_check(mat.as_str()) || !valid_card_prefix(mat.as_str()) {
+                                            continue;
+                                        }
+                                    }
+                                    if pat.entity_type == "CREW_CODE" && CREW_CODE_BLOCKLIST.contains(&mat.as_str()) {
+                                        continue;
+                                    }
+                                    let score = pat.score;
+                                    if score < self.threshold {
+                                        continue;
+                                    }
+                                    url_inner_detections.push(Detection {
+                                        entity_type: pat.entity_type,
+                                        original: mat.as_str().to_string(),
+                                        start: det.start,
+                                        end: det.start,
+                                        score,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Replace from end to start
         let mut result = text.to_string();
         for det in filtered.iter().rev() {
@@ -326,6 +373,7 @@ impl Anonymizer {
             );
         }
 
+        filtered.extend(url_inner_detections);
         (result, filtered)
     }
 
@@ -1107,6 +1155,57 @@ mod tests {
         assert!(
             !dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),
             "Short dot-separated words should not be detected as JWT"
+        );
+    }
+
+    #[test]
+    fn test_url_inner_pii_reported_in_detections() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "Referer: https://site.com/search?email=user%40example.com&id=123";
+        let (result, dets) = a.anonymize_text(input);
+        // URL should be masked in output
+        assert!(result.contains("[URL_"));
+        assert!(!result.contains("example.com"));
+        // Both URL and inner EMAIL_ADDRESS should be in detections
+        assert!(dets.iter().any(|d| d.entity_type == "URL"), "URL detection missing");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS" && d.original == "user@example.com"),
+            "Inner email not reported in detections: {:?}", dets
+        );
+    }
+
+    #[test]
+    fn test_url_inner_pii_phone_reported() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "visit https://example.com/contact?tel=%2B33612345678";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(result.contains("[URL_"));
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
+            "Inner phone not reported in detections: {:?}", dets
+        );
+    }
+
+    #[test]
+    fn test_url_without_query_no_inner_detections() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "visit https://example.com/page";
+        let (_, dets) = a.anonymize_text(input);
+        // Only the URL detection, no extras
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].entity_type, "URL");
+    }
+
+    #[test]
+    fn test_url_inner_pii_no_false_detections() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "visit https://example.com/page?id=123&sort=asc";
+        let (_, dets) = a.anonymize_text(input);
+        // Only the URL detection — no PII in these params
+        assert_eq!(
+            dets.iter().filter(|d| d.entity_type != "URL").count(),
+            0,
+            "Should not detect PII in non-PII URL params: {:?}", dets
         );
     }
 
