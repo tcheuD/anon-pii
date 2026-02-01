@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Mapping {
@@ -10,6 +10,12 @@ pub struct Mapping {
     pub reverse: HashMap<(String, String), String>,
     #[serde(skip)]
     pub counters: HashMap<String, usize>,
+    #[serde(skip)]
+    pub max_entries: Option<usize>,
+    #[serde(skip)]
+    insertion_order: VecDeque<String>,
+    #[serde(skip)]
+    has_warned_eviction: bool,
 }
 
 fn days_to_ymd(days: u64) -> (u64, u64, u64) {
@@ -58,7 +64,15 @@ impl Mapping {
             mappings: HashMap::new(),
             reverse: HashMap::new(),
             counters: HashMap::new(),
+            max_entries: None,
+            insertion_order: VecDeque::new(),
+            has_warned_eviction: false,
         }
+    }
+
+    pub fn with_max_entries(mut self, max: usize) -> Self {
+        self.max_entries = Some(max);
+        self
     }
 
     pub fn add(&mut self, entity_type: &str, original: &str) -> String {
@@ -67,18 +81,48 @@ impl Mapping {
             return token.clone();
         }
 
+        if let Some(max) = self.max_entries {
+            while self.mappings.len() >= max {
+                if !self.has_warned_eviction {
+                    eprintln!(
+                        "Warning: mapping cache reached limit ({max}), evicting oldest entries"
+                    );
+                    self.has_warned_eviction = true;
+                }
+                self.evict_oldest();
+            }
+        }
+
         let counter = self.counters.entry(entity_type.to_string()).or_insert(0);
         *counter += 1;
         let token = format!("[{}_{counter}]", entity_type);
 
         self.mappings.insert(token.clone(), original.to_string());
         self.reverse.insert(key, token.clone());
+        self.insertion_order.push_back(token.clone());
         token
+    }
+
+    fn evict_oldest(&mut self) {
+        if let Some(old_token) = self.insertion_order.pop_front() {
+            if let Some(original) = self.mappings.remove(&old_token) {
+                if let Some(inner) = old_token.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
+                    if let Some(pos) = inner.rfind('_') {
+                        let entity_type = &inner[..pos];
+                        self.reverse.remove(&(entity_type.to_string(), original));
+                    }
+                }
+            }
+        }
     }
 
     pub fn rebuild_caches(&mut self) {
         self.reverse.clear();
         self.counters.clear();
+        self.insertion_order.clear();
+
+        let mut ordered: Vec<(String, usize)> = Vec::new();
+
         for (token, original) in &self.mappings {
             if let Some(inner) = token.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
                 if let Some(pos) = inner.rfind('_') {
@@ -86,6 +130,7 @@ impl Mapping {
                     if let Ok(n) = inner[pos + 1..].parse::<usize>() {
                         let counter = self.counters.entry(entity_type.to_string()).or_insert(0);
                         *counter = (*counter).max(n);
+                        ordered.push((token.clone(), n));
                     }
                     self.reverse.insert(
                         (entity_type.to_string(), original.clone()),
@@ -93,6 +138,11 @@ impl Mapping {
                     );
                 }
             }
+        }
+
+        ordered.sort_by_key(|&(_, n)| n);
+        for (token, _) in ordered {
+            self.insertion_order.push_back(token);
         }
     }
 
@@ -308,6 +358,89 @@ mod tests {
         // Same entity type + same value = same token (consistency)
         assert_eq!(token1, token2);
         assert_eq!(token1, "[EMAIL_ADDRESS_1]");
+    }
+
+    #[test]
+    fn test_eviction_at_capacity() {
+        let mut m = Mapping::new().with_max_entries(3);
+        let t1 = m.add("EMAIL_ADDRESS", "a@test.com");
+        let t2 = m.add("EMAIL_ADDRESS", "b@test.com");
+        let t3 = m.add("EMAIL_ADDRESS", "c@test.com");
+        assert_eq!(m.mappings.len(), 3);
+
+        let t4 = m.add("EMAIL_ADDRESS", "d@test.com");
+        assert_eq!(m.mappings.len(), 3);
+        assert!(!m.mappings.contains_key(&t1), "oldest entry should be evicted");
+        assert!(m.mappings.contains_key(&t2));
+        assert!(m.mappings.contains_key(&t3));
+        assert!(m.mappings.contains_key(&t4));
+    }
+
+    #[test]
+    fn test_counters_not_reset_on_eviction() {
+        let mut m = Mapping::new().with_max_entries(2);
+        m.add("EMAIL_ADDRESS", "a@test.com");
+        m.add("EMAIL_ADDRESS", "b@test.com");
+        let t3 = m.add("EMAIL_ADDRESS", "c@test.com");
+        assert_eq!(t3, "[EMAIL_ADDRESS_3]", "counter must not reset after eviction");
+    }
+
+    #[test]
+    fn test_evicted_token_not_restored() {
+        let mut m = Mapping::new().with_max_entries(1);
+        m.add("EMAIL_ADDRESS", "a@test.com");
+        m.add("EMAIL_ADDRESS", "b@test.com");
+        let result = m.restore_bracketed("Contact [EMAIL_ADDRESS_1] please");
+        assert_eq!(result, "Contact [EMAIL_ADDRESS_1] please", "evicted token should not be restored");
+    }
+
+    #[test]
+    fn test_dedup_within_capacity() {
+        let mut m = Mapping::new().with_max_entries(3);
+        let t1 = m.add("EMAIL_ADDRESS", "a@test.com");
+        let t2 = m.add("EMAIL_ADDRESS", "a@test.com");
+        assert_eq!(t1, t2);
+        assert_eq!(m.mappings.len(), 1, "dedup should not consume extra slots");
+    }
+
+    #[test]
+    fn test_no_eviction_when_unlimited() {
+        let mut m = Mapping::new();
+        for i in 0..1000 {
+            m.add("EMAIL_ADDRESS", &format!("user{i}@test.com"));
+        }
+        assert_eq!(m.mappings.len(), 1000, "unlimited mapping should keep all entries");
+    }
+
+    #[test]
+    fn test_eviction_clears_reverse() {
+        let mut m = Mapping::new().with_max_entries(1);
+        m.add("EMAIL_ADDRESS", "a@test.com");
+        m.add("EMAIL_ADDRESS", "b@test.com");
+        // a@test.com was evicted — re-adding it should get a NEW token
+        let t = m.add("EMAIL_ADDRESS", "a@test.com");
+        assert_eq!(t, "[EMAIL_ADDRESS_3]", "re-added value should get a new token");
+    }
+
+    #[test]
+    fn test_rebuild_caches_with_insertion_order() {
+        let mut m = Mapping::new();
+        m.add("EMAIL_ADDRESS", "a@test.com");
+        m.add("EMAIL_ADDRESS", "b@test.com");
+        m.add("EMAIL_ADDRESS", "c@test.com");
+
+        let json = serde_json::to_string(&m).unwrap();
+        let mut restored: Mapping = serde_json::from_str(&json).unwrap();
+        restored.rebuild_caches();
+        restored.max_entries = Some(3);
+
+        // Adding a 4th should evict the lowest-numbered (EMAIL_ADDRESS_1)
+        let t4 = restored.add("EMAIL_ADDRESS", "d@test.com");
+        assert_eq!(t4, "[EMAIL_ADDRESS_4]");
+        assert!(!restored.mappings.contains_key("[EMAIL_ADDRESS_1]"));
+        assert!(restored.mappings.contains_key("[EMAIL_ADDRESS_2]"));
+        assert!(restored.mappings.contains_key("[EMAIL_ADDRESS_3]"));
+        assert!(restored.mappings.contains_key("[EMAIL_ADDRESS_4]"));
     }
 
     #[test]

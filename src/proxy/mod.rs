@@ -18,6 +18,7 @@ use crate::mapping::Mapping;
 
 pub const DEFAULT_UPSTREAM: &str = "https://api.anthropic.com";
 const MAX_ALLOWED_HOSTS: &[&str] = &["127.0.0.1", "localhost", "[::1]"];
+const DEFAULT_MAX_MAPPING_ENTRIES: usize = 10_000;
 
 pub struct ProxyState {
     pub client: reqwest::Client,
@@ -28,9 +29,11 @@ pub struct ProxyState {
 
 impl ProxyState {
     pub fn new(upstream: String, threshold: f64, session_dir: PathBuf) -> Self {
+        let mut anonymizer = Anonymizer::new(threshold);
+        anonymizer.mapping = anonymizer.mapping.with_max_entries(DEFAULT_MAX_MAPPING_ENTRIES);
         Self {
             client: reqwest::Client::new(),
-            anonymizer: Mutex::new(Anonymizer::new(threshold)),
+            anonymizer: Mutex::new(anonymizer),
             upstream,
             session_dir,
         }
