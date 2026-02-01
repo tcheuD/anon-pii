@@ -52,6 +52,7 @@ dependencies = [
  "sha2",
  "tokenizers",
  "tokio",
+ "tower",
  "unicode-normalization",
  "ureq 2.12.1",
 ]
