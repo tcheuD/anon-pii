@@ -117,7 +117,9 @@ struct AnonymizeResponse {
     result: String,
     detections: Vec<DetectionItem>,
     mapping: HashMap<String, String>,
-    processing_time_ms: f64,
+    compute_time_ms: f64,
+    io_time_ms: f64,
+    server_time_ms: f64,
 }
 
 #[derive(Deserialize)]
@@ -158,7 +160,7 @@ async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
         return (StatusCode::PAYLOAD_TOO_LARGE, "Input too large").into_response();
     }
 
-    let start = Instant::now();
+    let server_start = Instant::now();
 
     let threshold = req.threshold.unwrap_or(0.5).clamp(0.0, 1.0);
     let format = req.format.as_deref().unwrap_or("auto");
@@ -180,6 +182,7 @@ async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
         },
     };
 
+    let compute_start = Instant::now();
     let (result, detections) = if let Some(parsed) = parsed_json {
         let indent = detect_json_indent(&req.text);
         let (anon_value, dets) = anonymizer.anonymize_json_value(&parsed);
@@ -196,6 +199,7 @@ async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
     } else {
         anonymizer.anonymize_text(&req.text)
     };
+    let compute_time_ms = compute_start.elapsed().as_secs_f64() * 1000.0;
 
     let detection_items: Vec<DetectionItem> = detections
         .iter()
@@ -207,15 +211,19 @@ async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
         .collect();
 
     // Persist mapping to ~/.anon/mapping.json (same as CLI)
+    let io_start = Instant::now();
     save_mapping(&anonymizer.mapping);
+    let io_time_ms = io_start.elapsed().as_secs_f64() * 1000.0;
 
-    let processing_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let server_time_ms = server_start.elapsed().as_secs_f64() * 1000.0;
 
     Json(AnonymizeResponse {
         result,
         detections: detection_items,
         mapping: anonymizer.mapping.mappings.clone(),
-        processing_time_ms,
+        compute_time_ms,
+        io_time_ms,
+        server_time_ms,
     })
     .into_response()
 }

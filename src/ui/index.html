@@ -582,7 +582,9 @@
 
       var data = await res.json();
       var totalMs = performance.now() - t0;
-      var serverMs = data.processing_time_ms || 0;
+      var computeMs = data.compute_time_ms || 0;
+      var ioMs = data.io_time_ms || 0;
+      var serverMs = data.server_time_ms || 0;
       var networkMs = Math.max(0, totalMs - serverMs);
 
       outputText.value = data.result || "";
@@ -590,7 +592,7 @@
 
       renderDetections(data.detections || []);
       renderMapping(data.mapping || {});
-      timingBar.textContent = "Serveur : " + serverMs.toFixed(1) + " ms  |  Réseau : " + networkMs.toFixed(1) + " ms  |  Total : " + totalMs.toFixed(1) + " ms";
+      timingBar.textContent = "Compute : " + computeMs.toFixed(1) + " ms  |  I/O : " + ioMs.toFixed(1) + " ms  |  Réseau : " + networkMs.toFixed(1) + " ms  |  Total : " + totalMs.toFixed(1) + " ms";
       timingBar.style.display = "";
       detectionSection.classList.add("visible");
 
