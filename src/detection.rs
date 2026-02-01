@@ -379,7 +379,7 @@ mod tests {
         let (result, dets) = a.anonymize_text("contact john@example.com now");
         assert_eq!(dets.len(), 1);
         assert_eq!(dets[0].entity_type, "EMAIL_ADDRESS");
-        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        assert!(result.contains("[EMAIL_ADDRESS_"));
     }
 
     #[test]
@@ -388,21 +388,21 @@ mod tests {
         let (result, dets) = a.anonymize_text("visit https://example.com/path?q=1 now");
         assert_eq!(dets.len(), 1);
         assert_eq!(dets[0].entity_type, "URL");
-        assert!(result.contains("[URL_1]"));
+        assert!(result.contains("[URL_"));
     }
 
     #[test]
     fn test_fr_phone_intl() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("call +33 6 12 34 56 78");
-        assert!(result.contains("[FR_PHONE_NUMBER_1]"));
+        assert!(result.contains("[FR_PHONE_NUMBER_"));
     }
 
     #[test]
     fn test_fr_phone_national() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("call 06 12 34 56 78");
-        assert!(result.contains("[FR_PHONE_NUMBER_1]"));
+        assert!(result.contains("[FR_PHONE_NUMBER_"));
     }
 
     #[test]
@@ -417,7 +417,7 @@ mod tests {
     fn test_fr_iban() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("IBAN: FR76 1234 5678 9012 3456 7890 123");
-        assert!(result.contains("[FR_IBAN_1]"));
+        assert!(result.contains("[FR_IBAN_"));
     }
 
     #[test]
@@ -431,7 +431,7 @@ mod tests {
     fn test_fr_ssn() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("NIR: 1 85 12 75 123 456 78");
-        assert!(result.contains("[FR_SSN_1]"));
+        assert!(result.contains("[FR_SSN_"));
     }
 
     #[test]
@@ -461,7 +461,7 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         let (result, dets) = a.anonymize_text("passeport: 12AB34567");
         assert!(dets.iter().any(|d| d.entity_type == "FR_PASSPORT"));
-        assert!(result.contains("[FR_PASSPORT_1]"));
+        assert!(result.contains("[FR_PASSPORT_"));
     }
 
     #[test]
@@ -475,7 +475,7 @@ mod tests {
     fn test_aircraft_fr() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("aircraft F-HOPA ready");
-        assert!(result.contains("[AIRCRAFT_REGISTRATION_1]"));
+        assert!(result.contains("[AIRCRAFT_REGISTRATION_"));
     }
 
     #[test]
@@ -483,7 +483,7 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         let (result, dets) = a.anonymize_text("aircraft N12345 ready");
         assert!(dets.iter().any(|d| d.entity_type == "AIRCRAFT_REGISTRATION"));
-        assert!(result.contains("[AIRCRAFT_REGISTRATION_1]"));
+        assert!(result.contains("[AIRCRAFT_REGISTRATION_"));
     }
 
     #[test]
@@ -499,7 +499,7 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         let (result, dets) = a.anonymize_text("pilot: JDU is on duty");
         assert!(dets.iter().any(|d| d.entity_type == "CREW_CODE"));
-        assert!(result.contains("[CREW_CODE_1]"));
+        assert!(result.contains("[CREW_CODE_"));
     }
 
     #[test]
@@ -520,14 +520,14 @@ mod tests {
     fn test_ip() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("server at 192.168.1.100");
-        assert!(result.contains("[IP_ADDRESS_1]"));
+        assert!(result.contains("[IP_ADDRESS_"));
     }
 
     #[test]
     fn test_uuid() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("id: 550e8400-e29b-41d4-a716-446655440000");
-        assert!(result.contains("[UUID_1]"));
+        assert!(result.contains("[UUID_"));
     }
 
     #[test]
@@ -535,7 +535,7 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         let (result, dets) = a.anonymize_text("wallet: 0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18");
         assert!(dets.iter().any(|d| d.entity_type == "CRYPTO"));
-        assert!(result.contains("[CRYPTO_1]"));
+        assert!(result.contains("[CRYPTO_"));
     }
 
     #[test]
@@ -551,7 +551,11 @@ mod tests {
     fn test_consistency() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("john@example.com and john@example.com again");
-        assert_eq!(result.matches("[EMAIL_ADDRESS_1]").count(), 2);
+        let token = a.mapping.mappings.keys()
+            .find(|k| k.starts_with("[EMAIL_ADDRESS_"))
+            .unwrap()
+            .clone();
+        assert_eq!(result.matches(&*token).count(), 2);
     }
 
     #[test]
@@ -569,8 +573,8 @@ mod tests {
         assert_eq!(dets.len(), 2);
         assert_eq!(result["count"], 42);
         assert_eq!(result["active"], true);
-        assert!(result["email"].as_str().unwrap().contains("[EMAIL_ADDRESS_1]"));
-        assert!(result["nested"]["phone"].as_str().unwrap().contains("[FR_PHONE_NUMBER_1]"));
+        assert!(result["email"].as_str().unwrap().contains("[EMAIL_ADDRESS_"));
+        assert!(result["nested"]["phone"].as_str().unwrap().contains("[FR_PHONE_NUMBER_"));
     }
 
     #[test]
@@ -604,7 +608,7 @@ mod tests {
         let input = "L'équipage était composé du pilote JDU et du copilote André résumé";
         let (result, dets) = a.anonymize_text(input);
         assert!(dets.iter().any(|d| d.entity_type == "CREW_CODE"));
-        assert!(result.contains("[CREW_CODE_1]"));
+        assert!(result.contains("[CREW_CODE_"));
     }
 
     #[test]
@@ -613,7 +617,7 @@ mod tests {
         // 4111111111111111 is a valid Visa test number (passes Luhn + valid prefix)
         let (result, dets) = a.anonymize_text("carte bancaire 4111 1111 1111 1111");
         assert!(dets.iter().any(|d| d.entity_type == "CREDIT_CARD"));
-        assert!(result.contains("[CREDIT_CARD_1]"));
+        assert!(result.contains("[CREDIT_CARD_"));
     }
 
     #[test]
@@ -652,7 +656,7 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         let input = "Héloïse a envoyé un mail à héloïse@example.com depuis Zürich";
         let (result, _) = a.anonymize_text(input);
-        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        assert!(result.contains("[EMAIL_ADDRESS_"));
         // Verify the surrounding accented text is preserved
         assert!(result.contains("Héloïse"));
         assert!(result.contains("Zürich"));
@@ -692,10 +696,7 @@ mod tests {
         let (result, dets) = a.anonymize_json_value(&value);
 
         assert_eq!(dets.len(), 1);
-        assert_eq!(
-            result["a"]["b"]["c"].as_str().unwrap(),
-            "[EMAIL_ADDRESS_1]"
-        );
+        assert!(result["a"]["b"]["c"].as_str().unwrap().starts_with("[EMAIL_ADDRESS_"));
     }
 
     #[test]
@@ -708,7 +709,7 @@ mod tests {
             dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
             "Fullwidth @ should be normalized and detected as email"
         );
-        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        assert!(result.contains("[EMAIL_ADDRESS_"));
     }
 
     #[test]
@@ -722,7 +723,7 @@ mod tests {
             "Fullwidth digits should be normalized and detected as IP: {:?}",
             dets
         );
-        assert!(result.contains("[IP_ADDRESS_1]"));
+        assert!(result.contains("[IP_ADDRESS_"));
     }
 
     #[test]
@@ -731,7 +732,7 @@ mod tests {
         // Pure ASCII input should be unchanged by NFKC
         let (result, dets) = a.anonymize_text("contact john@example.com now");
         assert_eq!(dets.len(), 1);
-        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        assert!(result.contains("[EMAIL_ADDRESS_"));
     }
 
     #[test]
@@ -762,7 +763,7 @@ mod tests {
         let (result, dets) = a.anonymize_csv(csv);
         // Email in second cell should be detected
         assert!(dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
-        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        assert!(result.contains("[EMAIL_ADDRESS_"));
         // Quoted field with comma should be preserved as a single cell
         assert!(result.contains("Doe, John") || result.contains("\"Doe, John\""));
     }
@@ -771,10 +772,12 @@ mod tests {
     fn test_csv_unquoted_email() {
         let mut a = Anonymizer::new(0.0);
         let csv = "id,email,name\n1,user@test.com,Alice\n2,admin@test.com,Bob";
-        let (result, dets) = a.anonymize_csv(csv);
+        let (_result, dets) = a.anonymize_csv(csv);
         assert_eq!(dets.iter().filter(|d| d.entity_type == "EMAIL_ADDRESS").count(), 2);
-        assert!(result.contains("[EMAIL_ADDRESS_1]"));
-        assert!(result.contains("[EMAIL_ADDRESS_2]"));
+        let email_tokens: Vec<_> = a.mapping.mappings.keys()
+            .filter(|k| k.starts_with("[EMAIL_ADDRESS_"))
+            .collect();
+        assert_eq!(email_tokens.len(), 2);
     }
 
     #[test]
@@ -784,7 +787,7 @@ mod tests {
         let (result, dets) = a.anonymize_sql(sql);
         // Email inside string literal should be detected
         assert!(dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
-        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        assert!(result.contains("[EMAIL_ADDRESS_"));
         // SQL keywords and structure should be preserved
         assert!(result.starts_with("INSERT INTO users VALUES"));
     }
@@ -807,7 +810,68 @@ mod tests {
         let sql = "INSERT INTO logs VALUES ('it''s john@test.com')";
         let (result, dets) = a.anonymize_sql(sql);
         assert!(dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
-        assert!(result.contains("[EMAIL_ADDRESS_1]"));
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_crew_code_blocklist_tech_abbreviations() {
+        let mut a = Anonymizer::new(0.0);
+        // Tech abbreviations near crew context should still be blocked
+        let (_, dets) = a.anonymize_text("crew member handles URL API SQL requests on duty");
+        let crew_dets: Vec<_> = dets.iter().filter(|d| d.entity_type == "CREW_CODE").collect();
+        for d in &crew_dets {
+            assert!(
+                !["URL", "API", "SQL"].contains(&d.original.as_str()),
+                "Tech abbreviation '{}' should be blocklisted, not detected as CREW_CODE",
+                d.original
+            );
+        }
+    }
+
+    #[test]
+    fn test_crew_code_blocklist_stress_test_cases() {
+        let mut a = Anonymizer::new(0.0);
+        // Exact cases from stress test that produced false positives
+        let (_, dets) = a.anonymize_text("sensitive tokens in a URL string");
+        assert!(!dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "URL"));
+
+        let mut a2 = Anonymizer::new(0.0);
+        let (_, dets2) = a2.anonymize_text("PII split across lines");
+        assert!(!dets2.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "PII"));
+
+        let mut a3 = Anonymizer::new(0.0);
+        let (_, dets3) = a3.anonymize_text("Auth-Token=XYZ-123");
+        assert!(!dets3.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "XYZ"));
+    }
+
+    #[test]
+    fn test_crew_code_blocklist_airport_codes() {
+        let mut a = Anonymizer::new(0.0);
+        // Airport codes near crew context should be blocked
+        let (_, dets) = a.anonymize_text("crew roster: departure CDG arrival ORY duty JFK");
+        let crew_originals: Vec<&str> = dets.iter()
+            .filter(|d| d.entity_type == "CREW_CODE")
+            .map(|d| d.original.as_str())
+            .collect();
+        for code in &["CDG", "ORY", "JFK"] {
+            assert!(
+                !crew_originals.contains(code),
+                "Airport code '{}' should be blocklisted, not detected as CREW_CODE",
+                code
+            );
+        }
+    }
+
+    #[test]
+    fn test_crew_code_real_codes_still_detected() {
+        let mut a = Anonymizer::new(0.0);
+        // Real crew codes with context should still work
+        let (result, dets) = a.anonymize_text("pilote JDU en service avec copilote PLR");
+        assert!(dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "JDU"),
+            "Real crew code JDU should still be detected");
+        assert!(dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "PLR"),
+            "Real crew code PLR should still be detected");
+        assert!(result.contains("[CREW_CODE_"));
     }
 
     #[test]
