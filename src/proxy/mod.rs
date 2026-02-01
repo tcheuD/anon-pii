@@ -37,23 +37,25 @@ impl ProxyState {
     }
 
     /// Dump mapping to disk atomically via temp-file-then-rename.
-    /// Eliminates TOCTOU symlink races — rename replaces the directory entry,
-    /// never following symlinks at the target path.
+    /// Uses a unique temp file per call to prevent concurrent dump races.
     pub async fn dump_mapping(&self) -> std::io::Result<()> {
-        let anonymizer = self.anonymizer.lock().await;
-        let mapping_json = serde_json::to_string_pretty(&anonymizer.mapping)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        // Hold lock only for serialization, then drop before I/O
+        let mapping_json = {
+            let anonymizer = self.anonymizer.lock().await;
+            serde_json::to_string_pretty(&anonymizer.mapping)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+        };
 
         let path = self.session_dir.join("mapping.json");
-        let tmp_path = self.session_dir.join(".mapping.json.tmp");
+        let suffix = crate::mapping::crypto_random_hex(4);
+        let tmp_path = self.session_dir.join(format!(".mapping.json.{suffix}.tmp"));
 
-        // Write to temp file, then atomic rename
+        // Write to unique temp file, then atomic rename
         #[cfg(unix)]
         {
             let mut file = tokio::fs::OpenOptions::new()
                 .write(true)
-                .create(true)
-                .truncate(true)
+                .create_new(true)
                 .mode(0o600)
                 .open(&tmp_path)
                 .await?;
