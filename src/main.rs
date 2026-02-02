@@ -5,12 +5,14 @@ use serde::Serialize;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "proxy")]
 use std::sync::Arc;
 
 use anon::detection::{Anonymizer, Detection};
 use anon::format::{detect_format, detect_json_indent, DetectedFormat};
 use anon::mapping::Mapping;
 use anon::patterns::{MAX_INPUT_SIZE, PATTERNS};
+#[cfg(feature = "proxy")]
 use anon::proxy;
 
 // ─── CLI ────────────────────────────────────────────────────────────────────
@@ -95,6 +97,7 @@ enum Commands {
         model_dir: Option<PathBuf>,
     },
     /// Start web UI for interactive anonymization
+    #[cfg(feature = "proxy")]
     Ui {
         /// Port to listen on
         #[arg(short, long, default_value = "9200")]
@@ -111,13 +114,14 @@ enum Commands {
         replace: bool,
     },
     /// Start anonymizing proxy server
+    #[cfg(feature = "proxy")]
     Proxy {
         /// Port to listen on
         #[arg(short, long, default_value = "9100")]
         port: u16,
 
         /// Upstream API URL
-        #[arg(short, long, default_value = proxy::DEFAULT_UPSTREAM)]
+        #[arg(short, long, default_value = "https://api.anthropic.com")]
         upstream: String,
 
         /// Minimum confidence score (0.0-1.0)
@@ -420,10 +424,12 @@ fn main() -> io::Result<()> {
             eprintln!("  {}", first_path.display());
             eprintln!("  {}", last_path.display());
         }
+        #[cfg(feature = "proxy")]
         Some(Commands::Ui { port }) => {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(anon::ui::run(port))?;
         }
+        #[cfg(feature = "proxy")]
         Some(Commands::Proxy {
             port,
             upstream,
@@ -505,28 +511,43 @@ fn main() -> io::Result<()> {
 
             let mut anonymizer = Anonymizer::new(cli.threshold);
 
-            // Wire up NER detector if requested (ML takes precedence over heuristic)
+            // Wire up NER detector if requested (ML + heuristic combined)
             #[cfg(feature = "ner")]
             if cli.ner {
                 let config = anon::ner::NerConfig::default();
+                let heuristic = anon::ner::heuristic::HeuristicNerDetector::new();
                 // ort panics if libonnxruntime is not found; catch that gracefully
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     anon::ner::ml::MlNerDetector::new(&config)
                 })) {
-                    Ok(Ok(detector)) => {
-                        anonymizer.set_ner_detector(Box::new(detector));
+                    Ok(Ok(ml_detector)) => {
+                        let combined = anon::ner::CombinedNerDetector::new(vec![
+                            Box::new(ml_detector),
+                            Box::new(heuristic),
+                        ]);
+                        anonymizer.set_ner_detector(Box::new(combined));
                         if cli.verbose {
-                            eprintln!("NER: ML backend enabled");
+                            eprintln!("NER: ML + heuristic backend enabled");
                         }
                     }
                     Ok(Err(e)) => {
                         eprintln!("Warning: ML NER init failed: {e}");
                         eprintln!("Hint: run `anon download-model` first");
+                        // Fall back to heuristic only
+                        anonymizer.set_ner_detector(Box::new(heuristic));
+                        if cli.verbose {
+                            eprintln!("NER: falling back to heuristic backend");
+                        }
                     }
                     Err(_) => {
                         eprintln!("Warning: ONNX Runtime not found.");
                         eprintln!("Install it:  brew install onnxruntime");
                         eprintln!("Then set:    export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib");
+                        // Fall back to heuristic only
+                        anonymizer.set_ner_detector(Box::new(heuristic));
+                        if cli.verbose {
+                            eprintln!("NER: falling back to heuristic backend");
+                        }
                     }
                 }
             }

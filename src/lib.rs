@@ -2,6 +2,8 @@ pub mod patterns;
 pub mod mapping;
 pub mod detection;
 pub mod format;
+#[cfg(feature = "proxy")]
 pub mod proxy;
+#[cfg(feature = "proxy")]
 pub mod ui;
 pub mod ner;

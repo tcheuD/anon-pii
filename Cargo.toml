@@ -16,12 +16,12 @@ unicode-normalization = "0.1"
 getrandom = "0.2"
 aho-corasick = "1"
 
-# Proxy mode dependencies — pinned to exact versions for supply chain safety
-tokio = { version = "=1.49.0", features = ["full"] }
-axum = "=0.8.8"
-reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "stream"] }
-futures = "0.3"
-bytes = "1"
+# Proxy mode dependencies — behind "proxy" feature, pinned for supply chain safety
+tokio = { version = "=1.49.0", features = ["full"], optional = true }
+axum = { version = "=0.8.8", optional = true }
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "stream"], optional = true }
+futures = { version = "0.3", optional = true }
+bytes = { version = "1", optional = true }
 
 # NER (ML-based) — behind "ner" feature
 ort = { version = "=2.0.0-rc.11", features = ["load-dynamic"], optional = true }
@@ -32,6 +32,7 @@ sha2 = { version = "0.10", optional = true }
 
 [features]
 default = []
+proxy = ["dep:tokio", "dep:axum", "dep:reqwest", "dep:futures", "dep:bytes"]
 ner = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:ureq", "dep:sha2", "ner-lite"]
 ner-lite = []
 
