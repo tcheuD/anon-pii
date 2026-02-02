@@ -7,6 +7,7 @@ use crate::patterns::{
     CONTEXT_SCORE_BOOST, CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS, luhn_check,
     valid_card_prefix,
 };
+use crate::ner::{NerDetector, PERSON_BLOCKLIST};
 
 /// Patterns that may span across line breaks in wrapped log output.
 const MULTILINE_ENTITY_TYPES: &[&str] = &["CREDIT_CARD", "FR_IBAN"];
@@ -130,9 +131,6 @@ fn hex_val(b: u8) -> u8 {
     }
 }
 
-#[cfg(any(feature = "ner", feature = "ner-lite"))]
-use crate::ner::NerDetector;
-
 /// Parse a single CSV line respecting RFC 4180 quoting.
 fn parse_csv_line(line: &str) -> Vec<String> {
     let mut cells = Vec::new();
@@ -164,11 +162,43 @@ fn parse_csv_line(line: &str) -> Vec<String> {
     cells
 }
 
+/// Extend a PERSON span to include following ALL-CAPS words (French last name convention).
+/// e.g. if NER detected "Damien" at end=6, and text continues with " DUPONT",
+/// extend to "Damien DUPONT".
+fn extend_person_span_to_allcaps(text: &str, span_text: &str, span_end: usize) -> (String, usize) {
+    let mut end = span_end;
+    let mut result = span_text.to_string();
+    // Only look at remaining text on the same line (don't cross newlines)
+    let remaining = &text[end..];
+    let same_line = remaining.split('\n').next().unwrap_or("");
+
+    for word in same_line.split_whitespace().take(2) {
+        let trimmed = word.trim_end_matches(|c: char| c.is_ascii_punctuation());
+        // Must be ALL-CAPS, at least 2 chars, only letters/hyphens
+        if trimmed.len() >= 2
+            && trimmed.chars().all(|c| c.is_uppercase() || c == '-' || c == '\'')
+            && !PERSON_BLOCKLIST.iter().any(|&b| b.eq_ignore_ascii_case(trimmed))
+            && !CREW_CODE_BLOCKLIST.contains(&trimmed)
+        {
+            // Find the actual position of this word in the remaining text
+            if let Some(word_offset) = text[end..].find(trimmed) {
+                end = end + word_offset + trimmed.len();
+                result = text[span_end - span_text.len()..end].to_string();
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    (result, end)
+}
+
 pub struct Anonymizer {
     pub patterns: Vec<CompiledPattern>,
     pub mapping: Mapping,
     pub threshold: f64,
-    #[cfg(any(feature = "ner", feature = "ner-lite"))]
     ner_detector: Option<Box<dyn NerDetector>>,
 }
 
@@ -210,12 +240,10 @@ impl Anonymizer {
             patterns,
             mapping: Mapping::new(),
             threshold,
-            #[cfg(any(feature = "ner", feature = "ner-lite"))]
             ner_detector: None,
         }
     }
 
-    #[cfg(any(feature = "ner", feature = "ner-lite"))]
     pub fn set_ner_detector(&mut self, detector: Box<dyn NerDetector>) {
         self.ner_detector = Some(detector);
     }
@@ -224,6 +252,7 @@ impl Anonymizer {
         if keywords.is_empty() {
             return false;
         }
+        // 1. Local window check (fast path)
         let mut window_start = start.saturating_sub(CONTEXT_WINDOW);
         let mut window_end = (end + CONTEXT_WINDOW).min(text.len());
         while !text.is_char_boundary(window_start) {
@@ -234,7 +263,39 @@ impl Anonymizer {
         }
         let window = &text[window_start..window_end];
         let lower = window.to_lowercase();
-        keywords.iter().any(|kw| lower.contains(*kw))
+        if keywords.iter().any(|kw| lower.contains(*kw)) {
+            return true;
+        }
+        // 2. Column-header check: find the column offset of the match on its
+        //    line, then scan upward for a header line that has a keyword at a
+        //    similar column position.
+        self.has_column_header_context(text, start, keywords)
+    }
+
+    /// Look above the match for a header line where a keyword sits at the same
+    /// column position (±4 chars) as the match.
+    fn has_column_header_context(&self, text: &str, start: usize, keywords: &[&str]) -> bool {
+        // Find the line containing the match and its column offset.
+        let line_start = text[..start].rfind('\n').map_or(0, |p| p + 1);
+        let col = start - line_start;
+
+        // Scan up to 20 lines above for a header line.
+        let prefix = &text[..line_start];
+        let lines_above: Vec<&str> = prefix.lines().rev().take(20).collect();
+
+        for header_line in &lines_above {
+            let header_lower = header_line.to_lowercase();
+            for kw in keywords {
+                if let Some(kw_pos) = header_lower.find(kw) {
+                    // Check if the keyword column overlaps with the match column (±4 chars tolerance)
+                    let kw_end = kw_pos + kw.len();
+                    if col + 4 >= kw_pos && col <= kw_end + 4 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     pub fn anonymize_text(&mut self, text: &str) -> (String, Vec<Detection>) {
@@ -394,17 +455,71 @@ impl Anonymizer {
         }
 
         // Inject NER-based PERSON detections
-        #[cfg(any(feature = "ner", feature = "ner-lite"))]
         if let Some(ref ner) = self.ner_detector {
             for span in ner.detect_persons(text) {
                 if span.score >= self.threshold {
+                    // Filter out blocklisted words (company names, false positives)
+                    let trimmed = span.text.trim();
+                    if PERSON_BLOCKLIST.iter().any(|&blocked| trimmed == blocked) {
+                        continue;
+                    }
+                    // Extend span to include adjacent ALL-CAPS words (last names)
+                    // e.g. "Damien" detected → extend to "Damien DUPONT"
+                    let (ext_text, ext_end) =
+                        extend_person_span_to_allcaps(text, &span.text, span.end);
                     detections.push(Detection {
                         entity_type: "PERSON",
-                        original: span.text,
+                        original: ext_text,
                         start: span.start,
-                        end: span.end,
+                        end: ext_end,
                         score: span.score,
                     });
+                }
+            }
+        }
+
+        // Name consistency pass: if "Gaël FONTAINE" was detected as PERSON,
+        // also detect bare "Gaël" elsewhere in the text. This catches greetings
+        // like "Hello Gaël," or "À Gaël" where the first name alone appears.
+        {
+            let person_first_names: Vec<String> = detections
+                .iter()
+                .filter(|d| d.entity_type == "PERSON" && d.original.contains(' '))
+                .filter_map(|d| d.original.split_whitespace().next().map(|s| s.to_string()))
+                .collect();
+
+            for first_name in &person_first_names {
+                if first_name.len() < 2 {
+                    continue;
+                }
+                let mut search_from = 0;
+                while let Some(pos) = text[search_from..].find(first_name.as_str()) {
+                    let abs_pos = search_from + pos;
+                    let abs_end = abs_pos + first_name.len();
+
+                    // Must be at word boundaries
+                    let at_word_start = abs_pos == 0
+                        || !text[..abs_pos].chars().last().unwrap().is_alphanumeric();
+                    let at_word_end = abs_end >= text.len()
+                        || !text[abs_end..].chars().next().unwrap().is_alphanumeric();
+
+                    if at_word_start && at_word_end {
+                        // Only add if not already covered by an existing detection
+                        let already_covered = detections
+                            .iter()
+                            .any(|d| d.start <= abs_pos && d.end >= abs_end);
+                        if !already_covered {
+                            detections.push(Detection {
+                                entity_type: "PERSON",
+                                original: first_name.clone(),
+                                start: abs_pos,
+                                end: abs_end,
+                                score: 0.50,
+                            });
+                        }
+                    }
+
+                    search_from = abs_pos + first_name.len();
                 }
             }
         }
@@ -1418,9 +1533,83 @@ mod tests {
         assert!(!result.contains("4111"));
     }
 
-    // ── NER integration tests ──
-    // These verify that Anonymizer produces PERSON detections when NER is wired up.
-    // Without the feature flag, the tests are not compiled.
+    // ── NER pipeline tests (always compiled, use MockNerDetector) ──
+
+    #[test]
+    fn test_ner_pipeline_person_blocklist() {
+        use crate::ner::{MockNerDetector, NerSpan};
+        let mock = MockNerDetector { spans: vec![
+            NerSpan { text: "Amelia".into(), start: 0, end: 6, score: 0.9, label: "PER".into() },
+        ]};
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, dets) = a.anonymize_text("Amelia said hello");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Amelia"),
+            "Blocklisted name 'Amelia' should not be detected as PERSON: {:?}", dets
+        );
+        assert!(result.contains("Amelia"));
+    }
+
+    #[test]
+    fn test_ner_pipeline_person_detected() {
+        use crate::ner::{MockNerDetector, NerSpan};
+        let mock = MockNerDetector { spans: vec![
+            NerSpan { text: "Dupont".into(), start: 12, end: 18, score: 0.9, label: "PER".into() },
+        ]};
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, dets) = a.anonymize_text("Le pilote M. Dupont a décollé.");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON"),
+            "Non-blocklisted name should be detected as PERSON: {:?}", dets
+        );
+        assert!(result.contains("[PERSON_"));
+    }
+
+    #[test]
+    fn test_ner_pipeline_span_extension_allcaps() {
+        use crate::ner::{MockNerDetector, NerSpan};
+        let text = "Damien DUPONT a signé";
+        let mock = MockNerDetector { spans: vec![
+            NerSpan { text: "Damien".into(), start: 0, end: 6, score: 0.9, label: "PER".into() },
+        ]};
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, dets) = a.anonymize_text(text);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("DUPONT")),
+            "Span should extend to ALL-CAPS last name: {:?}", dets
+        );
+        assert!(!result.contains("DUPONT"));
+        assert!(!result.contains("Damien"));
+    }
+
+    #[test]
+    fn test_ner_pipeline_consistency_pass() {
+        use crate::ner::{MockNerDetector, NerSpan};
+        let text = "Pierre DUPONT a dit bonjour. Plus tard, Pierre a fait signe.";
+        let mock = MockNerDetector { spans: vec![
+            NerSpan { text: "Pierre".into(), start: 0, end: 6, score: 0.9, label: "PER".into() },
+        ]};
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, _dets) = a.anonymize_text(text);
+        assert!(!result.contains("DUPONT"), "Full name should be anonymized");
+        assert!(!result.contains("Pierre"), "Bare first name should be anonymized by consistency pass");
+    }
+
+    #[test]
+    fn test_ner_pipeline_no_detector_no_person() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("Le pilote M. Dupont a décollé.");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PERSON"),
+            "Without NER detector, PERSON should not be detected: {:?}", dets
+        );
+    }
+
+    // ── NER integration tests (feature-gated, use real detectors) ──
 
     #[cfg(feature = "ner-lite")]
     #[test]
@@ -1502,5 +1691,306 @@ mod tests {
     fn test_parse_csv_line_escaped_quote() {
         let cells = parse_csv_line("\"he said \"\"hi\"\"\",b");
         assert_eq!(cells, vec!["he said \"hi\"", "b"]);
+    }
+
+    #[test]
+    fn test_tabular_crew_codes_with_login_context() {
+        let mut a = Anonymizer::new(0.0);
+        let input = r#"Clean Orphaned Leave Records
+     ===============================
+
+      Found 3 orphaned leaves from 3 mappings.
+
+      ------- ------------------------- ----------------- --------------- ------------- ------------ ------------
+       Login   Email                     Leave ID          Duty IDs        Mapping IDs   Start        End
+      ------- ------------------------- ----------------- --------------- ------------- ------------ ------------
+       JDU     jdupont@example-air.com     26062001          65880001        90001         2026-03-01   2026-03-01
+       MMA     mmartinez@example-air.com   26072001          65100001        90002         2026-03-02   2026-03-02
+       BRN     bruneau@example-air.com     26055001          65090001        90003         2026-03-03   2026-03-03
+      ------- ------------------------- ----------------- --------------- ------------- ------------ ------------"#;
+        let (result, dets) = a.anonymize_text(input);
+
+        // Crew codes should be anonymized (Login header provides context)
+        assert!(
+            dets.iter().any(|d| d.entity_type == "CREW_CODE"),
+            "Crew codes (JDU, MMA, BRN) should be detected with 'Login' context.\nDetections: {:?}\nResult: {}",
+            dets, result
+        );
+        assert!(!result.contains("JDU"), "JDU should be anonymized");
+        assert!(!result.contains("MMA"), "MMA should be anonymized");
+        assert!(!result.contains("BRN"), "BRN should be anonymized");
+
+        // Emails should be anonymized
+        assert!(!result.contains("jdupont@example-air.com"), "Email should be anonymized");
+        assert!(!result.contains("mmartinez@example-air.com"), "Email should be anonymized");
+        assert!(!result.contains("bruneau@example-air.com"), "Email should be anonymized");
+    }
+
+    #[test]
+    fn test_column_header_no_false_positive_wrong_column() {
+        // Crew code at a column that does NOT align with "Login" header
+        let mut a = Anonymizer::new(0.0);
+        let input = "Login   Status\n------  ------\nOK      XYZ";
+        let (_, dets) = a.anonymize_text(input);
+        // XYZ is in the "Status" column, not "Login" — should NOT match CREW_CODE
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "XYZ"),
+            "XYZ under 'Status' column should not be detected as CREW_CODE.\nDetections: {:?}",
+            dets
+        );
+    }
+
+    #[test]
+    fn test_column_header_context_with_duty_keyword() {
+        // "Duty" is also a CREW_CODE context keyword — test it as a column header
+        let mut a = Anonymizer::new(0.0);
+        let input = "Duty    Name\n------  ------\nJDU     Someone\nMMA     Another";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "CREW_CODE"),
+            "Crew codes should be detected under 'Duty' header.\nDetections: {:?}\nResult: {}",
+            dets, result
+        );
+        assert!(!result.contains("JDU"), "JDU should be anonymized");
+        assert!(!result.contains("MMA"), "MMA should be anonymized");
+    }
+
+    #[test]
+    fn test_column_header_no_header_above() {
+        // No header line at all — crew code should NOT be detected
+        let mut a = Anonymizer::new(0.0);
+        let input = "JDU     some text here";
+        let (_, dets) = a.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "CREW_CODE"),
+            "JDU without any context should not be detected.\nDetections: {:?}",
+            dets
+        );
+    }
+
+    #[test]
+    fn test_column_header_many_rows_below_header() {
+        // Header is 10+ rows above — should still work (within 20-line lookback)
+        let mut a = Anonymizer::new(0.0);
+        let mut lines = vec!["Crew  Info".to_string(), "----  ----".to_string()];
+        for i in 0..15 {
+            lines.push(format!("C{:02}   row {}", i, i));
+        }
+        lines.push("JDU   last row".to_string());
+        let input = lines.join("\n");
+        let (result, dets) = a.anonymize_text(&input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "JDU"),
+            "JDU should be detected with 'Crew' header 17 lines above.\nDetections: {:?}\nResult: {}",
+            dets, result
+        );
+    }
+
+    #[test]
+    fn test_off_not_detected_as_crew_code() {
+        let mut a = Anonymizer::new(0.0);
+        // "OFF" in duty schedule context — should NOT be a crew code
+        let input = "les journées de OFF/Duty/X-D/... sont qualifiées comme absences";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "OFF"),
+            "OFF should be blocklisted as CREW_CODE.\nDetections: {:?}",
+            dets
+        );
+        assert!(result.contains("OFF"), "OFF should remain in output");
+    }
+
+    #[cfg(feature = "ner-lite")]
+    #[test]
+    fn test_person_blocklist_amelia() {
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        // "Amelia 1.0" is a product/company name, not a person
+        let input = "Amelia 1.0\nDamien DUPONT\nFull-Stack Developer";
+        let (result, dets) = a.anonymize_text(input);
+        // Amelia should NOT be detected as PERSON
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("Amelia")),
+            "Amelia should be blocklisted as PERSON.\nDetections: {:?}",
+            dets
+        );
+        assert!(result.contains("Amelia"), "Amelia should remain in output");
+    }
+
+    #[cfg(feature = "ner-lite")]
+    #[test]
+    fn test_person_allcaps_lastname_full_pipeline() {
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        let input = "Created by Damien DUPONT 29 Jan 2026";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("DUPONT")),
+            "Damien DUPONT should be detected as PERSON.\nDetections: {:?}\nResult: {}",
+            dets, result
+        );
+        assert!(!result.contains("DUPONT"), "DUPONT should be anonymized");
+        assert!(!result.contains("Damien"), "Damien should be anonymized");
+    }
+
+    #[cfg(feature = "ner-lite")]
+    #[test]
+    fn test_email_thread_anonymization() {
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        let input = r#"--
+Amelia 1.0
+Sylvain Martin
+Captain EMB145
+Mobile : +33612345678
+example-air.com"#;
+        let (result, dets) = a.anonymize_text(input);
+        // Sylvain Martin should be detected
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("Sylvain")),
+            "Sylvain Martin should be detected.\nDetections: {:?}",
+            dets
+        );
+        assert!(!result.contains("Sylvain"), "Sylvain should be anonymized");
+        // Phone should be detected
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
+            "Phone number should be detected.\nDetections: {:?}",
+            dets
+        );
+        // Amelia should NOT be a person
+        assert!(result.contains("Amelia"), "Amelia should remain in output");
+    }
+
+    #[cfg(feature = "ner-lite")]
+    #[test]
+    fn test_email_thread_realistic_format() {
+        // Regression: real-world email threads have names repeated in headers,
+        // signatures, forwarded blocks, and bare first names in greetings.
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        let input = r#"Gaël FONTAINE
+mar. 27 janv. 16:45
+À Mathilde, moi
+
+Hello @Damien DUPONT,
+
+Pourrais-tu STP nous apporter tes lumières ?
+
+--
+Amelia 1.0
+Gaël FONTAINE
+DSI / CIO
+example-air.com
+
+Le mar. 27 janv. 2026 à 16:41, Camille BERNARD <cbernard@example-air.com> a écrit :
+hello Gaël,
+
+Merci d'avoir répondu à Mr DUPONT.
+
+Amelia 1.0
+Camille BERNARD
+HR Director
+Mobile : +33 7 00 00 00 01
+example-air.com"#;
+        let (result, dets) = a.anonymize_text(input);
+
+        // Full names (first + last) should be anonymized
+        assert!(!result.contains("FONTAINE"), "FONTAINE should be anonymized");
+        assert!(!result.contains("DUPONT"), "DUPONT should be anonymized");
+        assert!(!result.contains("LEROY"), "LEROY should be anonymized");
+        // Bare first names should also be caught by the name consistency pass
+        // (they appear as part of full "Firstname LASTNAME" elsewhere in the text).
+        assert!(!result.contains("Gaël"), "Bare 'Gaël' should be anonymized by consistency pass");
+        assert!(!result.contains("Mathilde"), "Bare 'Mathilde' should be anonymized by consistency pass");
+
+        // Email and phone should be caught
+        assert!(!result.contains("cbernard@example-air.com"), "Email should be anonymized");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
+            "Phone should be detected.\nDetections: {:?}",
+            dets
+        );
+
+        // Amelia (company) should NOT be anonymized
+        assert!(result.contains("Amelia"), "Amelia is a company name, not a person");
+
+        // Job titles in signature blocks should be anonymized
+        assert!(!result.contains("HR Director"), "HR Director should be anonymized as JOB_TITLE");
+        assert!(!result.contains("DSI / CIO"), "DSI / CIO should be anonymized as JOB_TITLE");
+
+        assert!(!result.contains("FONTAINE"), "All FONTAINE instances should be anonymized");
+    }
+
+    #[test]
+    #[cfg(feature = "ner-lite")]
+    fn test_name_consistency_pass_bare_first_names() {
+        // When a full "Firstname LASTNAME" is detected, all bare occurrences
+        // of that first name should also be anonymized.
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        let input = "Pierre DUPONT a dit bonjour. Plus tard, Pierre a fait signe.";
+        let (result, _dets) = a.anonymize_text(input);
+
+        assert!(!result.contains("DUPONT"), "Full name should be anonymized");
+        assert!(!result.contains("Pierre"), "Bare first name should be anonymized by consistency pass");
+    }
+
+    #[test]
+    fn test_phone_0033_format() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "Mobile : 0033 7 00 00 00 01";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
+            "0033 phone format should be detected.\nDetections: {:?}",
+            dets
+        );
+        assert!(!result.contains("0033 7 00 00 00 01"), "Phone should be replaced");
+    }
+
+    #[test]
+    fn test_job_title_in_signature() {
+        let mut a = Anonymizer::new(0.0);
+        // Signature block with context keywords (example-air, linkedin)
+        let input = "Jean DUPONT\nHR Director\nMobile : +33 6 12 34 56 78\nexample-air.com\nLinkedIn";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "JOB_TITLE"),
+            "HR Director should be detected as JOB_TITLE.\nDetections: {:?}",
+            dets
+        );
+        assert!(!result.contains("HR Director"), "Job title should be replaced");
+    }
+
+    #[test]
+    fn test_job_title_csuite_in_signature() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "Jean DUPONT\nDSI / CIO\nexample-air.com\nLinkedIn";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "JOB_TITLE"),
+            "DSI / CIO should be detected as JOB_TITLE.\nDetections: {:?}",
+            dets
+        );
+        assert!(!result.contains("DSI / CIO"), "C-suite title should be replaced");
+    }
+
+    #[test]
+    fn test_job_title_not_in_prose() {
+        let mut a = Anonymizer::new(0.0);
+        // Without signature context keywords, titles should NOT match
+        let input = "The HR Director asked about the report.";
+        let (_result, dets) = a.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "JOB_TITLE"),
+            "JOB_TITLE should not match in regular prose without context.\nDetections: {:?}",
+            dets
+        );
     }
 }

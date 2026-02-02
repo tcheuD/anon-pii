@@ -40,6 +40,16 @@ pub const PATTERNS: &[PiiPattern] = &[
         context_required: false,
     },
     PiiPattern {
+        name: "fr_phone_intl_0033",
+        entity_type: "FR_PHONE_NUMBER",
+        pattern: r"\b0033\s?[1-9](?:[\s.\-]?\d{2}){4}",
+        score: 0.9,
+        context_keywords: &[
+            "telephone", "tel", "phone", "mobile", "contact", "appeler", "numero", "portable",
+        ],
+        context_required: false,
+    },
+    PiiPattern {
         name: "fr_phone_national",
         entity_type: "FR_PHONE_NUMBER",
         pattern: r"\b0[1-9](?:[\s.\-]?\d{2}){4}\b",
@@ -176,7 +186,7 @@ pub const PATTERNS: &[PiiPattern] = &[
             "crew", "equipage", "équipage", "pilot", "pilote", "captain", "cdb",
             "commandant", "copilot", "copilote", "opl", "cabin", "pnc", "pnt",
             "steward", "hostess", "hôtesse", "hotesse", "first officer", "fo",
-            "member", "membre", "roster", "planning", "duty", "service",
+            "member", "membre", "roster", "planning", "duty", "service", "login",
         ],
         context_required: true,
     },
@@ -238,6 +248,27 @@ pub const PATTERNS: &[PiiPattern] = &[
         ],
         context_required: false,
     },
+    // ── Job titles (signature blocks only) ──
+    PiiPattern {
+        name: "job_title_role",
+        entity_type: "JOB_TITLE",
+        pattern: r"(?i)\b(?:(?:senior|junior|lead|head|chief|deputy|associate|executive|managing|principal|full[- ]stack|front[- ]end|back[- ]end|devops|crew|flight|ground|cabin|operations|commercial|hr|it|software|data|product|project|quality|safety|security|training|maintenance|aviation|business|technical)\s+)+(?:director|manager|developer|engineer|officer|planner|planning|specialist|coordinator|architect|consultant|administrator|supervisor|pilot|instructor|examiner|dispatcher|controller)\b",
+        score: 0.7,
+        context_keywords: &[
+            "example-air", "linkedin", "mobile", "tel", "amelia", "cordialement", "cdlt",
+        ],
+        context_required: true,
+    },
+    PiiPattern {
+        name: "job_title_csuite",
+        entity_type: "JOB_TITLE",
+        pattern: r"\b(?:DSI|CIO|CEO|CFO|CTO|COO|CMO|CHRO|CPO|VP)\s*(?:/\s*(?:DSI|CIO|CEO|CFO|CTO|COO|CMO|CHRO|CPO|VP))*\b",
+        score: 0.7,
+        context_keywords: &[
+            "example-air", "linkedin", "mobile", "tel", "amelia", "cordialement", "cdlt",
+        ],
+        context_required: true,
+    },
 ];
 
 pub const CREW_CODE_BLOCKLIST: &[&str] = &[
@@ -260,7 +291,7 @@ pub const CREW_CODE_BLOCKLIST: &[&str] = &[
     "RAM", "ROM", "SDK", "SQL", "SSH", "SSL", "TCP", "UDP", "USB", "VPN",
     "XML", "ZIP", "CSV", "DOM", "GIT", "HEX", "IMG", "INT", "JAR", "LOG",
     "MAC", "NAT", "ORM", "PEM", "PKI", "PNG", "POP", "RPM", "SCP", "SVG",
-    "SVN", "TLS", "TTL", "TTY", "VIM", "WAP", "WWW", "XSS", "YML",
+    "SVN", "TLS", "TTL", "TTY", "VIM", "WAP", "WWW", "XSS", "YML", "CLI",
     // Security / data abbreviations
     "PII", "SSN", "DOB", "DOC", "REF", "KYC", "MFA", "OTP", "PIN",
     // Logging / system terms
@@ -289,6 +320,10 @@ pub const CREW_CODE_BLOCKLIST: &[&str] = &[
     "DME", "NDB", "RWY", "TWR", "APP", "DEP", "ARR", "SID", "TAF", "QNH",
     "MSL", "AGL", "TAS", "CAS", "IAS", "HDG", "FPL", "NOC", "SAF", "MEL",
     "CDL", "STD", "STA", "ATD", "ATA", "OFP", "APU",
+    // Duty/schedule status codes
+    "OFF", "RST",
+    // Common French abbreviations
+    "STP", "SVP", "RDV",
 ];
 
 pub const CONTEXT_WINDOW: usize = 80;
