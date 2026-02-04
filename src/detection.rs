@@ -9,6 +9,14 @@ use crate::patterns::{
 };
 use crate::ner::{NerDetector, PERSON_BLOCKLIST};
 
+/// Strip Unicode diacritics: "Gaël" → "Gael", "René" → "Rene".
+/// Uses NFD decomposition and removes combining marks.
+fn strip_diacritics(s: &str) -> String {
+    s.nfd()
+        .filter(|c| !unicode_normalization::char::is_combining_mark(*c))
+        .collect()
+}
+
 /// Patterns that may span across line breaks in wrapped log output.
 const MULTILINE_ENTITY_TYPES: &[&str] = &["CREDIT_CARD", "FR_IBAN"];
 
@@ -162,10 +170,62 @@ fn parse_csv_line(line: &str) -> Vec<String> {
     cells
 }
 
-/// Extend a PERSON span to include following ALL-CAPS words (French last name convention).
-/// e.g. if NER detected "Damien" at end=6, and text continues with " DUPONT",
-/// extend to "Damien DUPONT".
-fn extend_person_span_to_allcaps(text: &str, span_text: &str, span_end: usize) -> (String, usize) {
+/// Build a sorted mapping from stripped byte offset → original byte offset.
+/// Each entry is (stripped_byte, orig_byte) at char boundaries.
+fn build_byte_offset_map(original: &str) -> Vec<(usize, usize)> {
+    let mut map = Vec::with_capacity(original.len());
+    let mut stripped_offset = 0;
+    for (orig_offset, ch) in original.char_indices() {
+        map.push((stripped_offset, orig_offset));
+        let mut ch_stripped_len = 0;
+        unicode_normalization::char::decompose_canonical(ch, |nfd_ch| {
+            if !unicode_normalization::char::is_combining_mark(nfd_ch) {
+                ch_stripped_len += nfd_ch.len_utf8();
+            }
+        });
+        stripped_offset += ch_stripped_len;
+    }
+    map.push((stripped_offset, original.len()));
+    map
+}
+
+/// Map a stripped byte offset back to the original byte offset using binary search.
+fn stripped_to_original_offset(map: &[(usize, usize)], stripped_offset: usize) -> Option<usize> {
+    match map.binary_search_by_key(&stripped_offset, |&(s, _)| s) {
+        Ok(i) => Some(map[i].1),
+        Err(i) if i > 0 && i < map.len() => Some(map[i].1),
+        _ => None,
+    }
+}
+
+/// Check if a word looks like a name component: ALL-CAPS ("DUPONT") or Title-case ("Kowalski").
+fn is_name_like_word(word: &str) -> bool {
+    if word.len() < 2 {
+        return false;
+    }
+    let mut chars = word.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if !first.is_uppercase() {
+        return false;
+    }
+    // ALL-CAPS: every char is uppercase, hyphen, or apostrophe
+    let all_upper = word.chars().all(|c| c.is_uppercase() || c == '-' || c == '\'');
+    if all_upper {
+        return true;
+    }
+    // Title-case: first char uppercase, rest are lowercase/hyphen/apostrophe
+    // (with uppercase allowed after hyphen for compound names like "Le-Goff")
+    let rest_valid = chars.all(|c| c.is_lowercase() || c == '-' || c == '\'');
+    rest_valid
+}
+
+/// Extend a PERSON span to include following name-like words (ALL-CAPS or Title-case).
+/// e.g. if NER detected "Damien" at end=6, and text continues with " DUPONT" or " Kowalski",
+/// extend to "Damien DUPONT" or "Damien Kowalski".
+fn extend_person_span(text: &str, span_text: &str, span_end: usize) -> (String, usize) {
     let mut end = span_end;
     let mut result = span_text.to_string();
     // Only look at remaining text on the same line (don't cross newlines)
@@ -174,9 +234,7 @@ fn extend_person_span_to_allcaps(text: &str, span_text: &str, span_end: usize) -
 
     for word in same_line.split_whitespace().take(2) {
         let trimmed = word.trim_end_matches(|c: char| c.is_ascii_punctuation());
-        // Must be ALL-CAPS, at least 2 chars, only letters/hyphens
-        if trimmed.len() >= 2
-            && trimmed.chars().all(|c| c.is_uppercase() || c == '-' || c == '\'')
+        if is_name_like_word(trimmed)
             && !PERSON_BLOCKLIST.iter().any(|&b| b.eq_ignore_ascii_case(trimmed))
             && !CREW_CODE_BLOCKLIST.contains(&trimmed)
         {
@@ -296,6 +354,98 @@ impl Anonymizer {
             }
         }
         false
+    }
+
+    /// Search for bare occurrences of a name part in text. Exact match first,
+    /// then accent-insensitive via pre-computed stripped text + offset map.
+    fn find_bare_name_occurrences(
+        text: &str,
+        name: &str,
+        stripped_text: &str,
+        offset_map: &[(usize, usize)],
+        detections: &mut Vec<Detection>,
+    ) {
+        // Exact match pass
+        Self::find_name_at_word_boundaries(text, name, detections);
+
+        // Accent-insensitive pass (only if stripping changes the name)
+        let stripped_name = strip_diacritics(name);
+        if stripped_name != name {
+            Self::find_name_in_stripped_text(text, stripped_text, &stripped_name, offset_map, detections);
+        }
+    }
+
+    fn find_name_at_word_boundaries(text: &str, search: &str, detections: &mut Vec<Detection>) {
+        let mut search_from = 0;
+        while let Some(pos) = text[search_from..].find(search) {
+            let abs_pos = search_from + pos;
+            let abs_end = abs_pos + search.len();
+
+            let at_word_start = abs_pos == 0
+                || !text[..abs_pos].chars().last().unwrap().is_alphanumeric();
+            let at_word_end = abs_end >= text.len()
+                || !text[abs_end..].chars().next().unwrap().is_alphanumeric();
+
+            if at_word_start && at_word_end {
+                let already_covered = detections
+                    .iter()
+                    .any(|d| d.start <= abs_pos && d.end >= abs_end);
+                if !already_covered {
+                    detections.push(Detection {
+                        entity_type: "PERSON",
+                        original: search.to_string(),
+                        start: abs_pos,
+                        end: abs_end,
+                        score: 0.50,
+                    });
+                }
+            }
+
+            search_from = abs_pos + search.len();
+        }
+    }
+
+    /// Find accent-stripped name in text using pre-computed stripped text and offset map.
+    fn find_name_in_stripped_text(
+        original_text: &str,
+        stripped_text: &str,
+        stripped_name: &str,
+        offset_map: &[(usize, usize)],
+        detections: &mut Vec<Detection>,
+    ) {
+        let mut search_from = 0;
+        while let Some(pos) = stripped_text[search_from..].find(stripped_name) {
+            let stripped_start = search_from + pos;
+            let stripped_end = stripped_start + stripped_name.len();
+
+            let orig_start = stripped_to_original_offset(offset_map, stripped_start);
+            let orig_end = stripped_to_original_offset(offset_map, stripped_end);
+
+            if let (Some(abs_pos), Some(abs_end)) = (orig_start, orig_end) {
+                let at_word_start = abs_pos == 0
+                    || !original_text[..abs_pos].chars().last().unwrap().is_alphanumeric();
+                let at_word_end = abs_end >= original_text.len()
+                    || !original_text[abs_end..].chars().next().unwrap().is_alphanumeric();
+
+                if at_word_start && at_word_end {
+                    let already_covered = detections
+                        .iter()
+                        .any(|d| d.start <= abs_pos && d.end >= abs_end);
+                    if !already_covered {
+                        let matched_text = &original_text[abs_pos..abs_end];
+                        detections.push(Detection {
+                            entity_type: "PERSON",
+                            original: matched_text.to_string(),
+                            start: abs_pos,
+                            end: abs_end,
+                            score: 0.50,
+                        });
+                    }
+                }
+            }
+
+            search_from = stripped_end;
+        }
     }
 
     pub fn anonymize_text(&mut self, text: &str) -> (String, Vec<Detection>) {
@@ -466,7 +616,7 @@ impl Anonymizer {
                     // Extend span to include adjacent ALL-CAPS words (last names)
                     // e.g. "Damien" detected → extend to "Damien DUPONT"
                     let (ext_text, ext_end) =
-                        extend_person_span_to_allcaps(text, &span.text, span.end);
+                        extend_person_span(text, &span.text, span.end);
                     detections.push(Detection {
                         entity_type: "PERSON",
                         original: ext_text,
@@ -478,49 +628,67 @@ impl Anonymizer {
             }
         }
 
-        // Name consistency pass: if "Gaël FONTAINE" was detected as PERSON,
-        // also detect bare "Gaël" elsewhere in the text. This catches greetings
-        // like "Hello Gaël," or "À Gaël" where the first name alone appears.
+        // Sign-off name detection: find names after common closing salutations.
+        // Catches nicknames and informal names like "Best regards,\nPrzemek".
         {
-            let person_first_names: Vec<String> = detections
-                .iter()
-                .filter(|d| d.entity_type == "PERSON" && d.original.contains(' '))
-                .filter_map(|d| d.original.split_whitespace().next().map(|s| s.to_string()))
-                .collect();
-
-            for first_name in &person_first_names {
-                if first_name.len() < 2 {
-                    continue;
-                }
-                let mut search_from = 0;
-                while let Some(pos) = text[search_from..].find(first_name.as_str()) {
-                    let abs_pos = search_from + pos;
-                    let abs_end = abs_pos + first_name.len();
-
-                    // Must be at word boundaries
-                    let at_word_start = abs_pos == 0
-                        || !text[..abs_pos].chars().last().unwrap().is_alphanumeric();
-                    let at_word_end = abs_end >= text.len()
-                        || !text[abs_end..].chars().next().unwrap().is_alphanumeric();
-
-                    if at_word_start && at_word_end {
-                        // Only add if not already covered by an existing detection
+            static SIGNOFF_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+                Regex::new(
+                    r"(?im)(?:best\s+regards|regards|brgds|brds|cordialement|cdlt|bien\s+[àa]\s+vous|sincerely|cheers|merci|thanks)[,.]?\s*\n?\s*([A-Z\p{Lu}][\p{L}'-]+)"
+                ).unwrap()
+            });
+            for cap in SIGNOFF_RE.captures_iter(text) {
+                if let Some(name_match) = cap.get(1) {
+                    let name = name_match.as_str();
+                    if name.len() >= 2
+                        && is_name_like_word(name)
+                        && !PERSON_BLOCKLIST.iter().any(|&b| b.eq_ignore_ascii_case(name))
+                    {
                         let already_covered = detections
                             .iter()
-                            .any(|d| d.start <= abs_pos && d.end >= abs_end);
+                            .any(|d| d.start <= name_match.start() && d.end >= name_match.end());
                         if !already_covered {
                             detections.push(Detection {
                                 entity_type: "PERSON",
-                                original: first_name.clone(),
-                                start: abs_pos,
-                                end: abs_end,
-                                score: 0.50,
+                                original: name.to_string(),
+                                start: name_match.start(),
+                                end: name_match.end(),
+                                score: 0.60,
                             });
                         }
                     }
-
-                    search_from = abs_pos + first_name.len();
                 }
+            }
+        }
+
+        // Name consistency pass: if "Gaël FONTAINE" was detected as PERSON,
+        // also detect bare "Gaël" and "FONTAINE" elsewhere in the text.
+        // Uses accent-insensitive matching so "Gael" is caught when "Gaël" was detected.
+        {
+            let mut name_parts: Vec<String> = Vec::new();
+            for d in detections.iter().filter(|d| d.entity_type == "PERSON" && d.original.contains(' ')) {
+                let words: Vec<&str> = d.original.split_whitespace().collect();
+                // First name
+                if let Some(first) = words.first() {
+                    if first.len() >= 2 {
+                        name_parts.push(first.to_string());
+                    }
+                }
+                // Last name(s) — at least 3 chars to avoid false positives
+                for word in words.iter().skip(1) {
+                    if word.len() >= 3 {
+                        name_parts.push(word.to_string());
+                    }
+                }
+            }
+            name_parts.sort();
+            name_parts.dedup();
+
+            // Pre-compute stripped text and offset map once for accent-insensitive matching
+            let stripped_text = strip_diacritics(text);
+            let offset_map = build_byte_offset_map(text);
+
+            for name_part in &name_parts {
+                Self::find_bare_name_occurrences(text, name_part, &stripped_text, &offset_map, &mut detections);
             }
         }
 
@@ -1941,6 +2109,165 @@ example-air.com"#;
         assert!(!result.contains("Pierre"), "Bare first name should be anonymized by consistency pass");
     }
 
+    // ── Ticket #35: extend person span to Title-case last names ──
+
+    #[test]
+    fn test_extend_person_span_titlecase_lastname() {
+        // "Kowalski" is Title-case, not ALL-CAPS. The span extension should still
+        // include it when it immediately follows a detected first name.
+        use crate::ner::{MockNerDetector, NerSpan};
+        let text = "Przemysław Kowalski\n13/Jan/26, 22:33\nDear Gaël,";
+        let mock = MockNerDetector { spans: vec![
+            NerSpan { text: "Przemysław".into(), start: 0, end: "Przemysław".len(), score: 0.9, label: "PER".into() },
+        ]};
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, dets) = a.anonymize_text(text);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("Kowalski")),
+            "Span should extend to Title-case last name 'Kowalski': {:?}", dets
+        );
+        assert!(!result.contains("Kowalski"), "Title-case last name should be anonymized");
+    }
+
+    #[test]
+    #[cfg(feature = "ner-lite")]
+    fn test_extend_person_span_titlecase_full_pipeline() {
+        // Full pipeline: heuristic NER detects a known first name followed by
+        // a Title-case last name. Both should be anonymized together.
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        let input = "Contact: Pierre Durand for details.";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("Durand")),
+            "Pierre Durand should be detected as a full name.\nDetections: {:?}", dets
+        );
+        assert!(!result.contains("Durand"), "Title-case last name should be anonymized");
+        assert!(!result.contains("Pierre"), "First name should be anonymized");
+    }
+
+    // ── Ticket #36: accent-insensitive name consistency ──
+
+    #[test]
+    fn test_name_consistency_accent_insensitive() {
+        // When "Gaël" is detected, bare "Gael" (no accent) should also be caught.
+        use crate::ner::{MockNerDetector, NerSpan};
+        let text = "Gaël DUPONT a signé. Dear Gael, merci.";
+        let gael_len = "Gaël".len(); // 5 bytes (ë = 2 bytes in UTF-8)
+        let mock = MockNerDetector { spans: vec![
+            NerSpan { text: "Gaël".into(), start: 0, end: gael_len, score: 0.9, label: "PER".into() },
+        ]};
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, _dets) = a.anonymize_text(text);
+        assert!(!result.contains("Gael"), "Bare 'Gael' (no accent) should be anonymized when 'Gaël' was detected");
+    }
+
+    #[test]
+    #[cfg(feature = "ner-lite")]
+    fn test_name_consistency_accent_insensitive_full_pipeline() {
+        use crate::ner::heuristic::HeuristicNerDetector;
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        let input = "Gaël DUPONT a signé. Plus tard, Gael a confirmé.";
+        let (result, _dets) = a.anonymize_text(input);
+        assert!(!result.contains("Gael"), "Bare 'Gael' (no accent) should be caught by consistency pass");
+    }
+
+    // ── Ticket #37: last-name consistency pass ──
+
+    #[test]
+    fn test_name_consistency_bare_last_name() {
+        // When "Pierre DUPONT" is detected, bare "DUPONT" elsewhere should also be caught.
+        use crate::ner::{MockNerDetector, NerSpan};
+        let text = "Pierre DUPONT joined. Later, DUPONT confirmed the schedule.";
+        let mock = MockNerDetector { spans: vec![
+            NerSpan { text: "Pierre".into(), start: 0, end: 6, score: 0.9, label: "PER".into() },
+        ]};
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, _dets) = a.anonymize_text(text);
+        assert!(!result.contains("DUPONT"), "Bare last name 'DUPONT' should be caught by consistency pass");
+    }
+
+    #[test]
+    fn test_name_consistency_bare_titlecase_last_name() {
+        // Title-case last name appearing alone after the full name was detected.
+        use crate::ner::{MockNerDetector, NerSpan};
+        let text = "Przemysław Kowalski joined. Later, Kowalski confirmed.";
+        let mock = MockNerDetector { spans: vec![
+            NerSpan { text: "Przemysław".into(), start: 0, end: "Przemysław".len(), score: 0.9, label: "PER".into() },
+        ]};
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, _dets) = a.anonymize_text(text);
+        assert!(!result.contains("Kowalski"), "Bare last name 'Kowalski' should be caught by consistency pass");
+    }
+
+    // ── Ticket #38: sign-off name detection ──
+
+    #[test]
+    fn test_signoff_name_best_regards() {
+        // "Przemek" after "Best regards," should be detected even without NER
+        let mut a = Anonymizer::new(0.0);
+        let input = "Our team has confirmed the change.\n\nBest regards,\nPrzemek";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Przemek"),
+            "Sign-off name 'Przemek' should be detected.\nDetections: {:?}", dets
+        );
+        assert!(!result.contains("Przemek"), "Sign-off name should be anonymized");
+    }
+
+    #[test]
+    fn test_signoff_name_brgds() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "Please confirm.\n\nBrgds,\nJulia";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Julia"),
+            "Sign-off name 'Julia' should be detected.\nDetections: {:?}", dets
+        );
+        assert!(!result.contains("Julia"), "Sign-off name should be anonymized");
+    }
+
+    #[test]
+    fn test_signoff_name_cordialement() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "Merci pour votre retour.\n\nCordialement,\nDamien";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Damien"),
+            "Sign-off name 'Damien' should be detected.\nDetections: {:?}", dets
+        );
+        assert!(!result.contains("Damien"), "Sign-off name should be anonymized");
+    }
+
+    #[test]
+    fn test_signoff_name_same_line() {
+        // "Best regards, Przemek" on the same line
+        let mut a = Anonymizer::new(0.0);
+        let input = "I will revert once I receive details.\n\nBest regards, Przemek";
+        let (result, _dets) = a.anonymize_text(input);
+        assert!(!result.contains("Przemek"), "Sign-off name on same line should be anonymized");
+    }
+
+    #[test]
+    fn test_signoff_does_not_match_blocklist() {
+        // Company names in PERSON_BLOCKLIST should not be detected
+        let mut a = Anonymizer::new(0.0);
+        let input = "Thank you.\n\nBest regards,\nAmelia";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Amelia"),
+            "Blocklisted word 'Amelia' should NOT be detected as PERSON.\nDetections: {:?}", dets
+        );
+        // Amelia is blocklisted so it should remain
+        assert!(result.contains("Amelia"), "Blocklisted name should not be anonymized");
+    }
+
     #[test]
     fn test_phone_0033_format() {
         let mut a = Anonymizer::new(0.0);
@@ -1991,6 +2318,81 @@ example-air.com"#;
             !dets.iter().any(|d| d.entity_type == "JOB_TITLE"),
             "JOB_TITLE should not match in regular prose without context.\nDetections: {:?}",
             dets
+        );
+    }
+
+    #[test]
+    fn test_employee_matricule_detected_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "Le Capitaine (matricule AM-4872) a signalé un incident";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "EMPLOYEE_ID" && d.original == "AM-4872"),
+            "AM-4872 should be detected as EMPLOYEE_ID with 'matricule' context.\nDetections: {:?}",
+            dets
+        );
+        assert!(!result.contains("AM-4872"), "Matricule should be anonymized");
+    }
+
+    #[test]
+    fn test_employee_matricule_not_detected_without_context() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "reference AM-4872 in the system";
+        let (_, dets) = a.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "EMPLOYEE_ID"),
+            "EMPLOYEE_ID should not match without context keywords.\nDetections: {:?}",
+            dets
+        );
+    }
+
+    #[test]
+    fn test_flight_number_with_dash() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "incident sur le vol AML-317 Paris-CDG";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FLIGHT_NUMBER" && d.original == "AML-317"),
+            "AML-317 should be detected as FLIGHT_NUMBER.\nDetections: {:?}",
+            dets
+        );
+        assert!(!result.contains("AML-317"), "Flight number should be anonymized");
+        // AML should NOT be detected separately as CREW_CODE
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "AML"),
+            "AML should not be detected as CREW_CODE when part of flight number.\nDetections: {:?}",
+            dets
+        );
+    }
+
+    #[test]
+    fn test_aviation_incident_report_regression() {
+        // Regression test: realistic aviation incident report with mixed PII
+        let mut a = Anonymizer::new(0.0);
+        let input = "Le Capitaine Jean-Marc Dubois (matricule AM-4872) a signalé un incident \
+            technique sur le vol AML-317 Paris-CDG → Beyrouth le 14/03/2025. Son copilote \
+            Marie Lefèvre a confirmé. Contact RH : j.dupont@example-air.com, poste 2241. Le rapport \
+            a été transmis à Dr. Philippe Nasser pour évaluation médicale.";
+        let (result, dets) = a.anonymize_text(input);
+        // Email must be detected
+        assert!(
+            dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
+            "Email should be detected.\nDetections: {:?}", dets
+        );
+        // Matricule must be detected
+        assert!(
+            dets.iter().any(|d| d.entity_type == "EMPLOYEE_ID" && d.original == "AM-4872"),
+            "Matricule AM-4872 should be detected as EMPLOYEE_ID.\nDetections: {:?}", dets
+        );
+        assert!(!result.contains("AM-4872"), "Matricule should be anonymized in output");
+        // Flight number AML-317 must be detected as flight, not crew code
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FLIGHT_NUMBER" && d.original == "AML-317"),
+            "AML-317 should be detected as FLIGHT_NUMBER.\nDetections: {:?}", dets
+        );
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "AML"),
+            "AML should not be a CREW_CODE.\nDetections: {:?}", dets
         );
     }
 }

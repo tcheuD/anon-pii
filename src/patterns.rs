@@ -147,11 +147,23 @@ pub const PATTERNS: &[PiiPattern] = &[
         ],
         context_required: true,
     },
+    // ── Employee matricule ──
+    PiiPattern {
+        name: "employee_matricule",
+        entity_type: "EMPLOYEE_ID",
+        pattern: r"\b[A-Z]{2,3}-\d{3,5}\b",
+        score: 0.7,
+        context_keywords: &[
+            "matricule", "employee", "employé", "employée", "badge", "agent", "personnel",
+            "capitaine", "copilote", "pilote", "commandant", "officier",
+        ],
+        context_required: true,
+    },
     // ── Flight numbers ──
     PiiPattern {
         name: "flight_amelia",
         entity_type: "FLIGHT_NUMBER",
-        pattern: r"\b(?:IZM|RLA|AME|GJT|AF)[0-9]{1,4}\b",
+        pattern: r"\b(?:IZM|RLA|AME|AML|GJT|AF)-?[0-9]{1,4}\b",
         score: 0.9,
         context_keywords: &[],
         context_required: false,
@@ -159,7 +171,7 @@ pub const PATTERNS: &[PiiPattern] = &[
     PiiPattern {
         name: "flight_iata",
         entity_type: "FLIGHT_NUMBER",
-        pattern: r"\b[A-Z]{2}[0-9]{1,4}\b",
+        pattern: r"\b[A-Z]{2}-?[0-9]{1,4}\b",
         score: 0.4,
         context_keywords: &[
             "flight", "vol", "departure", "arrival", "schedule", "rotation", "leg", "sector",
@@ -169,7 +181,7 @@ pub const PATTERNS: &[PiiPattern] = &[
     PiiPattern {
         name: "flight_icao",
         entity_type: "FLIGHT_NUMBER",
-        pattern: r"\b[A-Z]{3}[0-9]{1,4}\b",
+        pattern: r"\b[A-Z]{3}-?[0-9]{1,4}\b",
         score: 0.5,
         context_keywords: &[
             "flight", "vol", "departure", "arrival", "schedule", "rotation", "leg", "sector",
@@ -316,7 +328,7 @@ pub const CREW_CODE_BLOCKLIST: &[&str] = &[
     "NTE", "MPL", "BIQ", "RNS",
     // Amelia / aviation operations (not crew members)
     "VOL", "VIA", "PAX", "ETA", "ETD", "UTC", "GMT", "AOG", "MEL", "CDM",
-    "IZM", "RLA", "AME", "GJT", "OPS", "ATC", "VFR", "IFR", "ILS", "VOR",
+    "IZM", "RLA", "AME", "AML", "GJT", "OPS", "ATC", "VFR", "IFR", "ILS", "VOR",
     "DME", "NDB", "RWY", "TWR", "APP", "DEP", "ARR", "SID", "TAF", "QNH",
     "MSL", "AGL", "TAS", "CAS", "IAS", "HDG", "FPL", "NOC", "SAF", "MEL",
     "CDL", "STD", "STA", "ATD", "ATA", "OFP", "APU",
