@@ -1,0 +1,8 @@
+{"version":3,"term":{"cols":80,"rows":24,"type":"tmux-256color"},"timestamp":1769873845,"command":"bash demo/record.sh","env":{"SHELL":"/bin/zsh"}}
+[0.521, "o", "$ echo \"SELECT * FROM crew WHERE email = 'jean.dupont@example-air.com' AND phone = '+33 6 12 34 56 78';\" | anon\r\n"]
+[0.328, "o", "SELECT * FROM crew WHERE email = '[EMAIL_ADDRESS_1]' AND phone = '[FR_PHONE_NUMBER_1]';\r\n"]
+[2.007, "o", "\r\n$ echo \"...\" | anon | claude -p \"explain this query\" | anon restore\r\n"]
+[9.103, "o", "\u001b[?25h"]
+[0.024, "o", "This is a SQL query that references **anonymized PII tokens** produced by the `anon` tool in this repo.\r\n\r\nThe original query likely looked something like:\r\n\r\n```sql\r\nSELECT * FROM crew WHERE email = 'jean.dupont@example-air.com' AND phone = '+33 6 12 34 56 78';\r\n```\r\n\r\nAfter running through `anon`, the real email and phone number were replaced with deterministic placeholder tokens:\r\n\r\n- `jean.dupont@example-air.com` — the first unique email address encountered in the input\r\n- `+33 6 12 34 56 78` — the first unique French phone number encountered\r\n\r\nThe query itself just selects all columns from a `crew` table where both the email and phone match specific values. The anonymized version preserves the SQL structure so you can still debug/analyze the query logic without exposing real personal data.\r\n"]
+[0.000, "o", "Restored 2 entities\r\n"]
+[2.010, "x", "0"]

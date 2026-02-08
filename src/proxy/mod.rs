@@ -30,12 +30,14 @@ pub struct ProxyState {
 impl ProxyState {
     pub fn new(upstream: String, threshold: f64, session_dir: PathBuf) -> Self {
         let mut anonymizer = Anonymizer::new(threshold);
-        anonymizer.mapping = anonymizer.mapping.with_max_entries(DEFAULT_MAX_MAPPING_ENTRIES);
+        anonymizer.mapping = anonymizer
+            .mapping
+            .with_max_entries(DEFAULT_MAX_MAPPING_ENTRIES);
 
         // Auto-enable NER based on compiled features
         #[cfg(feature = "ner")]
         {
-            use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
+            use crate::ner::{download::model_exists, ml::MlNerDetector, NerConfig};
             let config = NerConfig::default();
             if model_exists(&config) {
                 match std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
@@ -160,11 +162,8 @@ pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(
-            &state.session_dir,
-            std::fs::Permissions::from_mode(0o700),
-        )
-        .await?;
+        tokio::fs::set_permissions(&state.session_dir, std::fs::Permissions::from_mode(0o700))
+            .await?;
     }
 
     let app = Router::new()

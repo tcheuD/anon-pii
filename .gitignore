@@ -40,3 +40,4 @@ uv.lock
 # Added by cargo
 
 /target
+.claude/settings.local.json

@@ -4,6 +4,20 @@
 
 Person names aren't reliably detectable with regex. The `--ner` flag enables NER-based detection with two backends, selected at compile time via feature flags.
 
+## Backend selection flow
+
+```mermaid
+flowchart TD
+    A[`anon --ner`] --> B{Compiled features}
+    B -->|ner + model + ONNX runtime| C[Use ML detector]
+    B -->|ner but ML init fails| D[Fallback to heuristic detector]
+    B -->|ner-lite only| D
+    B -->|no ner features| E[PERSON detection disabled]
+    C --> F[PERSON spans]
+    D --> F
+    F --> G[Span extension + consistency passes]
+```
+
 ## Heuristic (`ner-lite`)
 
 Zero dependencies. Detects names using title patterns (M., Mme, Dr, Captain...) and a ~500 entry French/English first name dictionary.
@@ -39,3 +53,14 @@ echo "Jean Dupont called from Paris" | anon --ner
 The ML backend detects names in French, English, German, Spanish, Portuguese, Dutch, Arabic, and Chinese without any keyword context.
 
 When both features are compiled (`--features ner,ner-lite`), ML takes precedence.
+
+## PERSON post-processing
+
+```mermaid
+flowchart LR
+    A[NER span: first name] --> B[Extend with adjacent last-name-like words]
+    B --> C[Filter blocklisted non-person terms]
+    C --> D[Detect sign-off names: Best regards, Name]
+    D --> E[Consistency pass: find same name parts elsewhere]
+    E --> F[Final PERSON detections]
+```

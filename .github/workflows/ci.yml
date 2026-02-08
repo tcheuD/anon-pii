@@ -128,36 +128,6 @@ jobs:
         run: cargo build --release
 
   # ============================================================================
-  # Python Linting
-  # ============================================================================
-  python-lint:
-    name: Python Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
-
-      - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: '3.12'
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Install dependencies
-        run: uv sync --extra dev
-
-      - name: Ruff lint
-        run: uv run ruff check src/anon/
-
-      - name: Ruff format check
-        run: uv run ruff format --check src/anon/
-
-      - name: Mypy type check
-        run: uv run mypy src/anon/
-
-  # ============================================================================
   # Security: cargo-deny
   # ============================================================================
   security-deny:
@@ -208,7 +178,6 @@ jobs:
       - rust-clippy
       - rust-test
       - rust-build
-      - python-lint
       - security-deny
       - security-audit
     runs-on: ubuntu-latest
@@ -220,7 +189,6 @@ jobs:
              [[ "${{ needs.rust-clippy.result }}" != "success" ]] || \
              [[ "${{ needs.rust-test.result }}" != "success" ]] || \
              [[ "${{ needs.rust-build.result }}" != "success" ]] || \
-             [[ "${{ needs.python-lint.result }}" != "success" ]] || \
              [[ "${{ needs.security-deny.result }}" != "success" ]] || \
              [[ "${{ needs.security-audit.result }}" != "success" ]]; then
             echo "One or more jobs failed"

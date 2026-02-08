@@ -16,9 +16,9 @@ impl TokenResolver for Mapping {
 /// Bracket-detecting buffer for SSE token restoration.
 ///
 /// The problem: SSE streams deliver text in small chunks. A token like
-/// `[EMAIL_ADDRESS_1]` might be split across events:
+/// `[EMAIL_ADDRESS_a1b2c3d4]` might be split across events:
 ///   event 1: "The email ["
-///   event 2: "EMAIL_ADDRESS_1]"
+///   event 2: "EMAIL_ADDRESS_a1b2c3d4]"
 ///
 /// TokenBuffer accumulates text when an open bracket is seen,
 /// restores complete tokens, and flushes on close bracket or overflow.
@@ -122,10 +122,14 @@ mod tests {
 
     fn make_mapping() -> Mapping {
         let mut m = Mapping::new();
-        m.mappings
-            .insert("[EMAIL_ADDRESS_1]".to_string(), "john@example.com".to_string());
-        m.mappings
-            .insert("[IP_ADDRESS_1]".to_string(), "192.168.1.100".to_string());
+        m.mappings.insert(
+            "[EMAIL_ADDRESS_a1b2c3d4]".to_string(),
+            "john@example.com".to_string(),
+        );
+        m.mappings.insert(
+            "[IP_ADDRESS_e5f6a7b8]".to_string(),
+            "192.168.1.100".to_string(),
+        );
         m.rebuild_caches();
         m
     }
@@ -135,7 +139,7 @@ mod tests {
         let mapping = make_mapping();
         let mut buf = TokenBuffer::new(mapping);
 
-        let out = buf.feed("The email [EMAIL_ADDRESS_1] was found");
+        let out = buf.feed("The email [EMAIL_ADDRESS_a1b2c3d4] was found");
         assert_eq!(out, "The email john@example.com was found");
     }
 
@@ -147,7 +151,7 @@ mod tests {
         let out1 = buf.feed("The email [EMAIL");
         assert_eq!(out1, "The email ");
 
-        let out2 = buf.feed("_ADDRESS_1] was found");
+        let out2 = buf.feed("_ADDRESS_a1b2c3d4] was found");
         assert_eq!(out2, "john@example.com was found");
     }
 
@@ -191,7 +195,7 @@ mod tests {
         let mapping = make_mapping();
         let mut buf = TokenBuffer::new(mapping);
 
-        let out = buf.feed("[EMAIL_ADDRESS_1] at [IP_ADDRESS_1]");
+        let out = buf.feed("[EMAIL_ADDRESS_a1b2c3d4] at [IP_ADDRESS_e5f6a7b8]");
         assert_eq!(out, "john@example.com at 192.168.1.100");
     }
 
@@ -209,7 +213,7 @@ mod tests {
 
     #[test]
     fn test_replace_text_delta() {
-        let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"[EMAIL_ADDRESS_1]"}}"#;
+        let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"[EMAIL_ADDRESS_a1b2c3d4]"}}"#;
         let replaced = replace_text_delta(data, "john@example.com").unwrap();
         let v: serde_json::Value = serde_json::from_str(&replaced).unwrap();
         assert_eq!(v["delta"]["text"], "john@example.com");

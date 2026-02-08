@@ -38,9 +38,7 @@ fn validate_ort_path(path_str: &str) -> Result<(), String> {
 
     // Must exist
     if !path.exists() {
-        return Err(format!(
-            "ORT_DYLIB_PATH does not exist: {path_str}"
-        ));
+        return Err(format!("ORT_DYLIB_PATH does not exist: {path_str}"));
     }
 
     // Resolve symlinks to get the real path
@@ -56,7 +54,10 @@ fn validate_ort_path(path_str: &str) -> Result<(), String> {
     let real_str = real.to_string_lossy();
 
     // Must resolve to a known system library directory
-    if !ALLOWED_ORT_PREFIXES.iter().any(|prefix| real_str.starts_with(prefix)) {
+    if !ALLOWED_ORT_PREFIXES
+        .iter()
+        .any(|prefix| real_str.starts_with(prefix))
+    {
         return Err(format!(
             "ORT_DYLIB_PATH resolves to {real_str}, which is outside allowed directories: {:?}. \
              Set ORT_DYLIB_PATH to a system-installed ONNX Runtime library.",
@@ -214,20 +215,22 @@ impl MlNerDetector {
         let seq_len = input_ids.len();
         let attention_mask: Vec<i64> = vec![1i64; seq_len];
 
-        let ids_tensor = match ort::value::Tensor::from_array((vec![1i64, seq_len as i64], input_ids)) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("Warning: NER input_ids tensor creation failed: {e}");
-                return Vec::new();
-            }
-        };
-        let mask_tensor = match ort::value::Tensor::from_array((vec![1i64, seq_len as i64], attention_mask)) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("Warning: NER attention_mask tensor creation failed: {e}");
-                return Vec::new();
-            }
-        };
+        let ids_tensor =
+            match ort::value::Tensor::from_array((vec![1i64, seq_len as i64], input_ids)) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Warning: NER input_ids tensor creation failed: {e}");
+                    return Vec::new();
+                }
+            };
+        let mask_tensor =
+            match ort::value::Tensor::from_array((vec![1i64, seq_len as i64], attention_mask)) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Warning: NER attention_mask tensor creation failed: {e}");
+                    return Vec::new();
+                }
+            };
 
         let inputs = ort::inputs![
             "input_ids" => ids_tensor,
@@ -270,6 +273,7 @@ impl MlNerDetector {
         let mut current_start: Option<usize> = None;
         let mut current_end: usize = 0;
         let mut current_scores: Vec<f32> = Vec::new();
+        let mut current_label: String = String::new();
 
         for (chunk_i, &(off_start, off_end)) in chunk_offsets.iter().enumerate() {
             // logits index is chunk_i + 1 (skip [CLS])
@@ -277,7 +281,15 @@ impl MlNerDetector {
 
             if off_start == off_end {
                 if let Some(start) = current_start.take() {
-                    flush_span(text, start, current_end, &current_scores, self.min_score, &mut spans);
+                    flush_span(
+                        text,
+                        start,
+                        current_end,
+                        &current_scores,
+                        &current_label,
+                        self.min_score,
+                        &mut spans,
+                    );
                     current_scores.clear();
                 }
                 continue;
@@ -295,30 +307,66 @@ impl MlNerDetector {
             }
 
             let label = &self.id2label[max_idx];
-            let is_b_per = label == "B-PER";
-            let is_i_per = label == "I-PER";
+            let is_begin = label.starts_with("B-");
+            let is_inside = label.starts_with("I-");
+            let entity_tag = if is_begin || is_inside {
+                &label[2..] // "PER", "LOC", "ORG", "MISC"
+            } else {
+                ""
+            };
+            // Only track PER and LOC entities
+            let is_tracked = entity_tag == "PER" || entity_tag == "LOC";
 
-            if is_b_per {
+            if is_begin && is_tracked {
                 if let Some(start) = current_start.take() {
-                    flush_span(text, start, current_end, &current_scores, self.min_score, &mut spans);
+                    flush_span(
+                        text,
+                        start,
+                        current_end,
+                        &current_scores,
+                        &current_label,
+                        self.min_score,
+                        &mut spans,
+                    );
                     current_scores.clear();
                 }
                 current_start = Some(off_start);
                 current_end = off_end;
+                current_label = entity_tag.to_string();
                 current_scores.push(softmax_score(logits, row_offset, max_idx, num_labels));
-            } else if is_i_per && current_start.is_some() {
+            } else if is_inside
+                && is_tracked
+                && current_start.is_some()
+                && entity_tag == current_label
+            {
                 current_end = off_end;
                 current_scores.push(softmax_score(logits, row_offset, max_idx, num_labels));
             } else {
                 if let Some(start) = current_start.take() {
-                    flush_span(text, start, current_end, &current_scores, self.min_score, &mut spans);
+                    flush_span(
+                        text,
+                        start,
+                        current_end,
+                        &current_scores,
+                        &current_label,
+                        self.min_score,
+                        &mut spans,
+                    );
                     current_scores.clear();
                 }
             }
         }
 
         if let Some(start) = current_start.take() {
-            flush_span(text, start, current_end, &current_scores, self.min_score, &mut spans);
+            flush_span(
+                text,
+                start,
+                current_end,
+                &current_scores,
+                &current_label,
+                self.min_score,
+                &mut spans,
+            );
         }
 
         spans
@@ -331,7 +379,13 @@ fn dedup_spans(spans: &mut Vec<NerSpan>) {
     if spans.len() <= 1 {
         return;
     }
-    spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)));
+    spans.sort_by(|a, b| {
+        a.start.cmp(&b.start).then(
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
     let mut deduped: Vec<NerSpan> = Vec::with_capacity(spans.len());
     for span in spans.drain(..) {
         if let Some(last) = deduped.last() {
@@ -360,11 +414,47 @@ fn softmax_score(logits: &[f32], row_offset: usize, label_idx: usize, num_labels
     (logits[row_offset + label_idx] - max_val).exp() / sum
 }
 
+/// Extend a byte offset backward to the start of the current word.
+fn extend_to_word_start(text: &str, pos: usize) -> usize {
+    let mut p = pos;
+    while p > 0 {
+        let prev = p - 1;
+        if !text.is_char_boundary(prev) {
+            p -= 1;
+            continue;
+        }
+        let ch = text[prev..].chars().next().unwrap();
+        if ch.is_whitespace() {
+            break;
+        }
+        p = prev;
+    }
+    p
+}
+
+/// Extend a byte offset forward to the end of the current word.
+fn extend_to_word_end(text: &str, pos: usize) -> usize {
+    let mut p = pos;
+    while p < text.len() {
+        if !text.is_char_boundary(p) {
+            p += 1;
+            continue;
+        }
+        let ch = text[p..].chars().next().unwrap();
+        if ch.is_whitespace() {
+            break;
+        }
+        p += ch.len_utf8();
+    }
+    p
+}
+
 fn flush_span(
     text: &str,
     start: usize,
     end: usize,
     scores: &[f32],
+    entity_label: &str,
     min_score: f64,
     spans: &mut Vec<NerSpan>,
 ) {
@@ -378,16 +468,24 @@ fn flush_span(
     if end > text.len() || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
         return;
     }
-    let span_text = &text[start..end];
+    let ext_start = extend_to_word_start(text, start);
+    let ext_end = extend_to_word_end(text, end);
+
+    let span_text = &text[ext_start..ext_end];
     if span_text.trim().len() <= 1 {
         return;
     }
+    let label = match entity_label {
+        "PER" => "PERSON",
+        "LOC" => "LOCATION",
+        other => other,
+    };
     spans.push(NerSpan {
         text: span_text.to_string(),
-        start,
-        end,
+        start: ext_start,
+        end: ext_end,
         score: avg_score as f64,
-        label: "PERSON".to_string(),
+        label: label.to_string(),
     });
 }
 
@@ -403,9 +501,8 @@ mod tests {
             return None;
         }
         // ort panics if libonnxruntime is not available
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            MlNerDetector::new(&config)
-        })) {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| MlNerDetector::new(&config)))
+        {
             Ok(Ok(det)) => Some(det),
             Ok(Err(e)) => {
                 eprintln!("ML NER init failed: {e}, skipping test");
@@ -425,8 +522,13 @@ mod tests {
             None => return,
         };
         let spans = detector.detect_persons("Jean Dupont called from Paris");
-        assert!(!spans.is_empty(), "ML NER should detect at least one person");
-        assert!(spans.iter().any(|s| s.text.contains("Jean") || s.text.contains("Dupont")));
+        assert!(
+            !spans.is_empty(),
+            "ML NER should detect at least one person"
+        );
+        assert!(spans
+            .iter()
+            .any(|s| s.text.contains("Jean") || s.text.contains("Dupont")));
     }
 
     #[test]
@@ -446,17 +548,42 @@ mod tests {
         let mut spans = Vec::new();
 
         // Byte 4 is inside the 'é' (bytes 3..5 of "café") — not a char boundary
-        flush_span(text, 4, 6, &[0.99], 0.5, &mut spans);
+        flush_span(text, 4, 6, &[0.99], "PER", 0.5, &mut spans);
         assert!(spans.is_empty(), "Should skip invalid char boundary");
 
         // Out of bounds
-        flush_span(text, 0, text.len() + 5, &[0.99], 0.5, &mut spans);
+        flush_span(text, 0, text.len() + 5, &[0.99], "PER", 0.5, &mut spans);
         assert!(spans.is_empty(), "Should skip out-of-bounds offset");
 
         // Valid boundaries should still work — "café" is bytes 0..5
-        flush_span(text, 0, 5, &[0.99], 0.5, &mut spans);
+        flush_span(text, 0, 5, &[0.99], "PER", 0.5, &mut spans);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text, "caf\u{e9}");
+    }
+
+    #[test]
+    fn test_flush_span_extends_to_word_boundaries() {
+        // Simulate subword tokenization splitting "Gaël" → ["Ga", "##ël"]
+        // where only "Ga" (bytes 0..2) gets tagged as B-PER
+        let text = "Gaël DUPONT est pilote.";
+        let mut spans = Vec::new();
+
+        // "Ga" is bytes 0..2, but "Gaël" is bytes 0..5 (ë is 2 bytes)
+        flush_span(text, 0, 2, &[0.95], "PER", 0.5, &mut spans);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "Gaël", "Should extend to full word boundary");
+        assert_eq!(spans[0].start, 0);
+        assert_eq!(spans[0].end, 5); // "Gaël" = 5 bytes
+    }
+
+    #[test]
+    fn test_extend_to_word_boundary_helpers() {
+        let text = "Hello Gaël World";
+        // "Gaël" starts at byte 6, ends at byte 11
+        assert_eq!(extend_to_word_start(text, 6), 6);
+        assert_eq!(extend_to_word_start(text, 8), 6); // mid-word
+        assert_eq!(extend_to_word_end(text, 6), 11);
+        assert_eq!(extend_to_word_end(text, 8), 11); // mid-word
     }
 
     #[test]
@@ -470,7 +597,10 @@ mod tests {
         let long = "Jean Dupont ".repeat(5000);
         let spans = detector.detect_persons(&long);
         // Should not panic and should detect persons across chunks
-        assert!(!spans.is_empty(), "Should detect persons in long repeated input");
+        assert!(
+            !spans.is_empty(),
+            "Should detect persons in long repeated input"
+        );
 
         // Input with only non-ASCII — stress tokenizer edge cases
         let unicode_heavy = "名前は田中太郎です。連絡先：tanaka@example.com";
@@ -495,7 +625,9 @@ mod tests {
         let text = format!("{filler}Captain Marie Lefebvre reported an incident.");
         let spans = detector.detect_persons(&text);
         assert!(
-            spans.iter().any(|s| s.text.contains("Marie") || s.text.contains("Lefebvre")),
+            spans
+                .iter()
+                .any(|s| s.text.contains("Marie") || s.text.contains("Lefebvre")),
             "Should detect person name past the 512 token boundary, got: {:?}",
             spans
         );
@@ -504,9 +636,27 @@ mod tests {
     #[test]
     fn test_dedup_spans_removes_overlapping() {
         let mut spans = vec![
-            NerSpan { text: "Jean Dupont".into(), start: 0, end: 11, score: 0.95, label: "PERSON".into() },
-            NerSpan { text: "Jean Dupont".into(), start: 0, end: 11, score: 0.90, label: "PERSON".into() },
-            NerSpan { text: "Marie".into(), start: 20, end: 25, score: 0.85, label: "PERSON".into() },
+            NerSpan {
+                text: "Jean Dupont".into(),
+                start: 0,
+                end: 11,
+                score: 0.95,
+                label: "PERSON".into(),
+            },
+            NerSpan {
+                text: "Jean Dupont".into(),
+                start: 0,
+                end: 11,
+                score: 0.90,
+                label: "PERSON".into(),
+            },
+            NerSpan {
+                text: "Marie".into(),
+                start: 20,
+                end: 25,
+                score: 0.85,
+                label: "PERSON".into(),
+            },
         ];
         dedup_spans(&mut spans);
         assert_eq!(spans.len(), 2);
@@ -518,13 +668,19 @@ mod tests {
     #[test]
     fn test_validate_ort_path_rejects_relative() {
         let err = validate_ort_path("./libonnxruntime.so").unwrap_err();
-        assert!(err.contains("absolute"), "Should reject relative path: {err}");
+        assert!(
+            err.contains("absolute"),
+            "Should reject relative path: {err}"
+        );
     }
 
     #[test]
     fn test_validate_ort_path_rejects_nonexistent() {
         let err = validate_ort_path("/usr/lib/nonexistent_ort_library_12345.so").unwrap_err();
-        assert!(err.contains("does not exist"), "Should reject missing file: {err}");
+        assert!(
+            err.contains("does not exist"),
+            "Should reject missing file: {err}"
+        );
     }
 
     #[test]
@@ -534,7 +690,10 @@ mod tests {
         std::fs::write(&tmp, b"fake").unwrap();
 
         let err = validate_ort_path(tmp.to_str().unwrap()).unwrap_err();
-        assert!(err.contains("outside allowed directories"), "Should reject /tmp path: {err}");
+        assert!(
+            err.contains("outside allowed directories"),
+            "Should reject /tmp path: {err}"
+        );
 
         let _ = std::fs::remove_file(&tmp);
     }
@@ -544,7 +703,10 @@ mod tests {
         let num_cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        assert!(num_cores >= 1, "available_parallelism should return at least 1");
+        assert!(
+            num_cores >= 1,
+            "available_parallelism should return at least 1"
+        );
     }
 
     #[test]
@@ -556,7 +718,10 @@ mod tests {
             None => return,
         };
         let spans = detector.detect_persons("Captain Pierre Duval reported the incident.");
-        assert!(!spans.is_empty(), "Detector with threading should still detect persons");
+        assert!(
+            !spans.is_empty(),
+            "Detector with threading should still detect persons"
+        );
     }
 
     #[test]
@@ -570,7 +735,10 @@ mod tests {
         ];
         let valid = candidates.iter().find(|p| PathBuf::from(p).exists());
         if let Some(path) = valid {
-            assert!(validate_ort_path(path).is_ok(), "Should accept system lib at {path}");
+            assert!(
+                validate_ort_path(path).is_ok(),
+                "Should accept system lib at {path}"
+            );
         } else {
             eprintln!("No system library found for positive test, skipping");
         }

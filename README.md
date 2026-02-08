@@ -53,6 +53,58 @@ cat debug.json | anon | claude -p "explain this error" | anon restore
 
 Mapping is auto-saved to `~/.anon/mapping.json` — no need to pass `-m` manually.
 
+## How It Works
+
+### 1) End-to-end anonymization path
+
+```mermaid
+flowchart LR
+    A[Input file or stdin] --> B{Format detection}
+    B -->|JSON| C[Walk JSON values]
+    B -->|CSV| D[Process each CSV cell]
+    B -->|SQL| E[Process SQL string literals]
+    B -->|Text| F[Process whole text]
+    C --> G[Regex + context + optional NER]
+    D --> G
+    E --> G
+    F --> G
+    G --> H[Generate stable random tokens]
+    H --> I[Write mapping to ~/.anon/mapping.json]
+    H --> J[Return anonymized output]
+```
+
+### 2) Detection pipeline (inside `anonymize_text`)
+
+```mermaid
+flowchart TD
+    A[Raw text] --> B[NFKC normalize]
+    B --> C[Decode \\uXXXX escapes]
+    C --> D[Decode %XX URL encoding]
+    D --> E[Regex pattern scan]
+    E --> F[Context required or score boost]
+    F --> G[Validators: Luhn, blocklists, boundaries]
+    G --> H[Multiline pass for card/IBAN]
+    H --> I[Optional PERSON NER]
+    I --> J[Sign-off + name consistency passes]
+    J --> K[Overlap resolution]
+    K --> L[Replace spans with tokens from end to start]
+```
+
+### 3) Restore flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as anon
+    participant M as mapping.json
+    U->>A: anon < debug-data
+    A->>M: save token->original map
+    A-->>U: anonymized payload
+    U->>A: anon restore < model-response
+    A->>M: load map
+    A-->>U: restored payload
+```
+
 ## Usage
 
 ### Anonymize (default)
@@ -110,6 +162,10 @@ cargo test --features ner-lite
 
 # Build release binary
 cargo build --release
+
+# Build release with NER
+cargo build --release --features ner-lite
+cargo build --release --features ner
 ```
 
 `cargo test` without feature flags runs all tests except NER-specific ones. This is the standard check after any change.
@@ -129,15 +185,6 @@ Typical results (Apple Silicon):
 | none | 251k lines/s | 2.8 μs | 8.9 μs | 3.2x |
 | ner-lite | 184k lines/s | 3.9 μs | 11.4 μs | 2.9x |
 | ner | 247k lines/s | 2.8 μs | 8.9 μs | 3.1x |
-
-## Python Version
-
-A Python implementation using Microsoft Presidio is also available on the `main` branch in `src/anon/`. It supports NLP-based name detection (via spaCy) and more international entity types.
-
-```bash
-pip install -e .
-anon -i debug.json -o safe.json
-```
 
 ## License
 

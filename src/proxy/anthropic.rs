@@ -113,7 +113,7 @@ mod tests {
         anonymize_request(&mut body, &mut anonymizer);
 
         let content = body["messages"][0]["content"].as_str().unwrap();
-        assert!(content.contains("[EMAIL_ADDRESS_1]"));
+        assert!(content.contains("[EMAIL_ADDRESS_"));
         assert!(!content.contains("john@example.com"));
     }
 
@@ -128,7 +128,7 @@ mod tests {
         anonymize_request(&mut body, &mut anonymizer);
 
         let system = body["system"].as_str().unwrap();
-        assert!(system.contains("[EMAIL_ADDRESS_1]"));
+        assert!(system.contains("[EMAIL_ADDRESS_"));
     }
 
     #[test]
@@ -148,7 +148,7 @@ mod tests {
         anonymize_request(&mut body, &mut anonymizer);
 
         let text = body["messages"][0]["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("[IP_ADDRESS_1]"));
+        assert!(text.contains("[IP_ADDRESS_"));
     }
 
     #[test]
@@ -174,25 +174,32 @@ mod tests {
         let content = body["messages"][0]["content"][0]["content"]
             .as_str()
             .unwrap();
-        assert!(content.contains("[EMAIL_ADDRESS_1]"));
+        assert!(content.contains("[EMAIL_ADDRESS_"));
     }
 
     #[test]
     fn test_restore_response() {
         let mut anonymizer = Anonymizer::new(0.0);
         let _ = anonymizer.anonymize_text("john@example.com");
+        let token = anonymizer
+            .mapping
+            .mappings
+            .keys()
+            .find(|k| k.starts_with("[EMAIL_ADDRESS_"))
+            .unwrap()
+            .clone();
         let mapping = &anonymizer.mapping;
 
         let mut response = json!({
             "content": [
-                { "type": "text", "text": "The email [EMAIL_ADDRESS_1] was found" }
+                { "type": "text", "text": format!("The email {token} was found") }
             ]
         });
         restore_response(&mut response, mapping);
 
         let text = response["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("john@example.com"));
-        assert!(!text.contains("[EMAIL_ADDRESS_1]"));
+        assert!(!text.contains("[EMAIL_ADDRESS_"));
     }
 
     #[test]
@@ -221,8 +228,11 @@ mod tests {
 
         let input = &body["messages"][0]["content"][0]["input"];
         let email = input["email"].as_str().unwrap();
-        assert!(!email.contains("john@example.com"), "email PII should be anonymized");
-        assert!(email.contains("[EMAIL_ADDRESS_1]"));
+        assert!(
+            !email.contains("john@example.com"),
+            "email PII should be anonymized"
+        );
+        assert!(email.contains("[EMAIL_ADDRESS_"));
 
         // id and name should be preserved
         assert_eq!(body["messages"][0]["content"][0]["id"], "toolu_abc123");
@@ -257,10 +267,16 @@ mod tests {
 
         let input = &body["messages"][0]["content"][0]["input"];
         let query = input["query"].as_str().unwrap();
-        assert!(!query.contains("10.0.0.42"), "nested IP should be anonymized");
+        assert!(
+            !query.contains("10.0.0.42"),
+            "nested IP should be anonymized"
+        );
 
         let contact = input["filters"]["contact"].as_str().unwrap();
-        assert!(!contact.contains("admin@secret.org"), "nested email should be anonymized");
+        assert!(
+            !contact.contains("admin@secret.org"),
+            "nested email should be anonymized"
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
-use dirs;
 use serde::Serialize;
+use serde_json::json;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -44,6 +44,14 @@ struct Cli {
     /// Include mapping as comment in output
     #[arg(long)]
     include_mapping: bool,
+
+    /// Output a share-ready Markdown snippet (safe to paste into issues / AI tools)
+    #[arg(long)]
+    share: bool,
+
+    /// Copy output to clipboard (best effort). Requires --share.
+    #[arg(long)]
+    copy: bool,
 
     /// Show detected entities
     #[arg(short, long)]
@@ -195,6 +203,195 @@ fn write_output(path: Option<&PathBuf>, content: &str) -> io::Result<()> {
     }
 }
 
+fn share_event_log_path() -> PathBuf {
+    default_mapping_dir().join("events.jsonl")
+}
+
+/// Best-effort local event logging for measurement.
+/// Never includes PII; appends JSON lines under ~/.anon/events.jsonl.
+fn append_share_event(event: &str, props: serde_json::Value) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let dir = default_mapping_dir();
+    let _ = create_private_dir(&dir);
+
+    let ts_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+
+    let line = json!({
+        "ts_ms": ts_ms,
+        "event": event,
+        "props": props,
+    });
+
+    let path = share_event_log_path();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Ok(mut f) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            let _ = writeln!(f, "{}", line);
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{}", line);
+        }
+    }
+}
+
+fn max_consecutive_backticks(s: &str) -> usize {
+    let mut max_run = 0usize;
+    let mut run = 0usize;
+    for ch in s.chars() {
+        if ch == '`' {
+            run += 1;
+            max_run = max_run.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    max_run
+}
+
+fn choose_markdown_fence(s: &str) -> String {
+    let n = (max_consecutive_backticks(s) + 1).max(3);
+    "`".repeat(n)
+}
+
+fn summarize_detections(
+    detections: &[Detection],
+) -> (
+    usize,
+    std::collections::BTreeMap<&'static str, usize>,
+) {
+    let mut seen: std::collections::HashSet<(&'static str, String)> = std::collections::HashSet::new();
+    let mut by_type: std::collections::BTreeMap<&'static str, usize> =
+        std::collections::BTreeMap::new();
+
+    for d in detections {
+        if seen.insert((d.entity_type, d.original.clone())) {
+            *by_type.entry(d.entity_type).or_insert(0) += 1;
+        }
+    }
+
+    (seen.len(), by_type)
+}
+
+fn render_share_markdown(result: &str, detections: &[Detection], format_name: &str) -> String {
+    let (unique_count, by_type) = summarize_detections(detections);
+    let types_count = by_type.len();
+
+    let summary = if unique_count == 0 {
+        "Detected 0 entities.".to_string()
+    } else {
+        let mut parts: Vec<String> = Vec::with_capacity(by_type.len());
+        for (t, c) in by_type {
+            parts.push(format!("{t} x{c}"));
+        }
+        let types_suffix = if types_count > 1 {
+            format!(" across {types_count} types")
+        } else {
+            String::new()
+        };
+        format!(
+            "Detected {unique_count} unique entit{}{}: {}.",
+            if unique_count == 1 { "y" } else { "ies" },
+            types_suffix,
+            parts.join(", ")
+        )
+    };
+
+    let fence = choose_markdown_fence(result);
+    let lang = match format_name {
+        "json" => "json",
+        "sql" => "sql",
+        "csv" => "csv",
+        _ => "text",
+    };
+
+    let mut md = String::new();
+    md.push_str("Anonymized with `anon`.\n\n");
+    md.push_str(&summary);
+    md.push_str("\n\n");
+    md.push_str(&fence);
+    md.push_str(lang);
+    md.push('\n');
+    md.push_str(result.trim_end_matches('\n'));
+    md.push('\n');
+    md.push_str(&fence);
+    md.push('\n');
+    md
+}
+
+fn run_clipboard_command(cmd: &str, args: &[&str], text: &str) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("failed to spawn {cmd}: {e}"))?;
+
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "failed to open stdin".to_string())?
+        .write_all(text.as_bytes())
+        .map_err(|e| format!("failed to write to {cmd}: {e}"))?;
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("failed to wait for {cmd}: {e}"))?;
+    if !status.success() {
+        return Err(format!("{cmd} exited with {status}"));
+    }
+    Ok(())
+}
+
+fn copy_to_clipboard_best_effort(text: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        run_clipboard_command("pbcopy", &[], text)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        run_clipboard_command("clip", &[], text)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if run_clipboard_command("wl-copy", &[], text).is_ok() {
+            return Ok(());
+        }
+        if run_clipboard_command("xclip", &["-selection", "clipboard"], text).is_ok() {
+            return Ok(());
+        }
+        if run_clipboard_command("xsel", &["--clipboard", "--input"], text).is_ok() {
+            return Ok(());
+        }
+        return Err("no clipboard helper found (tried wl-copy, xclip, xsel)".to_string());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        let _ = text;
+        Err("clipboard copy not supported on this platform".to_string())
+    }
+}
+
 /// Create directory with mode 0o700 (owner-only) on Unix.
 fn create_private_dir(dir: &Path) -> io::Result<()> {
     fs::create_dir_all(dir)?;
@@ -212,7 +409,10 @@ fn create_private_dir(dir: &Path) -> io::Result<()> {
 /// the symlink itself is replaced, not followed).
 fn write_mapping_file(path: &PathBuf, content: &str) -> io::Result<()> {
     let dir = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "mapping path has no parent directory")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "mapping path has no parent directory",
+        )
     })?;
 
     // Write to a temp file in the same directory (same filesystem = atomic rename)
@@ -265,7 +465,11 @@ fn print_detections(detections: &[Detection]) {
         .filter(|d| seen.insert((&d.entity_type, &d.original)))
         .collect();
 
-    let type_width = unique.iter().map(|d| d.entity_type.len()).max().unwrap_or(10);
+    let type_width = unique
+        .iter()
+        .map(|d| d.entity_type.len())
+        .max()
+        .unwrap_or(10);
     let val_width = 40;
 
     eprintln!();
@@ -278,10 +482,9 @@ fn print_detections(detections: &[Detection]) {
         vw = val_width
     );
     eprintln!(
-        "  {:<tw$}  {:<vw$}  {}",
+        "  {:<tw$}  {:<vw$}  ─────",
         "─".repeat(type_width),
         "─".repeat(val_width),
-        "─────",
         tw = type_width,
         vw = val_width
     );
@@ -354,18 +557,25 @@ fn main() -> io::Result<()> {
                 io::Error::new(e.kind(), format!("cannot read {}: {e}", file.display()))
             })?;
 
-            let mut firstnames: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-            let mut lastnames: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let mut firstnames: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            let mut lastnames: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
 
             for (i, line) in content.lines().enumerate() {
                 let line = line.trim();
-                if line.is_empty() { continue; }
+                if line.is_empty() {
+                    continue;
+                }
                 // Skip header row
                 if i == 0 {
                     let lower = line.to_lowercase();
-                    if lower.contains("firstname") || lower.contains("lastname")
-                        || lower.contains("first_name") || lower.contains("last_name")
-                        || lower.contains("prénom") || lower.contains("nom")
+                    if lower.contains("firstname")
+                        || lower.contains("lastname")
+                        || lower.contains("first_name")
+                        || lower.contains("last_name")
+                        || lower.contains("prénom")
+                        || lower.contains("nom")
                     {
                         continue;
                     }
@@ -374,12 +584,18 @@ fn main() -> io::Result<()> {
                 if parts.len() == 2 {
                     let first = parts[0].trim();
                     let last = parts[1].trim();
-                    if !first.is_empty() { firstnames.insert(first.to_string()); }
-                    if !last.is_empty() { lastnames.insert(last.to_string()); }
+                    if !first.is_empty() {
+                        firstnames.insert(first.to_string());
+                    }
+                    if !last.is_empty() {
+                        lastnames.insert(last.to_string());
+                    }
                 } else {
                     // Single column — treat as firstname
                     let name = parts[0].trim();
-                    if !name.is_empty() { firstnames.insert(name.to_string()); }
+                    if !name.is_empty() {
+                        firstnames.insert(name.to_string());
+                    }
                 }
             }
 
@@ -441,9 +657,7 @@ fn main() -> io::Result<()> {
                 std::env::temp_dir().join(format!("anon-proxy-{suffix}"))
             });
 
-            let state = Arc::new(proxy::ProxyState::new(
-                upstream, threshold, session_dir,
-            ));
+            let state = Arc::new(proxy::ProxyState::new(upstream, threshold, session_dir));
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(proxy::run(state, port))?;
@@ -462,10 +676,12 @@ fn main() -> io::Result<()> {
             for p in PATTERNS {
                 if seen.insert(p.entity_type) {
                     // Check context across all patterns for this entity type
-                    let has_required = PATTERNS.iter()
+                    let has_required = PATTERNS
+                        .iter()
                         .filter(|pp| pp.entity_type == p.entity_type)
                         .any(|pp| pp.context_required && !pp.context_keywords.is_empty());
-                    let has_boost = PATTERNS.iter()
+                    let has_boost = PATTERNS
+                        .iter()
                         .filter(|pp| pp.entity_type == p.entity_type)
                         .any(|pp| !pp.context_required && !pp.context_keywords.is_empty());
 
@@ -487,7 +703,11 @@ fn main() -> io::Result<()> {
             }
             #[cfg(any(feature = "ner", feature = "ner-lite"))]
             {
-                let backend = if cfg!(feature = "ner") { "ML" } else { "heuristic" };
+                let backend = if cfg!(feature = "ner") {
+                    "ML"
+                } else {
+                    "heuristic"
+                };
                 eprintln!(
                     "  {:<tw$}  NER-based person detection ({backend})",
                     "PERSON".green(),
@@ -499,6 +719,15 @@ fn main() -> io::Result<()> {
             if cli.input.is_none() && io::stdin().is_terminal() {
                 eprintln!("No input provided. Use --help for usage.");
                 std::process::exit(1);
+            }
+
+            if cli.copy && !cli.share {
+                eprintln!("Error: --copy requires --share");
+                std::process::exit(2);
+            }
+            if cli.share && (cli.include_mapping || cli.mapping_stderr) {
+                eprintln!("Error: --share refuses to output mapping data (PII). Remove --include-mapping/--mapping-stderr.");
+                std::process::exit(2);
             }
 
             let content = read_input(cli.input.as_ref())?;
@@ -586,11 +815,9 @@ fn main() -> io::Result<()> {
                 let (anon_value, dets) = anonymizer.anonymize_json_value(&parsed);
 
                 let indent_bytes = b" ".repeat(indent);
-                let formatter =
-                    serde_json::ser::PrettyFormatter::with_indent(&indent_bytes);
+                let formatter = serde_json::ser::PrettyFormatter::with_indent(&indent_bytes);
                 let mut buf = Vec::new();
-                let mut ser =
-                    serde_json::Serializer::with_formatter(&mut buf, formatter);
+                let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
                 anon_value.serialize(&mut ser).unwrap();
                 let json_str = String::from_utf8(buf).unwrap();
 
@@ -612,7 +839,39 @@ fn main() -> io::Result<()> {
                 result
             };
 
-            write_output(cli.output.as_ref(), &final_output)?;
+            if cli.share {
+                let share_md = render_share_markdown(&final_output, &detections, format_name);
+                let mut copy_ok = false;
+                if cli.copy {
+                    match copy_to_clipboard_best_effort(&share_md) {
+                        Ok(_) => {
+                            copy_ok = true;
+                            eprintln!("Copied share snippet to clipboard.");
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: could not copy to clipboard: {e}");
+                        }
+                    }
+                }
+
+                write_output(cli.output.as_ref(), &share_md)?;
+
+                let (unique_count, by_type) = summarize_detections(&detections);
+                let props = json!({
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "format": format_name,
+                    "detections_unique": unique_count,
+                    "entity_types": by_type.len(),
+                    "copy_requested": cli.copy,
+                    "copy_succeeded": copy_ok,
+                });
+                append_share_event("share_generated", props.clone());
+                if copy_ok {
+                    append_share_event("share_copied", props);
+                }
+            } else {
+                write_output(cli.output.as_ref(), &final_output)?;
+            }
 
             // Save mapping file (contains original PII — restrict permissions)
             let mapping_path = cli.mapping.unwrap_or_else(default_mapping_path);
@@ -732,12 +991,57 @@ mod tests {
     }
 
     #[test]
+    fn test_render_share_markdown_includes_code_fence_and_summary() {
+        let dets = vec![
+            Detection {
+                entity_type: "EMAIL_ADDRESS",
+                original: "john@example.com".to_string(),
+                start: 0,
+                end: 1,
+                score: 0.9,
+            },
+            // duplicate (should be deduped in summary)
+            Detection {
+                entity_type: "EMAIL_ADDRESS",
+                original: "john@example.com".to_string(),
+                start: 2,
+                end: 3,
+                score: 0.9,
+            },
+            Detection {
+                entity_type: "IP_ADDRESS",
+                original: "127.0.0.1".to_string(),
+                start: 4,
+                end: 5,
+                score: 0.9,
+            },
+        ];
+
+        let md = render_share_markdown("{\"email\":\"[EMAIL_ADDRESS_1]\"}\n", &dets, "json");
+        assert!(md.contains("Anonymized with `anon`."));
+        assert!(md.contains("Detected 2 unique entities across 2 types"));
+        assert!(md.contains("```json"));
+        assert!(md.contains("{\"email\":\"[EMAIL_ADDRESS_1]\"}"));
+        assert!(md.trim_end().ends_with("```"));
+    }
+
+    #[test]
+    fn test_choose_markdown_fence_handles_backticks_in_content() {
+        let content = "line1\n```\nline3\n";
+        let fence = choose_markdown_fence(content);
+        assert!(fence.len() >= 4);
+    }
+
+    #[test]
     fn test_default_session_dir_has_random_suffix() {
         // Simulate what the proxy command does: generate a random session dir name
         let suffix = anon::mapping::crypto_random_hex(8);
         let dir = std::env::temp_dir().join(format!("anon-proxy-{suffix}"));
         let name = dir.file_name().unwrap().to_str().unwrap();
-        assert!(name.starts_with("anon-proxy-"), "dir name should start with anon-proxy-");
+        assert!(
+            name.starts_with("anon-proxy-"),
+            "dir name should start with anon-proxy-"
+        );
         // 8 bytes = 16 hex chars
         let hex_part = &name["anon-proxy-".len()..];
         assert_eq!(hex_part.len(), 16, "random suffix should be 16 hex chars");
@@ -752,7 +1056,10 @@ mod tests {
                 format!("anon-proxy-{suffix}")
             })
             .collect();
-        assert!(dirs.len() >= 48, "50 generated dirs should be nearly all unique");
+        assert!(
+            dirs.len() >= 48,
+            "50 generated dirs should be nearly all unique"
+        );
     }
 
     #[cfg(unix)]
@@ -789,7 +1096,11 @@ mod tests {
         write_mapping_file(&path, "secret PII").unwrap();
 
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "mapping file should be owner-only (0o600), got {:o}", mode);
+        assert_eq!(
+            mode, 0o600,
+            "mapping file should be owner-only (0o600), got {:o}",
+            mode
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

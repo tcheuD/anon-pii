@@ -4,6 +4,47 @@
 
 Anonymizing reverse proxy that sits between AI coding tools and the Anthropic API. PII is stripped from outgoing prompts and restored in incoming responses — including SSE streams.
 
+## Request / response flow
+
+```mermaid
+sequenceDiagram
+    participant C as Claude / client
+    participant P as anon proxy
+    participant A as Anthropic API
+    participant F as mapping.json
+
+    C->>P: POST /v1/messages (JSON, optional stream=true)
+    P->>P: Parse + anonymize schema fields
+    P->>A: Forward allowlisted headers + anonymized body
+    A-->>P: Response (JSON or SSE)
+
+    alt Non-streaming JSON
+        P->>P: Restore bracketed tokens in content[].text
+    else Streaming SSE
+        loop For each SSE delta chunk
+            P->>P: TokenBuffer rebuilds split [TOKEN_...]
+            P->>P: Restore bracketed tokens safely
+        end
+    end
+
+    P->>F: Dump mapping (best effort)
+    P-->>C: Restored response
+```
+
+## Safety controls
+
+```mermaid
+flowchart TD
+    A[Incoming request] --> B{Host header valid?}
+    B -->|No| X[403 Forbidden]
+    B -->|Yes| C{Path starts with /v1/?}
+    C -->|No| Y[403 Forbidden]
+    C -->|Yes| D[Body size limit: 10MB]
+    D --> E[Header allowlist forwarding]
+    E --> F[127.0.0.1 bind only]
+    F --> G[Token restore uses bracketed mode]
+```
+
 ## Start the proxy
 
 ```bash

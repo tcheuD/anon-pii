@@ -233,7 +233,10 @@ async fn handle_streaming(
 
                 // Guard against unbounded buffer growth from upstream
                 if utf8_buf.len() > MAX_SSE_BUFFER_SIZE {
-                    eprintln!("Warning: SSE utf8_buf exceeded {} bytes, truncating", MAX_SSE_BUFFER_SIZE);
+                    eprintln!(
+                        "Warning: SSE utf8_buf exceeded {} bytes, truncating",
+                        MAX_SSE_BUFFER_SIZE
+                    );
                     utf8_buf.clear();
                     line_buf.clear();
                     return Ok::<_, reqwest::Error>(Bytes::new());
@@ -271,7 +274,10 @@ async fn handle_streaming(
 
                 // Guard line_buf growth
                 if line_buf.len() > MAX_SSE_BUFFER_SIZE {
-                    eprintln!("Warning: SSE line_buf exceeded {} bytes, flushing", MAX_SSE_BUFFER_SIZE);
+                    eprintln!(
+                        "Warning: SSE line_buf exceeded {} bytes, flushing",
+                        MAX_SSE_BUFFER_SIZE
+                    );
                     line_buf.clear();
                 }
 
@@ -286,9 +292,8 @@ async fn handle_streaming(
     // Wrap stream with a total duration timeout to prevent indefinite connections.
     // When the deadline expires, the stream ends cleanly.
     let deadline = tokio::time::Instant::now() + SSE_STREAM_TIMEOUT;
-    let timed_stream = processed_stream.take_while(move |_| {
-        std::future::ready(tokio::time::Instant::now() < deadline)
-    });
+    let timed_stream = processed_stream
+        .take_while(move |_| std::future::ready(tokio::time::Instant::now() < deadline));
 
     let body = Body::from_stream(timed_stream);
 
@@ -358,10 +363,7 @@ const ALLOWED_PASSTHROUGH_PREFIXES: &[&str] = &["/v1/"];
 /// Passthrough handler for any non-/v1/messages paths.
 /// Forwards the request to known Anthropic API paths without anonymization.
 /// Rejects requests to unrecognized paths to prevent SSRF.
-pub async fn passthrough(
-    State(state): State<Arc<ProxyState>>,
-    req: Request<Body>,
-) -> Response {
+pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body>) -> Response {
     let method = req.method().clone();
     let path = req
         .uri()
@@ -371,7 +373,11 @@ pub async fn passthrough(
 
     // Reject path traversal attempts
     if path.contains("..") {
-        return (StatusCode::BAD_REQUEST, "Bad request: path traversal not allowed").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "Bad request: path traversal not allowed",
+        )
+            .into_response();
     }
 
     // Reject paths that don't match known API prefixes
@@ -415,10 +421,7 @@ pub async fn passthrough(
 
     let status = upstream_resp.status();
     let resp_headers = upstream_resp.headers().clone();
-    let resp_body = upstream_resp
-        .bytes()
-        .await
-        .unwrap_or_default();
+    let resp_body = upstream_resp.bytes().await.unwrap_or_default();
 
     let mut response = Response::builder().status(status.as_u16());
     for (name, value) in resp_headers.iter() {
@@ -486,10 +489,22 @@ mod tests {
         assert_eq!(fwd_headers.get("anthropic-version").unwrap(), "2024-01-01");
 
         // Sensitive headers are absent
-        assert!(fwd_headers.get("cookie").is_none(), "cookie must be dropped");
-        assert!(fwd_headers.get("x-forwarded-for").is_none(), "x-forwarded-for must be dropped");
-        assert!(fwd_headers.get("proxy-authorization").is_none(), "proxy-authorization must be dropped");
-        assert!(fwd_headers.get("referer").is_none(), "referer must be dropped");
+        assert!(
+            fwd_headers.get("cookie").is_none(),
+            "cookie must be dropped"
+        );
+        assert!(
+            fwd_headers.get("x-forwarded-for").is_none(),
+            "x-forwarded-for must be dropped"
+        );
+        assert!(
+            fwd_headers.get("proxy-authorization").is_none(),
+            "proxy-authorization must be dropped"
+        );
+        assert!(
+            fwd_headers.get("referer").is_none(),
+            "referer must be dropped"
+        );
     }
 
     #[tokio::test]
@@ -513,13 +528,22 @@ mod tests {
 
         let body = to_bytes(resp.into_body(), 1024).await.unwrap();
         let text = String::from_utf8_lossy(&body);
-        assert!(text.contains("byte limit"), "Response should mention the limit: {text}");
+        assert!(
+            text.contains("byte limit"),
+            "Response should mention the limit: {text}"
+        );
     }
 
     #[test]
     fn test_sse_constants_are_bounded() {
-        assert!(SSE_STREAM_TIMEOUT.as_secs() <= 900, "SSE timeout should not exceed 15 minutes");
-        assert!(MAX_SSE_BUFFER_SIZE <= 10 * 1024 * 1024, "SSE buffer limit should not exceed 10MB");
+        assert!(
+            SSE_STREAM_TIMEOUT.as_secs() <= 900,
+            "SSE timeout should not exceed 15 minutes"
+        );
+        assert!(
+            MAX_SSE_BUFFER_SIZE <= 10 * 1024 * 1024,
+            "SSE buffer limit should not exceed 10MB"
+        );
     }
 
     #[tokio::test]
@@ -541,7 +565,10 @@ mod tests {
 
         let body = to_bytes(resp.into_body(), 1024).await.unwrap();
         let text = String::from_utf8_lossy(&body);
-        assert!(text.contains("path traversal"), "Response should mention path traversal: {text}");
+        assert!(
+            text.contains("path traversal"),
+            "Response should mention path traversal: {text}"
+        );
     }
 
     #[tokio::test]

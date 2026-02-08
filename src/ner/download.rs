@@ -52,7 +52,11 @@ pub fn download_model(config: &NerConfig) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-fn download_file(url: &str, dest: &Path, expected_sha256: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn download_file(
+    url: &str,
+    dest: &Path,
+    expected_sha256: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let resp = ureq::get(url).call()?;
 
     let status = resp.status();
@@ -65,7 +69,7 @@ fn download_file(url: &str, dest: &Path, expected_sha256: &str) -> Result<(), Bo
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let mut file = fs::File::create(&tmp)?;
         let mut hasher = Sha256::new();
-        let mut reader = resp.into_reader();
+        let mut reader = resp.into_body();
         let mut buf = [0u8; 65536];
         loop {
             let n = std::io::Read::read(&mut reader, &mut buf)?;
@@ -81,7 +85,8 @@ fn download_file(url: &str, dest: &Path, expected_sha256: &str) -> Result<(), Bo
         if actual_hash != expected_sha256 {
             return Err(format!(
                 "SHA-256 mismatch for {url}: expected {expected_sha256}, got {actual_hash}"
-            ).into());
+            )
+            .into());
         }
         Ok(())
     })();

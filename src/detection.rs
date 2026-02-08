@@ -3,11 +3,11 @@ use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::mapping::Mapping;
-use crate::patterns::{
-    CONTEXT_SCORE_BOOST, CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS, luhn_check,
-    valid_card_prefix,
-};
 use crate::ner::{NerDetector, PERSON_BLOCKLIST};
+use crate::patterns::{
+    iban_mod97, luhn_check, valid_card_prefix, valid_mac, valid_us_ssn, CONTEXT_SCORE_BOOST,
+    CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS,
+};
 
 /// Strip Unicode diacritics: "Gaël" → "Gael", "René" → "Rene".
 /// Uses NFD decomposition and removes combining marks.
@@ -111,11 +111,9 @@ fn decode_percent_encoding(input: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '%' {
             let remaining: String = chars.as_str().chars().take(2).collect();
-            if remaining.len() == 2
-                && remaining.chars().all(|h| h.is_ascii_hexdigit())
-            {
-                let val = (hex_val(remaining.as_bytes()[0]) << 4)
-                    | hex_val(remaining.as_bytes()[1]);
+            if remaining.len() == 2 && remaining.chars().all(|h| h.is_ascii_hexdigit()) {
+                let val =
+                    (hex_val(remaining.as_bytes()[0]) << 4) | hex_val(remaining.as_bytes()[1]);
                 if val < 0x80 {
                     result.push(val as char);
                     chars.nth(1); // skip the two hex chars
@@ -212,14 +210,15 @@ fn is_name_like_word(word: &str) -> bool {
         return false;
     }
     // ALL-CAPS: every char is uppercase, hyphen, or apostrophe
-    let all_upper = word.chars().all(|c| c.is_uppercase() || c == '-' || c == '\'');
+    let all_upper = word
+        .chars()
+        .all(|c| c.is_uppercase() || c == '-' || c == '\'');
     if all_upper {
         return true;
     }
     // Title-case: first char uppercase, rest are lowercase/hyphen/apostrophe
     // (with uppercase allowed after hyphen for compound names like "Le-Goff")
-    let rest_valid = chars.all(|c| c.is_lowercase() || c == '-' || c == '\'');
-    rest_valid
+    chars.all(|c| c.is_lowercase() || c == '-' || c == '\'')
 }
 
 /// Extend a PERSON span to include following name-like words (ALL-CAPS or Title-case).
@@ -235,7 +234,9 @@ fn extend_person_span(text: &str, span_text: &str, span_end: usize) -> (String, 
     for word in same_line.split_whitespace().take(2) {
         let trimmed = word.trim_end_matches(|c: char| c.is_ascii_punctuation());
         if is_name_like_word(trimmed)
-            && !PERSON_BLOCKLIST.iter().any(|&b| b.eq_ignore_ascii_case(trimmed))
+            && !PERSON_BLOCKLIST
+                .iter()
+                .any(|&b| b.eq_ignore_ascii_case(trimmed))
             && !CREW_CODE_BLOCKLIST.contains(&trimmed)
         {
             // Find the actual position of this word in the remaining text
@@ -371,7 +372,13 @@ impl Anonymizer {
         // Accent-insensitive pass (only if stripping changes the name)
         let stripped_name = strip_diacritics(name);
         if stripped_name != name {
-            Self::find_name_in_stripped_text(text, stripped_text, &stripped_name, offset_map, detections);
+            Self::find_name_in_stripped_text(
+                text,
+                stripped_text,
+                &stripped_name,
+                offset_map,
+                detections,
+            );
         }
     }
 
@@ -381,10 +388,10 @@ impl Anonymizer {
             let abs_pos = search_from + pos;
             let abs_end = abs_pos + search.len();
 
-            let at_word_start = abs_pos == 0
-                || !text[..abs_pos].chars().last().unwrap().is_alphanumeric();
-            let at_word_end = abs_end >= text.len()
-                || !text[abs_end..].chars().next().unwrap().is_alphanumeric();
+            let at_word_start =
+                abs_pos == 0 || !text[..abs_pos].chars().last().unwrap().is_alphanumeric();
+            let at_word_end =
+                abs_end >= text.len() || !text[abs_end..].chars().next().unwrap().is_alphanumeric();
 
             if at_word_start && at_word_end {
                 let already_covered = detections
@@ -423,9 +430,17 @@ impl Anonymizer {
 
             if let (Some(abs_pos), Some(abs_end)) = (orig_start, orig_end) {
                 let at_word_start = abs_pos == 0
-                    || !original_text[..abs_pos].chars().last().unwrap().is_alphanumeric();
+                    || !original_text[..abs_pos]
+                        .chars()
+                        .last()
+                        .unwrap()
+                        .is_alphanumeric();
                 let at_word_end = abs_end >= original_text.len()
-                    || !original_text[abs_end..].chars().next().unwrap().is_alphanumeric();
+                    || !original_text[abs_end..]
+                        .chars()
+                        .next()
+                        .unwrap()
+                        .is_alphanumeric();
 
                 if at_word_start && at_word_end {
                     let already_covered = detections
@@ -512,13 +527,23 @@ impl Anonymizer {
                         continue;
                     }
                 }
+                if pat.entity_type == "IBAN_CODE" && !iban_mod97(mat.as_str()) {
+                    continue;
+                }
+                if pat.entity_type == "MAC_ADDRESS" && !valid_mac(mat.as_str()) {
+                    continue;
+                }
+                if pat.entity_type == "US_SSN" && !valid_us_ssn(mat.as_str()) {
+                    continue;
+                }
 
                 // Compute detection score with optional context boost
-                let detection_score = if !pat.context_required && !pat.context_keywords.is_empty() && has_ctx {
-                    (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
-                } else {
-                    pat.score
-                };
+                let detection_score =
+                    if !pat.context_required && !pat.context_keywords.is_empty() && has_ctx {
+                        (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
+                    } else {
+                        pat.score
+                    };
 
                 // Per-detection threshold check (for boost patterns without context)
                 if detection_score < self.threshold {
@@ -570,10 +595,17 @@ impl Anonymizer {
 
                     let matched = mat.as_str();
 
-                    if pat.entity_type == "CREDIT_CARD" {
-                        if !luhn_check(matched) || !valid_card_prefix(matched) {
-                            continue;
-                        }
+                    if pat.entity_type == "CREDIT_CARD" && (!luhn_check(matched) || !valid_card_prefix(matched)) {
+                        continue;
+                    }
+                    if pat.entity_type == "IBAN_CODE" && !iban_mod97(matched) {
+                        continue;
+                    }
+                    if pat.entity_type == "MAC_ADDRESS" && !valid_mac(matched) {
+                        continue;
+                    }
+                    if pat.entity_type == "US_SSN" && !valid_us_ssn(matched) {
+                        continue;
                     }
 
                     let has_ctx = if !pat.context_keywords.is_empty() {
@@ -584,11 +616,12 @@ impl Anonymizer {
                     if pat.context_required && !pat.context_keywords.is_empty() && !has_ctx {
                         continue;
                     }
-                    let detection_score = if !pat.context_required && !pat.context_keywords.is_empty() && has_ctx {
-                        (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
-                    } else {
-                        pat.score
-                    };
+                    let detection_score =
+                        if !pat.context_required && !pat.context_keywords.is_empty() && has_ctx {
+                            (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
+                        } else {
+                            pat.score
+                        };
                     if detection_score < self.threshold {
                         continue;
                     }
@@ -604,26 +637,35 @@ impl Anonymizer {
             }
         }
 
-        // Inject NER-based PERSON detections
+        // Inject NER-based PERSON and LOCATION detections
         if let Some(ref ner) = self.ner_detector {
             for span in ner.detect_persons(text) {
                 if span.score >= self.threshold {
-                    // Filter out blocklisted words (company names, false positives)
                     let trimmed = span.text.trim();
-                    if PERSON_BLOCKLIST.iter().any(|&blocked| trimmed == blocked) {
-                        continue;
+                    let is_person = span.label == "PERSON" || span.label == "PER";
+                    let is_location = span.label == "LOCATION" || span.label == "LOC";
+
+                    if is_person {
+                        if PERSON_BLOCKLIST.contains(&trimmed) {
+                            continue;
+                        }
+                        let (ext_text, ext_end) = extend_person_span(text, &span.text, span.end);
+                        detections.push(Detection {
+                            entity_type: "PERSON",
+                            original: ext_text,
+                            start: span.start,
+                            end: ext_end,
+                            score: span.score,
+                        });
+                    } else if is_location {
+                        detections.push(Detection {
+                            entity_type: "LOCATION",
+                            original: span.text.clone(),
+                            start: span.start,
+                            end: span.end,
+                            score: span.score,
+                        });
                     }
-                    // Extend span to include adjacent ALL-CAPS words (last names)
-                    // e.g. "Damien" detected → extend to "Damien DUPONT"
-                    let (ext_text, ext_end) =
-                        extend_person_span(text, &span.text, span.end);
-                    detections.push(Detection {
-                        entity_type: "PERSON",
-                        original: ext_text,
-                        start: span.start,
-                        end: ext_end,
-                        score: span.score,
-                    });
                 }
             }
         }
@@ -641,7 +683,9 @@ impl Anonymizer {
                     let name = name_match.as_str();
                     if name.len() >= 2
                         && is_name_like_word(name)
-                        && !PERSON_BLOCKLIST.iter().any(|&b| b.eq_ignore_ascii_case(name))
+                        && !PERSON_BLOCKLIST
+                            .iter()
+                            .any(|&b| b.eq_ignore_ascii_case(name))
                     {
                         let already_covered = detections
                             .iter()
@@ -665,7 +709,10 @@ impl Anonymizer {
         // Uses accent-insensitive matching so "Gael" is caught when "Gaël" was detected.
         {
             let mut name_parts: Vec<String> = Vec::new();
-            for d in detections.iter().filter(|d| d.entity_type == "PERSON" && d.original.contains(' ')) {
+            for d in detections
+                .iter()
+                .filter(|d| d.entity_type == "PERSON" && d.original.contains(' '))
+            {
                 let words: Vec<&str> = d.original.split_whitespace().collect();
                 // First name
                 if let Some(first) = words.first() {
@@ -688,16 +735,27 @@ impl Anonymizer {
             let offset_map = build_byte_offset_map(text);
 
             for name_part in &name_parts {
-                Self::find_bare_name_occurrences(text, name_part, &stripped_text, &offset_map, &mut detections);
+                Self::find_bare_name_occurrences(
+                    text,
+                    name_part,
+                    &stripped_text,
+                    &offset_map,
+                    &mut detections,
+                );
             }
         }
 
         // Sort by position asc, then span length desc, then score desc
         // Matches Python/Presidio overlap resolution: position-first
         detections.sort_by(|a, b| {
-            a.start.cmp(&b.start)
+            a.start
+                .cmp(&b.start)
                 .then_with(|| (b.end - b.start).cmp(&(a.end - a.start)))
-                .then_with(|| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+                .then_with(|| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
         });
 
         // Remove overlapping detections (keep first = longest/highest score)
@@ -734,12 +792,16 @@ impl Anonymizer {
                                     continue;
                                 }
                                 for mat in pat.regex.find_iter(&decoded) {
-                                    if pat.entity_type == "CREDIT_CARD" {
-                                        if !luhn_check(mat.as_str()) || !valid_card_prefix(mat.as_str()) {
+                                    if pat.entity_type == "CREDIT_CARD" && (!luhn_check(mat.as_str())
+                                            || !valid_card_prefix(mat.as_str())) {
                                             continue;
                                         }
+                                    if pat.entity_type == "IBAN_CODE" && !iban_mod97(mat.as_str()) {
+                                        continue;
                                     }
-                                    if pat.entity_type == "CREW_CODE" && CREW_CODE_BLOCKLIST.contains(&mat.as_str()) {
+                                    if pat.entity_type == "CREW_CODE"
+                                        && CREW_CODE_BLOCKLIST.contains(&mat.as_str())
+                                    {
                                         continue;
                                     }
                                     let score = pat.score;
@@ -765,12 +827,7 @@ impl Anonymizer {
         let mut result = text.to_string();
         for det in filtered.iter().rev() {
             let token = self.mapping.add(det.entity_type, &det.original);
-            result = format!(
-                "{}{}{}",
-                &result[..det.start],
-                token,
-                &result[det.end..]
-            );
+            result = format!("{}{}{}", &result[..det.start], token, &result[det.end..]);
         }
 
         filtered.extend(url_inner_detections);
@@ -878,7 +935,10 @@ impl Anonymizer {
                 Value::String(anonymized)
             }
             Value::Array(arr) => {
-                let new_arr: Vec<Value> = arr.iter().map(|v| self.walk_json(v, detections, depth + 1)).collect();
+                let new_arr: Vec<Value> = arr
+                    .iter()
+                    .map(|v| self.walk_json(v, detections, depth + 1))
+                    .collect();
                 Value::Array(new_arr)
             }
             Value::Object(map) => {
@@ -941,6 +1001,86 @@ mod tests {
         assert!(!result.contains("0612345678"));
     }
 
+    // ── International phone number tests ──
+
+    #[test]
+    fn test_intl_phone_us_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("phone: +1 212 555 1234");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "US phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_uk_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("contact tel +44 20 7946 0958");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "UK phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_de_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("telephone +49 30 123456");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "DE phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_no_context_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // No context keyword — should NOT match (context_required)
+        let (_, dets) = a.anonymize_text("value is +1 212 555 1234 here");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "intl phone without context should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_intl_phone_hyphenated() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("mobile: +44-20-7946-0958");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "hyphenated phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_parenthesized_area_code() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("call +1 (212) 555-1234");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "parenthesized area code not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_fr_phone_stays_fr_phone() {
+        // French numbers should still match as FR_PHONE_NUMBER (higher confidence), not generic PHONE_NUMBER
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("call +33 6 12 34 56 78");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
+            "French phone should stay FR_PHONE_NUMBER: {dets:?}"
+        );
+        assert!(result.contains("[FR_PHONE_NUMBER_"));
+    }
+
     #[test]
     fn test_fr_iban() {
         let mut a = Anonymizer::new(0.0);
@@ -952,6 +1092,78 @@ mod tests {
     fn test_fr_iban_compact() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("IBAN: FR7630006000011234567890189");
+        assert!(result.contains("[FR_IBAN_"));
+    }
+
+    // ── Generic IBAN tests ──
+
+    #[test]
+    fn test_iban_german() {
+        let mut a = Anonymizer::new(0.0);
+        // DE89 3704 0044 0532 0130 00 — valid mod-97
+        let (result, dets) = a.anonymize_text("iban DE89 3704 0044 0532 0130 00");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "German IBAN not detected: {dets:?}"
+        );
+        assert!(result.contains("[IBAN_CODE_"));
+    }
+
+    #[test]
+    fn test_iban_british() {
+        let mut a = Anonymizer::new(0.0);
+        // GB29 NWBK 6016 1331 9268 19 — valid mod-97
+        let (result, dets) = a.anonymize_text("account GB29NWBK60161331926819");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "British IBAN not detected: {dets:?}"
+        );
+        assert!(result.contains("[IBAN_CODE_"));
+    }
+
+    #[test]
+    fn test_iban_spanish() {
+        let mut a = Anonymizer::new(0.0);
+        // ES91 2100 0418 4502 0005 1332 — valid mod-97
+        let (result, dets) = a.anonymize_text("virement ES91 2100 0418 4502 0005 1332");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "Spanish IBAN not detected: {dets:?}"
+        );
+        assert!(result.contains("[IBAN_CODE_"));
+    }
+
+    #[test]
+    fn test_iban_invalid_checksum_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // DE00 3704 0044 0532 0130 00 — invalid check digits
+        let (_, dets) = a.anonymize_text("iban DE00 3704 0044 0532 0130 00");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "IBAN with invalid checksum should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_iban_context_required() {
+        let mut a = Anonymizer::new(0.0);
+        // Valid IBAN but no context keyword — should be rejected
+        let (_, dets) = a.anonymize_text("code DE89370400440532013000 here");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "IBAN without context should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_iban_fr_stays_fr_iban() {
+        // French IBANs should still be detected as FR_IBAN (higher confidence)
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("IBAN: FR76 1234 5678 9012 3456 7890 123");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_IBAN"),
+            "French IBAN should stay FR_IBAN: {dets:?}"
+        );
         assert!(result.contains("[FR_IBAN_"));
     }
 
@@ -984,6 +1196,239 @@ mod tests {
         assert!(!result.contains("[FR_SSN_"));
     }
 
+    // ── MAC address tests ──
+
+    #[test]
+    fn test_mac_address_colon() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("device mac 00:1A:2B:3C:4D:5E");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "colon MAC not detected: {dets:?}"
+        );
+        assert!(result.contains("[MAC_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_mac_address_hyphen() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("mac address 00-1A-2B-3C-4D-5E");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "hyphen MAC not detected: {dets:?}"
+        );
+        assert!(result.contains("[MAC_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_mac_address_cisco_dot() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("interface mac 001a.2b3c.4d5e");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "Cisco dot MAC not detected: {dets:?}"
+        );
+        assert!(result.contains("[MAC_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_mac_address_broadcast_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("mac ff:ff:ff:ff:ff:ff");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "broadcast MAC should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_mac_address_null_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("mac 00:00:00:00:00:00");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "null MAC should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_mac_address_lowercase() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("device mac aa:bb:cc:dd:ee:11");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "lowercase MAC not detected: {dets:?}"
+        );
+        assert!(result.contains("[MAC_ADDRESS_"));
+    }
+
+    // ── DATE_TIME tests ──
+
+    #[test]
+    fn test_date_iso8601() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("created on 2024-01-15");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "ISO date not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_iso8601_with_time() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("timestamp 2024-01-15T14:30:00Z");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "ISO datetime not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_french_format() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("date de naissance 15/01/1990");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "French date not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_french_format_no_context_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // dd/mm/yyyy without context — ambiguous, could be a path or version
+        let (_, dets) = a.anonymize_text("value 15/01/1990 here");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "French date without context should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_date_written_french() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("le 15 janvier 2024");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "written French date not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_written_english() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("born January 15, 2024");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "written English date not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_does_not_match_version_numbers() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("version 3.14.159");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "version numbers should not be dates: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_date_does_not_match_ip() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("server at 192.168.1.100");
+        // IP should be detected as IP, not as a date
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "IP addresses should not be dates: {dets:?}"
+        );
+    }
+
+    // ── US_SSN tests ──
+
+    #[test]
+    fn test_us_ssn_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("SSN: 123-45-6789");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "US SSN not detected: {dets:?}"
+        );
+        assert!(result.contains("[US_SSN_"));
+    }
+
+    #[test]
+    fn test_us_ssn_spaced() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("social security 123 45 6789");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "spaced US SSN not detected: {dets:?}"
+        );
+        assert!(result.contains("[US_SSN_"));
+    }
+
+    #[test]
+    fn test_us_ssn_no_context_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("number 123-45-6789 value");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "US SSN without context should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_invalid_prefix_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // 000, 666, and 9xx prefixes are invalid
+        let (_, dets) = a.anonymize_text("SSN: 000-45-6789");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "US SSN with 000 prefix should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_all_zeros_group_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("SSN: 123-00-6789");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "US SSN with 00 middle group should be rejected: {dets:?}"
+        );
+    }
+
+    // ── MEDICAL_LICENSE tests ──
+
+    #[test]
+    fn test_medical_license_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("medical license ME12345678");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MEDICAL_LICENSE"),
+            "medical license not detected: {dets:?}"
+        );
+        assert!(result.contains("[MEDICAL_LICENSE_"));
+    }
+
+    #[test]
+    fn test_medical_license_no_context_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("code ME12345678 here");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "MEDICAL_LICENSE"),
+            "medical license without context should be rejected: {dets:?}"
+        );
+    }
+
     #[test]
     fn test_fr_passport_with_context() {
         let mut a = Anonymizer::new(0.0);
@@ -1010,7 +1455,9 @@ mod tests {
     fn test_aircraft_us_with_context() {
         let mut a = Anonymizer::new(0.0);
         let (result, dets) = a.anonymize_text("aircraft N12345 ready");
-        assert!(dets.iter().any(|d| d.entity_type == "AIRCRAFT_REGISTRATION"));
+        assert!(dets
+            .iter()
+            .any(|d| d.entity_type == "AIRCRAFT_REGISTRATION"));
         assert!(result.contains("[AIRCRAFT_REGISTRATION_"));
     }
 
@@ -1041,13 +1488,93 @@ mod tests {
     fn test_crew_code_blocklist() {
         let mut a = Anonymizer::new(0.0);
         let (_, dets) = a.anonymize_text("crew member THE");
-        assert!(!dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "THE"));
+        assert!(!dets
+            .iter()
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "THE"));
     }
 
     #[test]
     fn test_ip() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("server at 192.168.1.100");
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    // ── IPv6 tests ──
+
+    #[test]
+    fn test_ipv6_full() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("host 2001:0db8:85a3:0000:0000:8a2e:0370:7334 down");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "full IPv6 not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_collapsed() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("server at 2001:db8::1");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "collapsed IPv6 not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_loopback() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("localhost is ::1");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "loopback ::1 not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_link_local() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("interface fe80::1%eth0");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "link-local IPv6 not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_mapped_v4() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("mapped ::ffff:192.168.1.1");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "IPv4-mapped IPv6 not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_does_not_match_random_hex() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("token abcd:ef01:2345");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "short hex groups should not be IPv6: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_ipv4_still_works() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("server at 10.0.0.1");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "IPv4 should still work: {dets:?}"
+        );
         assert!(result.contains("[IP_ADDRESS_"));
     }
 
@@ -1079,7 +1606,10 @@ mod tests {
     fn test_consistency() {
         let mut a = Anonymizer::new(0.0);
         let (result, _) = a.anonymize_text("john@example.com and john@example.com again");
-        let token = a.mapping.mappings.keys()
+        let token = a
+            .mapping
+            .mappings
+            .keys()
             .find(|k| k.starts_with("[EMAIL_ADDRESS_"))
             .unwrap()
             .clone();
@@ -1101,8 +1631,14 @@ mod tests {
         assert_eq!(dets.len(), 2);
         assert_eq!(result["count"], 42);
         assert_eq!(result["active"], true);
-        assert!(result["email"].as_str().unwrap().contains("[EMAIL_ADDRESS_"));
-        assert!(result["nested"]["phone"].as_str().unwrap().contains("[FR_PHONE_NUMBER_"));
+        assert!(result["email"]
+            .as_str()
+            .unwrap()
+            .contains("[EMAIL_ADDRESS_"));
+        assert!(result["nested"]["phone"]
+            .as_str()
+            .unwrap()
+            .contains("[FR_PHONE_NUMBER_"));
     }
 
     #[test]
@@ -1119,13 +1655,19 @@ mod tests {
         // Without context keyword: base score
         let mut a = Anonymizer::new(0.0);
         let (_, dets) = a.anonymize_text("call 06 12 34 56 78");
-        let phone_det = dets.iter().find(|d| d.entity_type == "FR_PHONE_NUMBER").unwrap();
+        let phone_det = dets
+            .iter()
+            .find(|d| d.entity_type == "FR_PHONE_NUMBER")
+            .unwrap();
         assert!((phone_det.score - 0.7).abs() < 0.01);
 
         // With context keyword "telephone": boosted score
         let mut a2 = Anonymizer::new(0.0);
         let (_, dets2) = a2.anonymize_text("telephone 06 12 34 56 78");
-        let phone_det2 = dets2.iter().find(|d| d.entity_type == "FR_PHONE_NUMBER").unwrap();
+        let phone_det2 = dets2
+            .iter()
+            .find(|d| d.entity_type == "FR_PHONE_NUMBER")
+            .unwrap();
         assert!((phone_det2.score - 0.85).abs() < 0.01); // 0.7 + 0.15 boost
     }
 
@@ -1224,7 +1766,10 @@ mod tests {
         let (result, dets) = a.anonymize_json_value(&value);
 
         assert_eq!(dets.len(), 1);
-        assert!(result["a"]["b"]["c"].as_str().unwrap().starts_with("[EMAIL_ADDRESS_"));
+        assert!(result["a"]["b"]["c"]
+            .as_str()
+            .unwrap()
+            .starts_with("[EMAIL_ADDRESS_"));
     }
 
     #[test]
@@ -1301,8 +1846,16 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         let csv = "id,email,name\n1,user@test.com,Alice\n2,admin@test.com,Bob";
         let (_result, dets) = a.anonymize_csv(csv);
-        assert_eq!(dets.iter().filter(|d| d.entity_type == "EMAIL_ADDRESS").count(), 2);
-        let email_tokens: Vec<_> = a.mapping.mappings.keys()
+        assert_eq!(
+            dets.iter()
+                .filter(|d| d.entity_type == "EMAIL_ADDRESS")
+                .count(),
+            2
+        );
+        let email_tokens: Vec<_> = a
+            .mapping
+            .mappings
+            .keys()
             .filter(|k| k.starts_with("[EMAIL_ADDRESS_"))
             .collect();
         assert_eq!(email_tokens.len(), 2);
@@ -1346,7 +1899,10 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         // Tech abbreviations near crew context should still be blocked
         let (_, dets) = a.anonymize_text("crew member handles URL API SQL requests on duty");
-        let crew_dets: Vec<_> = dets.iter().filter(|d| d.entity_type == "CREW_CODE").collect();
+        let crew_dets: Vec<_> = dets
+            .iter()
+            .filter(|d| d.entity_type == "CREW_CODE")
+            .collect();
         for d in &crew_dets {
             assert!(
                 !["URL", "API", "SQL"].contains(&d.original.as_str()),
@@ -1361,15 +1917,21 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         // Exact cases from stress test that produced false positives
         let (_, dets) = a.anonymize_text("sensitive tokens in a URL string");
-        assert!(!dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "URL"));
+        assert!(!dets
+            .iter()
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "URL"));
 
         let mut a2 = Anonymizer::new(0.0);
         let (_, dets2) = a2.anonymize_text("PII split across lines");
-        assert!(!dets2.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "PII"));
+        assert!(!dets2
+            .iter()
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "PII"));
 
         let mut a3 = Anonymizer::new(0.0);
         let (_, dets3) = a3.anonymize_text("Auth-Token=XYZ-123");
-        assert!(!dets3.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "XYZ"));
+        assert!(!dets3
+            .iter()
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "XYZ"));
     }
 
     #[test]
@@ -1377,7 +1939,8 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         // Airport codes near crew context should be blocked
         let (_, dets) = a.anonymize_text("crew roster: departure CDG arrival ORY duty JFK");
-        let crew_originals: Vec<&str> = dets.iter()
+        let crew_originals: Vec<&str> = dets
+            .iter()
             .filter(|d| d.entity_type == "CREW_CODE")
             .map(|d| d.original.as_str())
             .collect();
@@ -1395,10 +1958,16 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         // Real crew codes with context should still work
         let (result, dets) = a.anonymize_text("pilote JDU en service avec copilote PLR");
-        assert!(dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "JDU"),
-            "Real crew code JDU should still be detected");
-        assert!(dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "PLR"),
-            "Real crew code PLR should still be detected");
+        assert!(
+            dets.iter()
+                .any(|d| d.entity_type == "CREW_CODE" && d.original == "JDU"),
+            "Real crew code JDU should still be detected"
+        );
+        assert!(
+            dets.iter()
+                .any(|d| d.entity_type == "CREW_CODE" && d.original == "PLR"),
+            "Real crew code PLR should still be detected"
+        );
         assert!(result.contains("[CREW_CODE_"));
     }
 
@@ -1409,7 +1978,8 @@ mod tests {
         let (result, dets) = a.anonymize_text(r"client\u0040company.com requested refund");
         assert!(
             dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
-            "Email with \\u0040 should be detected: {:?}", dets
+            "Email with \\u0040 should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[EMAIL_ADDRESS_"));
     }
@@ -1421,7 +1991,8 @@ mod tests {
         let (result, dets) = a.anonymize_text(r"user\u0040domain\u002Ecom");
         assert!(
             dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
-            "Email with multiple unicode escapes should be detected: {:?}", dets
+            "Email with multiple unicode escapes should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[EMAIL_ADDRESS_"));
     }
@@ -1467,7 +2038,8 @@ mod tests {
         let (result, dets) = a.anonymize_text("email=j.smith%40provider.net&loyalty_id=9928374");
         assert!(
             dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
-            "Email with %40 should be detected: {:?}", dets
+            "Email with %40 should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[EMAIL_ADDRESS_"));
     }
@@ -1478,7 +2050,8 @@ mod tests {
         let (result, dets) = a.anonymize_text("tel=%2B33612345678");
         assert!(
             dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
-            "Phone with %2B should be detected: {:?}", dets
+            "Phone with %2B should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[FR_PHONE_NUMBER_"));
     }
@@ -1488,13 +2061,21 @@ mod tests {
         let mut a = Anonymizer::new(0.0);
         // Plain email (no encoding) should still work
         let (result, dets) = a.anonymize_text("email=j.smith@provider.net");
-        assert_eq!(dets.iter().filter(|d| d.entity_type == "EMAIL_ADDRESS").count(), 1);
+        assert_eq!(
+            dets.iter()
+                .filter(|d| d.entity_type == "EMAIL_ADDRESS")
+                .count(),
+            1
+        );
         assert!(result.contains("[EMAIL_ADDRESS_"));
     }
 
     #[test]
     fn test_decode_percent_encoding_basic() {
-        assert_eq!(decode_percent_encoding("j.smith%40provider.net"), "j.smith@provider.net");
+        assert_eq!(
+            decode_percent_encoding("j.smith%40provider.net"),
+            "j.smith@provider.net"
+        );
         assert_eq!(decode_percent_encoding("%2B33"), "+33");
         assert_eq!(decode_percent_encoding("hello%20world"), "hello world");
         assert_eq!(decode_percent_encoding("no encoding"), "no encoding");
@@ -1518,7 +2099,8 @@ mod tests {
         let (result, dets) = a.anonymize_text(&input);
         assert!(
             dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),
-            "JWT with 3 segments should be detected: {:?}", dets
+            "JWT with 3 segments should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[AUTH_TOKEN_"));
     }
@@ -1531,7 +2113,8 @@ mod tests {
         let (result, dets) = a.anonymize_text(input);
         assert!(
             dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),
-            "JWT with 2 segments should be detected: {:?}", dets
+            "JWT with 2 segments should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[AUTH_TOKEN_"));
     }
@@ -1567,10 +2150,15 @@ mod tests {
         assert!(result.contains("[URL_"));
         assert!(!result.contains("example.com"));
         // Both URL and inner EMAIL_ADDRESS should be in detections
-        assert!(dets.iter().any(|d| d.entity_type == "URL"), "URL detection missing");
         assert!(
-            dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS" && d.original == "user@example.com"),
-            "Inner email not reported in detections: {:?}", dets
+            dets.iter().any(|d| d.entity_type == "URL"),
+            "URL detection missing"
+        );
+        assert!(
+            dets.iter()
+                .any(|d| d.entity_type == "EMAIL_ADDRESS" && d.original == "user@example.com"),
+            "Inner email not reported in detections: {:?}",
+            dets
         );
     }
 
@@ -1582,7 +2170,8 @@ mod tests {
         assert!(result.contains("[URL_"));
         assert!(
             dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
-            "Inner phone not reported in detections: {:?}", dets
+            "Inner phone not reported in detections: {:?}",
+            dets
         );
     }
 
@@ -1605,7 +2194,8 @@ mod tests {
         assert_eq!(
             dets.iter().filter(|d| d.entity_type != "URL").count(),
             0,
-            "Should not detect PII in non-PII URL params: {:?}", dets
+            "Should not detect PII in non-PII URL params: {:?}",
+            dets
         );
     }
 
@@ -1613,11 +2203,13 @@ mod tests {
     fn test_multiline_credit_card_detected() {
         let mut a = Anonymizer::new(0.0);
         // 4111111111111111 is valid Visa (passes Luhn), split across newline
-        let input = "Body: User: Alice | CC: 4111\n1111 1111 1111 (Credit card split across newline)";
+        let input =
+            "Body: User: Alice | CC: 4111\n1111 1111 1111 (Credit card split across newline)";
         let (result, dets) = a.anonymize_text(input);
         assert!(
             dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
-            "Credit card split across newline should be detected: {:?}", dets
+            "Credit card split across newline should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[CREDIT_CARD_"));
     }
@@ -1629,7 +2221,8 @@ mod tests {
         let (result, dets) = a.anonymize_text(input);
         assert!(
             dets.iter().any(|d| d.entity_type == "FR_IBAN"),
-            "IBAN split across newline should be detected: {:?}", dets
+            "IBAN split across newline should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[FR_IBAN_"));
     }
@@ -1638,11 +2231,13 @@ mod tests {
     fn test_multiline_credit_card_trailing_space() {
         let mut a = Anonymizer::new(0.0);
         // Trailing space before newline — real-world log wrapping
-        let input = "Body: User: Alice | CC: 4111 \n1111 1111 1111 (Valid Visa split across newline)";
+        let input =
+            "Body: User: Alice | CC: 4111 \n1111 1111 1111 (Valid Visa split across newline)";
         let (result, dets) = a.anonymize_text(input);
         assert!(
             dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
-            "Credit card with trailing space before newline should be detected: {:?}", dets
+            "Credit card with trailing space before newline should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[CREDIT_CARD_"));
     }
@@ -1655,7 +2250,8 @@ mod tests {
         let (result, dets) = a.anonymize_text(input);
         assert!(
             dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
-            "Credit card with indented continuation should be detected: {:?}", dets
+            "Credit card with indented continuation should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[CREDIT_CARD_"));
     }
@@ -1667,7 +2263,8 @@ mod tests {
         let (result, dets) = a.anonymize_text(input);
         assert!(
             dets.iter().any(|d| d.entity_type == "FR_IBAN"),
-            "IBAN with trailing space before newline should be detected: {:?}", dets
+            "IBAN with trailing space before newline should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[FR_IBAN_"));
     }
@@ -1680,7 +2277,8 @@ mod tests {
         let (_, dets) = a.anonymize_text(input);
         assert!(
             !dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
-            "Unrelated numbers on separate lines should not be a credit card: {:?}", dets
+            "Unrelated numbers on separate lines should not be a credit card: {:?}",
+            dets
         );
     }
 
@@ -1695,7 +2293,8 @@ mod tests {
         let (result, dets) = a.anonymize_text(input);
         assert!(
             dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
-            "Credit card in full log payload should be detected: {:?}", dets
+            "Credit card in full log payload should be detected: {:?}",
+            dets
         );
         assert!(result.contains("[CREDIT_CARD_"));
         assert!(!result.contains("4111"));
@@ -1706,15 +2305,24 @@ mod tests {
     #[test]
     fn test_ner_pipeline_person_blocklist() {
         use crate::ner::{MockNerDetector, NerSpan};
-        let mock = MockNerDetector { spans: vec![
-            NerSpan { text: "Amelia".into(), start: 0, end: 6, score: 0.9, label: "PER".into() },
-        ]};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Amelia".into(),
+                start: 0,
+                end: 6,
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
         let mut a = Anonymizer::new(0.0);
         a.set_ner_detector(Box::new(mock));
         let (result, dets) = a.anonymize_text("Amelia said hello");
         assert!(
-            !dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Amelia"),
-            "Blocklisted name 'Amelia' should not be detected as PERSON: {:?}", dets
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "PERSON" && d.original == "Amelia"),
+            "Blocklisted name 'Amelia' should not be detected as PERSON: {:?}",
+            dets
         );
         assert!(result.contains("Amelia"));
     }
@@ -1722,15 +2330,22 @@ mod tests {
     #[test]
     fn test_ner_pipeline_person_detected() {
         use crate::ner::{MockNerDetector, NerSpan};
-        let mock = MockNerDetector { spans: vec![
-            NerSpan { text: "Dupont".into(), start: 12, end: 18, score: 0.9, label: "PER".into() },
-        ]};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Dupont".into(),
+                start: 12,
+                end: 18,
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
         let mut a = Anonymizer::new(0.0);
         a.set_ner_detector(Box::new(mock));
         let (result, dets) = a.anonymize_text("Le pilote M. Dupont a décollé.");
         assert!(
             dets.iter().any(|d| d.entity_type == "PERSON"),
-            "Non-blocklisted name should be detected as PERSON: {:?}", dets
+            "Non-blocklisted name should be detected as PERSON: {:?}",
+            dets
         );
         assert!(result.contains("[PERSON_"));
     }
@@ -1739,15 +2354,23 @@ mod tests {
     fn test_ner_pipeline_span_extension_allcaps() {
         use crate::ner::{MockNerDetector, NerSpan};
         let text = "Damien DUPONT a signé";
-        let mock = MockNerDetector { spans: vec![
-            NerSpan { text: "Damien".into(), start: 0, end: 6, score: 0.9, label: "PER".into() },
-        ]};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Damien".into(),
+                start: 0,
+                end: 6,
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
         let mut a = Anonymizer::new(0.0);
         a.set_ner_detector(Box::new(mock));
         let (result, dets) = a.anonymize_text(text);
         assert!(
-            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("DUPONT")),
-            "Span should extend to ALL-CAPS last name: {:?}", dets
+            dets.iter()
+                .any(|d| d.entity_type == "PERSON" && d.original.contains("DUPONT")),
+            "Span should extend to ALL-CAPS last name: {:?}",
+            dets
         );
         assert!(!result.contains("DUPONT"));
         assert!(!result.contains("Damien"));
@@ -1757,14 +2380,23 @@ mod tests {
     fn test_ner_pipeline_consistency_pass() {
         use crate::ner::{MockNerDetector, NerSpan};
         let text = "Pierre DUPONT a dit bonjour. Plus tard, Pierre a fait signe.";
-        let mock = MockNerDetector { spans: vec![
-            NerSpan { text: "Pierre".into(), start: 0, end: 6, score: 0.9, label: "PER".into() },
-        ]};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Pierre".into(),
+                start: 0,
+                end: 6,
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
         let mut a = Anonymizer::new(0.0);
         a.set_ner_detector(Box::new(mock));
         let (result, _dets) = a.anonymize_text(text);
         assert!(!result.contains("DUPONT"), "Full name should be anonymized");
-        assert!(!result.contains("Pierre"), "Bare first name should be anonymized by consistency pass");
+        assert!(
+            !result.contains("Pierre"),
+            "Bare first name should be anonymized by consistency pass"
+        );
     }
 
     #[test]
@@ -1773,7 +2405,91 @@ mod tests {
         let (_, dets) = a.anonymize_text("Le pilote M. Dupont a décollé.");
         assert!(
             !dets.iter().any(|d| d.entity_type == "PERSON"),
-            "Without NER detector, PERSON should not be detected: {:?}", dets
+            "Without NER detector, PERSON should not be detected: {:?}",
+            dets
+        );
+    }
+
+    // ── LOCATION entity tests (via NER) ──
+
+    #[test]
+    fn test_ner_location_detected() {
+        use crate::ner::{MockNerDetector, NerSpan};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Paris".into(),
+                start: 12,
+                end: 17,
+                score: 0.9,
+                label: "LOCATION".into(),
+            }],
+        };
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, dets) = a.anonymize_text("Departure at Paris CDG terminal");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "LOCATION"),
+            "LOCATION not detected: {dets:?}"
+        );
+        assert!(result.contains("[LOCATION_"));
+    }
+
+    #[test]
+    fn test_ner_location_and_person_together() {
+        use crate::ner::{MockNerDetector, NerSpan};
+        let mock = MockNerDetector {
+            spans: vec![
+                NerSpan {
+                    text: "Dupont".into(),
+                    start: 0,
+                    end: 6,
+                    score: 0.9,
+                    label: "PERSON".into(),
+                },
+                NerSpan {
+                    text: "Lyon".into(),
+                    start: 18,
+                    end: 22,
+                    score: 0.85,
+                    label: "LOCATION".into(),
+                },
+            ],
+        };
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, dets) = a.anonymize_text("Dupont arrived at Lyon airport");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PERSON"),
+            "PERSON not detected: {dets:?}"
+        );
+        assert!(
+            dets.iter().any(|d| d.entity_type == "LOCATION"),
+            "LOCATION not detected: {dets:?}"
+        );
+        assert!(result.contains("[PERSON_"));
+        assert!(result.contains("[LOCATION_"));
+    }
+
+    #[test]
+    fn test_ner_location_no_span_extension() {
+        // LOCATION should NOT get PERSON-style span extension to adjacent ALL-CAPS words
+        use crate::ner::{MockNerDetector, NerSpan};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Paris".into(),
+                start: 0,
+                end: 5,
+                score: 0.9,
+                label: "LOCATION".into(),
+            }],
+        };
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, _dets) = a.anonymize_text("Paris FRANCE is beautiful");
+        // "FRANCE" should NOT be swallowed into the LOCATION span
+        assert!(
+            result.contains("FRANCE"),
+            "LOCATION should not extend to adjacent words"
         );
     }
 
@@ -1788,7 +2504,8 @@ mod tests {
         let (result, dets) = a.anonymize_text("Le pilote M. Dupont a décollé.");
         assert!(
             dets.iter().any(|d| d.entity_type == "PERSON"),
-            "NER-lite should detect PERSON in 'M. Dupont': {:?}", dets
+            "NER-lite should detect PERSON in 'M. Dupont': {:?}",
+            dets
         );
         assert!(result.contains("[PERSON_"));
     }
@@ -1800,7 +2517,8 @@ mod tests {
         let (_, dets) = a.anonymize_text("Le pilote M. Dupont a décollé.");
         assert!(
             !dets.iter().any(|d| d.entity_type == "PERSON"),
-            "Without NER detector, PERSON should not be detected: {:?}", dets
+            "Without NER detector, PERSON should not be detected: {:?}",
+            dets
         );
     }
 
@@ -1810,15 +2528,18 @@ mod tests {
         use crate::ner::heuristic::HeuristicNerDetector;
         let mut a = Anonymizer::new(0.0);
         a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
-        let input = "2024-03-15 [INFO] Passager Philippe Martin a embarqué, email: phil@example.com";
+        let input =
+            "2024-03-15 [INFO] Passager Philippe Martin a embarqué, email: phil@example.com";
         let (result, dets) = a.anonymize_text(input);
         assert!(
             dets.iter().any(|d| d.entity_type == "PERSON"),
-            "PERSON should be detected alongside other PII: {:?}", dets
+            "PERSON should be detected alongside other PII: {:?}",
+            dets
         );
         assert!(
             dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
-            "EMAIL should still be detected with NER active: {:?}", dets
+            "EMAIL should still be detected with NER active: {:?}",
+            dets
         );
         assert!(result.contains("[PERSON_"));
         assert!(result.contains("[EMAIL_ADDRESS_"));
@@ -1889,9 +2610,18 @@ mod tests {
         assert!(!result.contains("BRN"), "BRN should be anonymized");
 
         // Emails should be anonymized
-        assert!(!result.contains("jdupont@example-air.com"), "Email should be anonymized");
-        assert!(!result.contains("mmartinez@example-air.com"), "Email should be anonymized");
-        assert!(!result.contains("bruneau@example-air.com"), "Email should be anonymized");
+        assert!(
+            !result.contains("jdupont@example-air.com"),
+            "Email should be anonymized"
+        );
+        assert!(
+            !result.contains("mmartinez@example-air.com"),
+            "Email should be anonymized"
+        );
+        assert!(
+            !result.contains("bruneau@example-air.com"),
+            "Email should be anonymized"
+        );
     }
 
     #[test]
@@ -1902,7 +2632,9 @@ mod tests {
         let (_, dets) = a.anonymize_text(input);
         // XYZ is in the "Status" column, not "Login" — should NOT match CREW_CODE
         assert!(
-            !dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "XYZ"),
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "CREW_CODE" && d.original == "XYZ"),
             "XYZ under 'Status' column should not be detected as CREW_CODE.\nDetections: {:?}",
             dets
         );
@@ -1917,7 +2649,8 @@ mod tests {
         assert!(
             dets.iter().any(|d| d.entity_type == "CREW_CODE"),
             "Crew codes should be detected under 'Duty' header.\nDetections: {:?}\nResult: {}",
-            dets, result
+            dets,
+            result
         );
         assert!(!result.contains("JDU"), "JDU should be anonymized");
         assert!(!result.contains("MMA"), "MMA should be anonymized");
@@ -1961,7 +2694,9 @@ mod tests {
         let input = "les journées de OFF/Duty/X-D/... sont qualifiées comme absences";
         let (result, dets) = a.anonymize_text(input);
         assert!(
-            !dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "OFF"),
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "CREW_CODE" && d.original == "OFF"),
             "OFF should be blocklisted as CREW_CODE.\nDetections: {:?}",
             dets
         );
@@ -1979,7 +2714,9 @@ mod tests {
         let (result, dets) = a.anonymize_text(input);
         // Amelia should NOT be detected as PERSON
         assert!(
-            !dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("Amelia")),
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "PERSON" && d.original.contains("Amelia")),
             "Amelia should be blocklisted as PERSON.\nDetections: {:?}",
             dets
         );
@@ -1995,9 +2732,11 @@ mod tests {
         let input = "Created by Damien DUPONT 29 Jan 2026";
         let (result, dets) = a.anonymize_text(input);
         assert!(
-            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("DUPONT")),
+            dets.iter()
+                .any(|d| d.entity_type == "PERSON" && d.original.contains("DUPONT")),
             "Damien DUPONT should be detected as PERSON.\nDetections: {:?}\nResult: {}",
-            dets, result
+            dets,
+            result
         );
         assert!(!result.contains("DUPONT"), "DUPONT should be anonymized");
         assert!(!result.contains("Damien"), "Damien should be anonymized");
@@ -2018,7 +2757,8 @@ example-air.com"#;
         let (result, dets) = a.anonymize_text(input);
         // Sylvain Martin should be detected
         assert!(
-            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("Sylvain")),
+            dets.iter()
+                .any(|d| d.entity_type == "PERSON" && d.original.contains("Sylvain")),
             "Sylvain Martin should be detected.\nDetections: {:?}",
             dets
         );
@@ -2068,16 +2808,28 @@ example-air.com"#;
         let (result, dets) = a.anonymize_text(input);
 
         // Full names (first + last) should be anonymized
-        assert!(!result.contains("FONTAINE"), "FONTAINE should be anonymized");
+        assert!(
+            !result.contains("FONTAINE"),
+            "FONTAINE should be anonymized"
+        );
         assert!(!result.contains("DUPONT"), "DUPONT should be anonymized");
         assert!(!result.contains("LEROY"), "LEROY should be anonymized");
         // Bare first names should also be caught by the name consistency pass
         // (they appear as part of full "Firstname LASTNAME" elsewhere in the text).
-        assert!(!result.contains("Gaël"), "Bare 'Gaël' should be anonymized by consistency pass");
-        assert!(!result.contains("Mathilde"), "Bare 'Mathilde' should be anonymized by consistency pass");
+        assert!(
+            !result.contains("Gaël"),
+            "Bare 'Gaël' should be anonymized by consistency pass"
+        );
+        assert!(
+            !result.contains("Mathilde"),
+            "Bare 'Mathilde' should be anonymized by consistency pass"
+        );
 
         // Email and phone should be caught
-        assert!(!result.contains("cbernard@example-air.com"), "Email should be anonymized");
+        assert!(
+            !result.contains("cbernard@example-air.com"),
+            "Email should be anonymized"
+        );
         assert!(
             dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
             "Phone should be detected.\nDetections: {:?}",
@@ -2085,13 +2837,25 @@ example-air.com"#;
         );
 
         // Amelia (company) should NOT be anonymized
-        assert!(result.contains("Amelia"), "Amelia is a company name, not a person");
+        assert!(
+            result.contains("Amelia"),
+            "Amelia is a company name, not a person"
+        );
 
         // Job titles in signature blocks should be anonymized
-        assert!(!result.contains("HR Director"), "HR Director should be anonymized as JOB_TITLE");
-        assert!(!result.contains("DSI / CIO"), "DSI / CIO should be anonymized as JOB_TITLE");
+        assert!(
+            !result.contains("HR Director"),
+            "HR Director should be anonymized as JOB_TITLE"
+        );
+        assert!(
+            !result.contains("DSI / CIO"),
+            "DSI / CIO should be anonymized as JOB_TITLE"
+        );
 
-        assert!(!result.contains("FONTAINE"), "All FONTAINE instances should be anonymized");
+        assert!(
+            !result.contains("FONTAINE"),
+            "All FONTAINE instances should be anonymized"
+        );
     }
 
     #[test]
@@ -2106,7 +2870,10 @@ example-air.com"#;
         let (result, _dets) = a.anonymize_text(input);
 
         assert!(!result.contains("DUPONT"), "Full name should be anonymized");
-        assert!(!result.contains("Pierre"), "Bare first name should be anonymized by consistency pass");
+        assert!(
+            !result.contains("Pierre"),
+            "Bare first name should be anonymized by consistency pass"
+        );
     }
 
     // ── Ticket #35: extend person span to Title-case last names ──
@@ -2117,17 +2884,28 @@ example-air.com"#;
         // include it when it immediately follows a detected first name.
         use crate::ner::{MockNerDetector, NerSpan};
         let text = "Przemysław Kowalski\n13/Jan/26, 22:33\nDear Gaël,";
-        let mock = MockNerDetector { spans: vec![
-            NerSpan { text: "Przemysław".into(), start: 0, end: "Przemysław".len(), score: 0.9, label: "PER".into() },
-        ]};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Przemysław".into(),
+                start: 0,
+                end: "Przemysław".len(),
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
         let mut a = Anonymizer::new(0.0);
         a.set_ner_detector(Box::new(mock));
         let (result, dets) = a.anonymize_text(text);
         assert!(
-            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("Kowalski")),
-            "Span should extend to Title-case last name 'Kowalski': {:?}", dets
+            dets.iter()
+                .any(|d| d.entity_type == "PERSON" && d.original.contains("Kowalski")),
+            "Span should extend to Title-case last name 'Kowalski': {:?}",
+            dets
         );
-        assert!(!result.contains("Kowalski"), "Title-case last name should be anonymized");
+        assert!(
+            !result.contains("Kowalski"),
+            "Title-case last name should be anonymized"
+        );
     }
 
     #[test]
@@ -2141,11 +2919,19 @@ example-air.com"#;
         let input = "Contact: Pierre Durand for details.";
         let (result, dets) = a.anonymize_text(input);
         assert!(
-            dets.iter().any(|d| d.entity_type == "PERSON" && d.original.contains("Durand")),
-            "Pierre Durand should be detected as a full name.\nDetections: {:?}", dets
+            dets.iter()
+                .any(|d| d.entity_type == "PERSON" && d.original.contains("Durand")),
+            "Pierre Durand should be detected as a full name.\nDetections: {:?}",
+            dets
         );
-        assert!(!result.contains("Durand"), "Title-case last name should be anonymized");
-        assert!(!result.contains("Pierre"), "First name should be anonymized");
+        assert!(
+            !result.contains("Durand"),
+            "Title-case last name should be anonymized"
+        );
+        assert!(
+            !result.contains("Pierre"),
+            "First name should be anonymized"
+        );
     }
 
     // ── Ticket #36: accent-insensitive name consistency ──
@@ -2156,13 +2942,22 @@ example-air.com"#;
         use crate::ner::{MockNerDetector, NerSpan};
         let text = "Gaël DUPONT a signé. Dear Gael, merci.";
         let gael_len = "Gaël".len(); // 5 bytes (ë = 2 bytes in UTF-8)
-        let mock = MockNerDetector { spans: vec![
-            NerSpan { text: "Gaël".into(), start: 0, end: gael_len, score: 0.9, label: "PER".into() },
-        ]};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Gaël".into(),
+                start: 0,
+                end: gael_len,
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
         let mut a = Anonymizer::new(0.0);
         a.set_ner_detector(Box::new(mock));
         let (result, _dets) = a.anonymize_text(text);
-        assert!(!result.contains("Gael"), "Bare 'Gael' (no accent) should be anonymized when 'Gaël' was detected");
+        assert!(
+            !result.contains("Gael"),
+            "Bare 'Gael' (no accent) should be anonymized when 'Gaël' was detected"
+        );
     }
 
     #[test]
@@ -2173,7 +2968,10 @@ example-air.com"#;
         a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
         let input = "Gaël DUPONT a signé. Plus tard, Gael a confirmé.";
         let (result, _dets) = a.anonymize_text(input);
-        assert!(!result.contains("Gael"), "Bare 'Gael' (no accent) should be caught by consistency pass");
+        assert!(
+            !result.contains("Gael"),
+            "Bare 'Gael' (no accent) should be caught by consistency pass"
+        );
     }
 
     // ── Ticket #37: last-name consistency pass ──
@@ -2183,13 +2981,22 @@ example-air.com"#;
         // When "Pierre DUPONT" is detected, bare "DUPONT" elsewhere should also be caught.
         use crate::ner::{MockNerDetector, NerSpan};
         let text = "Pierre DUPONT joined. Later, DUPONT confirmed the schedule.";
-        let mock = MockNerDetector { spans: vec![
-            NerSpan { text: "Pierre".into(), start: 0, end: 6, score: 0.9, label: "PER".into() },
-        ]};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Pierre".into(),
+                start: 0,
+                end: 6,
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
         let mut a = Anonymizer::new(0.0);
         a.set_ner_detector(Box::new(mock));
         let (result, _dets) = a.anonymize_text(text);
-        assert!(!result.contains("DUPONT"), "Bare last name 'DUPONT' should be caught by consistency pass");
+        assert!(
+            !result.contains("DUPONT"),
+            "Bare last name 'DUPONT' should be caught by consistency pass"
+        );
     }
 
     #[test]
@@ -2197,13 +3004,22 @@ example-air.com"#;
         // Title-case last name appearing alone after the full name was detected.
         use crate::ner::{MockNerDetector, NerSpan};
         let text = "Przemysław Kowalski joined. Later, Kowalski confirmed.";
-        let mock = MockNerDetector { spans: vec![
-            NerSpan { text: "Przemysław".into(), start: 0, end: "Przemysław".len(), score: 0.9, label: "PER".into() },
-        ]};
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Przemysław".into(),
+                start: 0,
+                end: "Przemysław".len(),
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
         let mut a = Anonymizer::new(0.0);
         a.set_ner_detector(Box::new(mock));
         let (result, _dets) = a.anonymize_text(text);
-        assert!(!result.contains("Kowalski"), "Bare last name 'Kowalski' should be caught by consistency pass");
+        assert!(
+            !result.contains("Kowalski"),
+            "Bare last name 'Kowalski' should be caught by consistency pass"
+        );
     }
 
     // ── Ticket #38: sign-off name detection ──
@@ -2215,10 +3031,15 @@ example-air.com"#;
         let input = "Our team has confirmed the change.\n\nBest regards,\nPrzemek";
         let (result, dets) = a.anonymize_text(input);
         assert!(
-            dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Przemek"),
-            "Sign-off name 'Przemek' should be detected.\nDetections: {:?}", dets
+            dets.iter()
+                .any(|d| d.entity_type == "PERSON" && d.original == "Przemek"),
+            "Sign-off name 'Przemek' should be detected.\nDetections: {:?}",
+            dets
         );
-        assert!(!result.contains("Przemek"), "Sign-off name should be anonymized");
+        assert!(
+            !result.contains("Przemek"),
+            "Sign-off name should be anonymized"
+        );
     }
 
     #[test]
@@ -2227,10 +3048,15 @@ example-air.com"#;
         let input = "Please confirm.\n\nBrgds,\nJulia";
         let (result, dets) = a.anonymize_text(input);
         assert!(
-            dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Julia"),
-            "Sign-off name 'Julia' should be detected.\nDetections: {:?}", dets
+            dets.iter()
+                .any(|d| d.entity_type == "PERSON" && d.original == "Julia"),
+            "Sign-off name 'Julia' should be detected.\nDetections: {:?}",
+            dets
         );
-        assert!(!result.contains("Julia"), "Sign-off name should be anonymized");
+        assert!(
+            !result.contains("Julia"),
+            "Sign-off name should be anonymized"
+        );
     }
 
     #[test]
@@ -2239,10 +3065,15 @@ example-air.com"#;
         let input = "Merci pour votre retour.\n\nCordialement,\nDamien";
         let (result, dets) = a.anonymize_text(input);
         assert!(
-            dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Damien"),
-            "Sign-off name 'Damien' should be detected.\nDetections: {:?}", dets
+            dets.iter()
+                .any(|d| d.entity_type == "PERSON" && d.original == "Damien"),
+            "Sign-off name 'Damien' should be detected.\nDetections: {:?}",
+            dets
         );
-        assert!(!result.contains("Damien"), "Sign-off name should be anonymized");
+        assert!(
+            !result.contains("Damien"),
+            "Sign-off name should be anonymized"
+        );
     }
 
     #[test]
@@ -2251,7 +3082,10 @@ example-air.com"#;
         let mut a = Anonymizer::new(0.0);
         let input = "I will revert once I receive details.\n\nBest regards, Przemek";
         let (result, _dets) = a.anonymize_text(input);
-        assert!(!result.contains("Przemek"), "Sign-off name on same line should be anonymized");
+        assert!(
+            !result.contains("Przemek"),
+            "Sign-off name on same line should be anonymized"
+        );
     }
 
     #[test]
@@ -2261,11 +3095,17 @@ example-air.com"#;
         let input = "Thank you.\n\nBest regards,\nAmelia";
         let (result, dets) = a.anonymize_text(input);
         assert!(
-            !dets.iter().any(|d| d.entity_type == "PERSON" && d.original == "Amelia"),
-            "Blocklisted word 'Amelia' should NOT be detected as PERSON.\nDetections: {:?}", dets
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "PERSON" && d.original == "Amelia"),
+            "Blocklisted word 'Amelia' should NOT be detected as PERSON.\nDetections: {:?}",
+            dets
         );
         // Amelia is blocklisted so it should remain
-        assert!(result.contains("Amelia"), "Blocklisted name should not be anonymized");
+        assert!(
+            result.contains("Amelia"),
+            "Blocklisted name should not be anonymized"
+        );
     }
 
     #[test]
@@ -2278,7 +3118,10 @@ example-air.com"#;
             "0033 phone format should be detected.\nDetections: {:?}",
             dets
         );
-        assert!(!result.contains("0033 7 00 00 00 01"), "Phone should be replaced");
+        assert!(
+            !result.contains("0033 7 00 00 00 01"),
+            "Phone should be replaced"
+        );
     }
 
     #[test]
@@ -2292,7 +3135,10 @@ example-air.com"#;
             "HR Director should be detected as JOB_TITLE.\nDetections: {:?}",
             dets
         );
-        assert!(!result.contains("HR Director"), "Job title should be replaced");
+        assert!(
+            !result.contains("HR Director"),
+            "Job title should be replaced"
+        );
     }
 
     #[test]
@@ -2305,7 +3151,10 @@ example-air.com"#;
             "DSI / CIO should be detected as JOB_TITLE.\nDetections: {:?}",
             dets
         );
-        assert!(!result.contains("DSI / CIO"), "C-suite title should be replaced");
+        assert!(
+            !result.contains("DSI / CIO"),
+            "C-suite title should be replaced"
+        );
     }
 
     #[test]
@@ -2327,11 +3176,15 @@ example-air.com"#;
         let input = "Le Capitaine (matricule AM-4872) a signalé un incident";
         let (result, dets) = a.anonymize_text(input);
         assert!(
-            dets.iter().any(|d| d.entity_type == "EMPLOYEE_ID" && d.original == "AM-4872"),
+            dets.iter()
+                .any(|d| d.entity_type == "EMPLOYEE_ID" && d.original == "AM-4872"),
             "AM-4872 should be detected as EMPLOYEE_ID with 'matricule' context.\nDetections: {:?}",
             dets
         );
-        assert!(!result.contains("AM-4872"), "Matricule should be anonymized");
+        assert!(
+            !result.contains("AM-4872"),
+            "Matricule should be anonymized"
+        );
     }
 
     #[test]
@@ -2352,14 +3205,20 @@ example-air.com"#;
         let input = "incident sur le vol AML-317 Paris-CDG";
         let (result, dets) = a.anonymize_text(input);
         assert!(
-            dets.iter().any(|d| d.entity_type == "FLIGHT_NUMBER" && d.original == "AML-317"),
+            dets.iter()
+                .any(|d| d.entity_type == "FLIGHT_NUMBER" && d.original == "AML-317"),
             "AML-317 should be detected as FLIGHT_NUMBER.\nDetections: {:?}",
             dets
         );
-        assert!(!result.contains("AML-317"), "Flight number should be anonymized");
+        assert!(
+            !result.contains("AML-317"),
+            "Flight number should be anonymized"
+        );
         // AML should NOT be detected separately as CREW_CODE
         assert!(
-            !dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "AML"),
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "CREW_CODE" && d.original == "AML"),
             "AML should not be detected as CREW_CODE when part of flight number.\nDetections: {:?}",
             dets
         );
@@ -2377,22 +3236,79 @@ example-air.com"#;
         // Email must be detected
         assert!(
             dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"),
-            "Email should be detected.\nDetections: {:?}", dets
+            "Email should be detected.\nDetections: {:?}",
+            dets
         );
         // Matricule must be detected
         assert!(
-            dets.iter().any(|d| d.entity_type == "EMPLOYEE_ID" && d.original == "AM-4872"),
-            "Matricule AM-4872 should be detected as EMPLOYEE_ID.\nDetections: {:?}", dets
+            dets.iter()
+                .any(|d| d.entity_type == "EMPLOYEE_ID" && d.original == "AM-4872"),
+            "Matricule AM-4872 should be detected as EMPLOYEE_ID.\nDetections: {:?}",
+            dets
         );
-        assert!(!result.contains("AM-4872"), "Matricule should be anonymized in output");
+        assert!(
+            !result.contains("AM-4872"),
+            "Matricule should be anonymized in output"
+        );
         // Flight number AML-317 must be detected as flight, not crew code
         assert!(
-            dets.iter().any(|d| d.entity_type == "FLIGHT_NUMBER" && d.original == "AML-317"),
-            "AML-317 should be detected as FLIGHT_NUMBER.\nDetections: {:?}", dets
+            dets.iter()
+                .any(|d| d.entity_type == "FLIGHT_NUMBER" && d.original == "AML-317"),
+            "AML-317 should be detected as FLIGHT_NUMBER.\nDetections: {:?}",
+            dets
         );
         assert!(
-            !dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "AML"),
-            "AML should not be a CREW_CODE.\nDetections: {:?}", dets
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "CREW_CODE" && d.original == "AML"),
+            "AML should not be a CREW_CODE.\nDetections: {:?}",
+            dets
+        );
+    }
+
+    #[test]
+    fn test_phone_extension_poste() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "Contact RH : j.dupont@example-air.com, poste 2241.";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter()
+                .any(|d| d.entity_type == "PHONE_EXTENSION" && d.original.contains("2241")),
+            "poste 2241 should be detected as PHONE_EXTENSION.\nDetections: {:?}",
+            dets
+        );
+        assert!(
+            !result.contains("2241"),
+            "Phone extension should be anonymized"
+        );
+    }
+
+    #[test]
+    fn test_phone_extension_ext() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "Call ext. 4510 for support";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter()
+                .any(|d| d.entity_type == "PHONE_EXTENSION" && d.original.contains("4510")),
+            "ext. 4510 should be detected as PHONE_EXTENSION.\nDetections: {:?}",
+            dets
+        );
+        assert!(
+            !result.contains("4510"),
+            "Phone extension should be anonymized"
+        );
+    }
+
+    #[test]
+    fn test_bare_number_not_phone_extension() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "There are 2241 items in the database";
+        let (_, dets) = a.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PHONE_EXTENSION"),
+            "Bare number should not be detected as PHONE_EXTENSION.\nDetections: {:?}",
+            dets
         );
     }
 }

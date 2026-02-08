@@ -24,7 +24,7 @@ use crate::patterns::MAX_INPUT_SIZE;
 fn probe_ml_ner() -> bool {
     #[cfg(feature = "ner")]
     {
-        use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
+        use crate::ner::{download::model_exists, ml::MlNerDetector, NerConfig};
         let config = NerConfig::default();
         if !model_exists(&config) {
             eprintln!("warning: NER model not downloaded, run `anon download-model`");
@@ -45,14 +45,18 @@ fn probe_ml_ner() -> bool {
 /// Create an Anonymizer with the requested NER mode, falling back gracefully.
 /// Returns (anonymizer, actual_ner_mode).
 #[allow(unused_variables)]
-fn make_anonymizer(threshold: f64, ner_mode: &str, ml_available: bool) -> (Anonymizer, &'static str) {
+fn make_anonymizer(
+    threshold: f64,
+    ner_mode: &str,
+    ml_available: bool,
+) -> (Anonymizer, &'static str) {
     #[allow(unused_mut)]
     let mut anonymizer = Anonymizer::new(threshold);
 
     match ner_mode {
         #[cfg(feature = "ner")]
         "ml" if ml_available => {
-            use crate::ner::{NerConfig, ml::MlNerDetector};
+            use crate::ner::{ml::MlNerDetector, NerConfig};
             let config = NerConfig::default();
             if let Ok(Ok(det)) = std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
                 anonymizer.set_ner_detector(Box::new(det));
@@ -91,9 +95,13 @@ fn available_ner_modes(ml_available: bool) -> Vec<&'static str> {
 #[allow(unused_variables)]
 fn default_ner_mode(ml_available: bool) -> &'static str {
     #[cfg(feature = "ner-lite")]
-    { return "heuristic"; }
+    {
+        return "heuristic";
+    }
     #[cfg(all(feature = "ner", not(feature = "ner-lite")))]
-    if ml_available { return "ml"; }
+    if ml_available {
+        return "ml";
+    }
     #[allow(unreachable_code)]
     "off"
 }
@@ -427,17 +435,17 @@ mod tests {
     #[tokio::test]
     async fn test_index_serves_html() {
         let resp = app()
-            .oneshot(
-                HttpRequest::builder()
-                    .uri("/")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(HttpRequest::builder().uri("/").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(ct.contains("text/html"));
     }
 
@@ -462,7 +470,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
         let data: AnonymizeResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(data.result.contains("[EMAIL_ADDRESS_"));
         assert!(!data.detections.is_empty());
@@ -489,7 +499,9 @@ mod tests {
             .await
             .unwrap();
 
-        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
         let anon_data: AnonymizeResponse = serde_json::from_slice(&bytes).unwrap();
 
         let restore_body = serde_json::json!({
@@ -510,7 +522,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
         let data: RestoreResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(data.result, "email: test@example.org");
     }
@@ -536,7 +550,9 @@ mod tests {
             .await
             .unwrap();
 
-        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
         let anon_data: AnonymizeResponse = serde_json::from_slice(&bytes).unwrap();
 
         // Re-save the mapping right before restore to avoid race with parallel tests
@@ -563,7 +579,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
         let data: RestoreResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(data.result, "email: saved@example.org");
     }

@@ -3,8 +3,7 @@ use std::time::{Duration, Instant};
 
 use anon::detection::Anonymizer;
 
-const SIMPLE_LOG: &str =
-    "2024-03-15 10:00:00 [INFO] User logged in successfully. IP: 192.168.1.1";
+const SIMPLE_LOG: &str = "2024-03-15 10:00:00 [INFO] User logged in successfully. IP: 192.168.1.1";
 
 const COMPLEX_LOG: &str = r#"2024-03-15 10:20:01 [INFO] Dumping raw socket:
     Header: Auth-Token=XYZ-123
@@ -30,10 +29,12 @@ fn feature_label() -> &'static str {
 fn ner_setup() -> Box<dyn Fn() -> Anonymizer> {
     #[cfg(feature = "ner")]
     {
-        use anon::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
+        use anon::ner::{download::model_exists, ml::MlNerDetector, NerConfig};
         let config = NerConfig::default();
         if !model_exists(&config) {
-            eprintln!("warning: model not downloaded, run `anon download-model` for ML NER benchmark\n");
+            eprintln!(
+                "warning: model not downloaded, run `anon download-model` for ML NER benchmark\n"
+            );
             return Box::new(|| Anonymizer::new(0.0));
         }
         match std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
@@ -95,7 +96,12 @@ fn bench_lines(line: &str, count: usize, make_anonymizer: &dyn Fn() -> Anonymize
         }
     }
 
-    BenchResult { times, lines_with_detections, entity_counts, total_detections }
+    BenchResult {
+        times,
+        lines_with_detections,
+        entity_counts,
+        total_detections,
+    }
 }
 
 fn main() {
@@ -106,8 +112,13 @@ fn main() {
     let num_simple = (num_lines as f64 * SIMPLE_RATIO) as usize;
     let num_complex = num_lines - num_simple;
 
-    println!("anon benchmark [{}] — {} lines ({} simple / {} complex)\n",
-        feature_label(), num_lines, num_simple, num_complex);
+    println!(
+        "anon benchmark [{}] — {} lines ({} simple / {} complex)\n",
+        feature_label(),
+        num_lines,
+        num_simple,
+        num_complex
+    );
 
     let make_anonymizer = ner_setup();
 
@@ -135,7 +146,11 @@ fn main() {
 
     // Merge entity counts
     let mut all_entities: HashMap<String, usize> = HashMap::new();
-    for (k, v) in simple.entity_counts.iter().chain(complex.entity_counts.iter()) {
+    for (k, v) in simple
+        .entity_counts
+        .iter()
+        .chain(complex.entity_counts.iter())
+    {
         *all_entities.entry(k.clone()).or_insert(0) += v;
     }
 
@@ -145,20 +160,37 @@ fn main() {
     println!("Throughput:         {:.0} lines/sec", throughput);
     println!("Data rate:          {:.2} MB/sec", data_rate);
     println!("{}", "-".repeat(60));
-    println!("Simple  — avg: {:>8.1} us  p99: {:>8.1} us", simple_avg.as_secs_f64() * 1e6, simple_p99.as_secs_f64() * 1e6);
-    println!("Complex — avg: {:>8.1} us  p99: {:>8.1} us", complex_avg.as_secs_f64() * 1e6, complex_p99.as_secs_f64() * 1e6);
+    println!(
+        "Simple  — avg: {:>8.1} us  p99: {:>8.1} us",
+        simple_avg.as_secs_f64() * 1e6,
+        simple_p99.as_secs_f64() * 1e6
+    );
+    println!(
+        "Complex — avg: {:>8.1} us  p99: {:>8.1} us",
+        complex_avg.as_secs_f64() * 1e6,
+        complex_p99.as_secs_f64() * 1e6
+    );
     println!("Complexity penalty: {:.1}x", penalty);
     println!();
 
     println!("Detection rates");
     println!("{}", "-".repeat(60));
-    println!("Simple  — {}/{} lines ({:.0}%)",
-        simple.lines_with_detections, num_simple,
-        simple.lines_with_detections as f64 / num_simple as f64 * 100.0);
-    println!("Complex — {}/{} lines ({:.0}%)",
-        complex.lines_with_detections, num_complex,
-        complex.lines_with_detections as f64 / num_complex as f64 * 100.0);
-    println!("Total detections:   {}", simple.total_detections + complex.total_detections);
+    println!(
+        "Simple  — {}/{} lines ({:.0}%)",
+        simple.lines_with_detections,
+        num_simple,
+        simple.lines_with_detections as f64 / num_simple as f64 * 100.0
+    );
+    println!(
+        "Complex — {}/{} lines ({:.0}%)",
+        complex.lines_with_detections,
+        num_complex,
+        complex.lines_with_detections as f64 / num_complex as f64 * 100.0
+    );
+    println!(
+        "Total detections:   {}",
+        simple.total_detections + complex.total_detections
+    );
     println!();
 
     // Entity breakdown sorted by count desc
@@ -171,8 +203,14 @@ fn main() {
     let (_, s_dets) = first_simple.anonymize_text(SIMPLE_LOG);
     let mut first_complex = make_anonymizer();
     let (_, c_dets) = first_complex.anonymize_text(COMPLEX_LOG);
-    println!("  Simple log:  {:?}", s_dets.iter().map(|d| d.entity_type).collect::<Vec<_>>());
-    println!("  Complex log: {:?}", c_dets.iter().map(|d| d.entity_type).collect::<Vec<_>>());
+    println!(
+        "  Simple log:  {:?}",
+        s_dets.iter().map(|d| d.entity_type).collect::<Vec<_>>()
+    );
+    println!(
+        "  Complex log: {:?}",
+        c_dets.iter().map(|d| d.entity_type).collect::<Vec<_>>()
+    );
     println!();
 
     if throughput < 5000.0 {

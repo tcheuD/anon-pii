@@ -1,9 +1,9 @@
 #[cfg(feature = "ner")]
-pub mod ml;
-#[cfg(feature = "ner")]
 pub mod download;
 #[cfg(feature = "ner-lite")]
 pub mod heuristic;
+#[cfg(feature = "ner")]
+pub mod ml;
 
 use std::path::PathBuf;
 
@@ -57,11 +57,20 @@ impl NerDetector for CombinedNerDetector {
 /// Company names, product names, and common false positives.
 pub const PERSON_BLOCKLIST: &[&str] = &[
     // Company / product names
-    "Amelia", "Factorial", "Leon",
+    "Amelia",
+    "Factorial",
+    "Leon",
     // Job titles / roles often misdetected
-    "Captain", "Full", "Stack", "Developer", "Director",
+    "Captain",
+    "Full",
+    "Stack",
+    "Developer",
+    "Director",
     // Common non-person capitalized words in aviation context
-    "Crew", "Planning", "Bonjour", "Cordialement",
+    "Crew",
+    "Planning",
+    "Bonjour",
+    "Cordialement",
 ];
 
 /// Configuration for NER.
