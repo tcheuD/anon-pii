@@ -595,7 +595,9 @@ impl Anonymizer {
 
                     let matched = mat.as_str();
 
-                    if pat.entity_type == "CREDIT_CARD" && (!luhn_check(matched) || !valid_card_prefix(matched)) {
+                    if pat.entity_type == "CREDIT_CARD"
+                        && (!luhn_check(matched) || !valid_card_prefix(matched))
+                    {
                         continue;
                     }
                     if pat.entity_type == "IBAN_CODE" && !iban_mod97(matched) {
@@ -792,10 +794,12 @@ impl Anonymizer {
                                     continue;
                                 }
                                 for mat in pat.regex.find_iter(&decoded) {
-                                    if pat.entity_type == "CREDIT_CARD" && (!luhn_check(mat.as_str())
-                                            || !valid_card_prefix(mat.as_str())) {
-                                            continue;
-                                        }
+                                    if pat.entity_type == "CREDIT_CARD"
+                                        && (!luhn_check(mat.as_str())
+                                            || !valid_card_prefix(mat.as_str()))
+                                    {
+                                        continue;
+                                    }
                                     if pat.entity_type == "IBAN_CODE" && !iban_mod97(mat.as_str()) {
                                         continue;
                                     }

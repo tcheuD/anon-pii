@@ -270,11 +270,9 @@ fn choose_markdown_fence(s: &str) -> String {
 
 fn summarize_detections(
     detections: &[Detection],
-) -> (
-    usize,
-    std::collections::BTreeMap<&'static str, usize>,
-) {
-    let mut seen: std::collections::HashSet<(&'static str, String)> = std::collections::HashSet::new();
+) -> (usize, std::collections::BTreeMap<&'static str, usize>) {
+    let mut seen: std::collections::HashSet<(&'static str, String)> =
+        std::collections::HashSet::new();
     let mut by_type: std::collections::BTreeMap<&'static str, usize> =
         std::collections::BTreeMap::new();
 
