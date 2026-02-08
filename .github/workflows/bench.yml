@@ -1,0 +1,87 @@
+# Benchmark Workflow for anon-pii
+# Issues: #8, #9
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
+        with:
+          prefix-key: v1-bench
+
+      - name: Build release variants
+        run: |
+          cargo build --release
+          cp target/release/anon target/release/anon-default 2>/dev/null || echo "Binary not found, skipping"
+          cargo build --release --features ner-lite
+          cp target/release/anon target/release/anon-ner-lite 2>/dev/null || echo "Binary not found, skipping"
+
+      - name: Run benchmark
+        run: |
+          # Simple benchmark: process 10k lines and measure time
+          python3 -c "
+          import subprocess
+          import time
+          import json
+          import sys
+
+          test_input = 'User john.doe@example.com from 192.168.1.1 called\n' * 10000
+
+          results = {}
+          for name, binary in [('default', 'target/release/anon-default'), ('ner-lite', 'target/release/anon-ner-lite')]:
+              try:
+                  start = time.perf_counter()
+                  proc = subprocess.run([binary], input=test_input, capture_output=True, text=True, timeout=60)
+                  elapsed = time.perf_counter() - start
+                  results[name] = {
+                      'elapsed_sec': elapsed,
+                      'throughput_lines_per_sec': 10000 / elapsed
+                  }
+                  print(f'{name}: {elapsed:.3f}s ({10000/elapsed:.0f} lines/s)')
+              except Exception as e:
+                  print(f'{name}: Error - {e}', file=sys.stderr)
+
+          with open('bench-results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: bench-results.json
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: customSmallerIsBetter
+          output-file-path: bench-results.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: '120%'
+          comment-on-alert: true
+          fail-on-alert: false
