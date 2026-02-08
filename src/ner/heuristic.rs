@@ -337,6 +337,12 @@ pub struct HeuristicNerDetector {
     min_score: f64,
 }
 
+impl Default for HeuristicNerDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HeuristicNerDetector {
     pub fn new() -> Self {
         let mut first_names: HashSet<String> = HashSet::new();

@@ -18,7 +18,7 @@ const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024;
 const SSE_STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Maximum size for internal SSE buffers (utf8_buf, line_buf) — 1 MB each.
-const MAX_SSE_BUFFER_SIZE: usize = 1 * 1024 * 1024;
+const MAX_SSE_BUFFER_SIZE: usize = 1024 * 1024;
 
 /// Headers allowed to be forwarded to the upstream API.
 /// Everything else is dropped to prevent leaking cookies, internal routing
