@@ -380,7 +380,7 @@ fn copy_to_clipboard_best_effort(text: &str) -> Result<(), String> {
         if run_clipboard_command("xsel", &["--clipboard", "--input"], text).is_ok() {
             return Ok(());
         }
-        return Err("no clipboard helper found (tried wl-copy, xclip, xsel)".to_string());
+        Err("no clipboard helper found (tried wl-copy, xclip, xsel)".to_string())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
