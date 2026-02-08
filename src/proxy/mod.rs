@@ -74,7 +74,7 @@ impl ProxyState {
         let mapping_json = {
             let anonymizer = self.anonymizer.lock().await;
             serde_json::to_string_pretty(&anonymizer.mapping)
-                .map_err(|e| std::io::Error::other(e))?
+                .map_err(std::io::Error::other)?
         };
 
         let path = self.session_dir.join("mapping.json");
