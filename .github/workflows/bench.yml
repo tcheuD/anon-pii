@@ -51,16 +51,17 @@ jobs:
 
           test_input = 'User john.doe@example.com from 192.168.1.1 called\n' * 10000
 
-          results = {}
+          results = []
           for name, binary in [('default', 'target/release/anon-default'), ('ner-lite', 'target/release/anon-ner-lite')]:
               try:
                   start = time.perf_counter()
                   proc = subprocess.run([binary], input=test_input, capture_output=True, text=True, timeout=60)
                   elapsed = time.perf_counter() - start
-                  results[name] = {
-                      'elapsed_sec': elapsed,
-                      'throughput_lines_per_sec': 10000 / elapsed
-                  }
+                  results.append({
+                      'name': name,
+                      'value': elapsed,
+                      'unit': 'sec'
+                  })
                   print(f'{name}: {elapsed:.3f}s ({10000/elapsed:.0f} lines/s)')
               except Exception as e:
                   print(f'{name}: Error - {e}', file=sys.stderr)
