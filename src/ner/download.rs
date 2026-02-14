@@ -69,7 +69,7 @@ fn download_file(
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let mut file = fs::File::create(&tmp)?;
         let mut hasher = Sha256::new();
-        let mut reader = resp.into_body();
+        let mut reader = resp.into_body().into_reader();
         let mut buf = [0u8; 65536];
         loop {
             let n = std::io::Read::read(&mut reader, &mut buf)?;
