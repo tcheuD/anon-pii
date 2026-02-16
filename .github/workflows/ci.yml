@@ -1,5 +1,5 @@
 # CI Workflow for anon-pii
-# Issues: #1, #2, #3, #4, #28
+# Issues: #1, #2, #3, #4, #28, #29
 name: CI
 
 on:
@@ -72,15 +72,43 @@ jobs:
         run: cargo clippy --features ner-lite,proxy -- -D warnings
 
   # ============================================================================
-  # Rust Tests
+  # Rust Tests (ubuntu — always, macOS — main only)
   # ============================================================================
   rust-test:
-    name: Rust Test (${{ matrix.os }}, ${{ matrix.features || 'default' }})
-    runs-on: ${{ matrix.os }}
+    name: Rust Test (${{ matrix.features || 'default' }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        features: ['', 'ner-lite', 'proxy', 'ner-lite,proxy']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
+        with:
+          prefix-key: v1-test
+          shared-key: ${{ matrix.features || 'default' }}
+
+      - name: Run tests
+        run: |
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo test --features "${{ matrix.features }}"
+          else
+            cargo test
+          fi
+
+  rust-test-macos:
+    name: Rust Test macOS (${{ matrix.features || 'default' }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
         features: ['', 'ner-lite', 'proxy', 'ner-lite,proxy']
     steps:
       - name: Checkout
@@ -104,14 +132,30 @@ jobs:
           fi
 
   # ============================================================================
-  # Rust Build (Release)
+  # Rust Build (ubuntu — always, macOS — main only)
   # ============================================================================
   rust-build:
-    name: Rust Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Rust Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
+        with:
+          prefix-key: v1-build
+
+      - name: Build release
+        run: cargo build --release
+
+  rust-build-macos:
+    name: Rust Build macOS
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -181,7 +225,9 @@ jobs:
       - rust-fmt
       - rust-clippy
       - rust-test
+      - rust-test-macos
       - rust-build
+      - rust-build-macos
       - security-deny
       - security-audit
     runs-on: ubuntu-latest
@@ -189,13 +235,21 @@ jobs:
     steps:
       - name: Check all jobs
         run: |
+          # Required jobs must succeed
           if [[ "${{ needs.rust-fmt.result }}" != "success" ]] || \
              [[ "${{ needs.rust-clippy.result }}" != "success" ]] || \
              [[ "${{ needs.rust-test.result }}" != "success" ]] || \
              [[ "${{ needs.rust-build.result }}" != "success" ]] || \
              [[ "${{ needs.security-deny.result }}" != "success" ]] || \
              [[ "${{ needs.security-audit.result }}" != "success" ]]; then
-            echo "One or more jobs failed"
+            echo "One or more required jobs failed"
             exit 1
           fi
+          # macOS jobs: must succeed or be skipped (main-only)
+          for result in "${{ needs.rust-test-macos.result }}" "${{ needs.rust-build-macos.result }}"; do
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "macOS job failed: $result"
+              exit 1
+            fi
+          done
           echo "All CI jobs passed!"
