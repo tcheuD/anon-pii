@@ -61,7 +61,7 @@ jobs:
           components: clippy
 
       - name: Cache
-        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           prefix-key: v1-clippy
 
@@ -89,7 +89,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache
-        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           prefix-key: v1-test
           shared-key: ${{ matrix.features || 'default' }}
@@ -118,7 +118,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache
-        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           prefix-key: v1-test
           shared-key: ${{ matrix.features || 'default' }}
@@ -145,7 +145,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache
-        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           prefix-key: v1-build
 
@@ -164,7 +164,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache
-        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           prefix-key: v1-build
 
