@@ -9,6 +9,8 @@
 | `EMAIL_ADDRESS` | Email addresses | 0.9 |
 | `URL` | HTTP/HTTPS URLs | 0.9 |
 | `IP_ADDRESS` | IPv4 and IPv6 addresses (full, collapsed, link-local, loopback, IPv4-mapped) | 0.9 |
+| `PHONE_NUMBER` | International phone numbers — E.164 format with separators, parenthesized area codes (context-aware) | 0.6 |
+| `PHONE_EXTENSION` | Phone extensions (poste, ext, extension + 3-5 digits) | 0.85 |
 | `CREDIT_CARD` | 16-digit card numbers (Luhn validated, context-aware) | 0.7 |
 | `UUID` | Standard UUIDs | 0.95 |
 | `CRYPTO` | Bitcoin and Ethereum addresses | 0.9 |
@@ -62,6 +64,7 @@ Context keywords work in two modes:
 | `FR_PASSPORT` | passeport, passport, document, identite |
 | `FLIGHT_NUMBER` (IATA/ICAO) | flight, vol, departure, arrival, schedule, rotation |
 | `AIRCRAFT_REGISTRATION` (US) | aircraft, avion, registration, immat, immatriculation, tail |
+| `PHONE_NUMBER` | telephone, tel, phone, mobile, contact, call, number, whatsapp, sms, cell, fax |
 | `CREDIT_CARD` | card, carte, credit, debit, payment, paiement, cb |
 
 **Score boost** — Pattern always matches, but confidence gets +0.15 when keywords are nearby:
