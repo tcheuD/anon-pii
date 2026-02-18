@@ -14,6 +14,7 @@
 | `IBAN_CODE` | All-country IBANs with mod-97 checksum validation (context-aware) | 0.7 |
 | `CREDIT_CARD` | 16-digit card numbers (Luhn validated, context-aware) | 0.7 |
 | `UUID` | Standard UUIDs | 0.95 |
+| `MAC_ADDRESS` | MAC addresses — colon, hyphen, and Cisco dot formats (broadcast/null rejected) | 0.85 |
 | `CRYPTO` | Bitcoin and Ethereum addresses | 0.9 |
 
 ## French
