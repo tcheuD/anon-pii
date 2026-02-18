@@ -1,5 +1,5 @@
 # CI Workflow for anon-pii
-# Issues: #1, #2, #3, #4
+# Issues: #1, #2, #3, #4, #28, #29
 name: CI
 
 on:
@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -61,7 +61,7 @@ jobs:
           components: clippy
 
       - name: Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           prefix-key: v1-clippy
 
@@ -72,25 +72,53 @@ jobs:
         run: cargo clippy --features ner-lite,proxy -- -D warnings
 
   # ============================================================================
-  # Rust Tests
+  # Rust Tests (ubuntu — always, macOS — main only)
   # ============================================================================
   rust-test:
-    name: Rust Test (${{ matrix.os }}, ${{ matrix.features || 'default' }})
-    runs-on: ${{ matrix.os }}
+    name: Rust Test (${{ matrix.features || 'default' }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
         features: ['', 'ner-lite', 'proxy', 'ner-lite,proxy']
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          prefix-key: v1-test
+          shared-key: ${{ matrix.features || 'default' }}
+
+      - name: Run tests
+        run: |
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo test --features "${{ matrix.features }}"
+          else
+            cargo test
+          fi
+
+  rust-test-macos:
+    name: Rust Test macOS (${{ matrix.features || 'default' }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ['', 'ner-lite', 'proxy', 'ner-lite,proxy']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           prefix-key: v1-test
           shared-key: ${{ matrix.features || 'default' }}
@@ -104,23 +132,39 @@ jobs:
           fi
 
   # ============================================================================
-  # Rust Build (Release)
+  # Rust Build (ubuntu — always, macOS — main only)
   # ============================================================================
   rust-build:
-    name: Rust Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Rust Build
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache
-        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          prefix-key: v1-build
+
+      - name: Build release
+        run: cargo build --release
+
+  rust-build-macos:
+    name: Rust Build macOS
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           prefix-key: v1-build
 
@@ -135,10 +179,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@cargo-deny
+        uses: taiki-e/install-action@288875dd3d64326724fa6d9593062d9f8ba0b131 # v2.67.30
+        with:
+          tool: cargo-deny
 
       - name: Check advisories
         run: cargo deny check advisories
@@ -160,13 +206,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
+        run: |
+          curl -sSL https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv0.22.1/cargo-audit-x86_64-unknown-linux-gnu-v0.22.1.tgz | tar xz --strip-components=1
+          mv cargo-audit /usr/local/bin/
 
       - name: Run audit
-        run: cargo audit
+        run: cargo-audit audit
 
   # ============================================================================
   # Summary Gate
@@ -177,7 +225,9 @@ jobs:
       - rust-fmt
       - rust-clippy
       - rust-test
+      - rust-test-macos
       - rust-build
+      - rust-build-macos
       - security-deny
       - security-audit
     runs-on: ubuntu-latest
@@ -185,13 +235,21 @@ jobs:
     steps:
       - name: Check all jobs
         run: |
+          # Required jobs must succeed
           if [[ "${{ needs.rust-fmt.result }}" != "success" ]] || \
              [[ "${{ needs.rust-clippy.result }}" != "success" ]] || \
              [[ "${{ needs.rust-test.result }}" != "success" ]] || \
              [[ "${{ needs.rust-build.result }}" != "success" ]] || \
              [[ "${{ needs.security-deny.result }}" != "success" ]] || \
              [[ "${{ needs.security-audit.result }}" != "success" ]]; then
-            echo "One or more jobs failed"
+            echo "One or more required jobs failed"
             exit 1
           fi
+          # macOS jobs: must succeed or be skipped (main-only)
+          for result in "${{ needs.rust-test-macos.result }}" "${{ needs.rust-build-macos.result }}"; do
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "macOS job failed: $result"
+              exit 1
+            fi
+          done
           echo "All CI jobs passed!"
