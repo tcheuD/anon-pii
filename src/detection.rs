@@ -4456,6 +4456,196 @@ example-air.com"#;
         assert_eq!(restored, input, "US SSN roundtrip failed");
     }
 
+    #[test]
+    fn test_us_ssn_mixed_delimiters_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // dash + space mixed — should not match either pattern
+        let (_, dets) = a.anonymize_text("SSN: 123-45 6789");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "mixed delimiters should be rejected: {dets:?}"
+        );
+        let (_, dets) = a.anonymize_text("SSN: 123 45-6789");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "mixed delimiters (space then dash) should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_max_valid_area() {
+        let mut a = Anonymizer::new(0.0);
+        // 899 is the highest valid area (900+ rejected)
+        let (result, dets) = a.anonymize_text("SSN: 899-99-9999");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "area 899 should be valid: {dets:?}"
+        );
+        assert!(result.contains("[US_SSN_"));
+    }
+
+    #[test]
+    fn test_us_ssn_in_json() {
+        // JSON walker anonymizes values independently — context keyword must be in the value itself
+        let json = serde_json::json!({
+            "note": "SSN: 123-45-6789"
+        });
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_json_value(&json);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "US SSN not detected in JSON: {dets:?}"
+        );
+        assert!(
+            result["note"].as_str().unwrap().contains("[US_SSN_"),
+            "JSON value not anonymized: {}",
+            result["note"]
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_in_json_bare_value_rejected() {
+        // JSON key "ssn" is processed separately — it doesn't provide context to the value
+        let json = serde_json::json!({
+            "ssn": "123-45-6789"
+        });
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_json_value(&json);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "bare SSN in JSON value without context should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_multiple_distinct_tokens() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("SSN: 123-45-6789, second SSN: 234-56-7890");
+        let ssn_dets: Vec<_> = dets.iter().filter(|d| d.entity_type == "US_SSN").collect();
+        assert_eq!(ssn_dets.len(), 2, "expected 2 SSN detections: {dets:?}");
+        // Tokens use random hex, so just verify two distinct tokens exist
+        let tokens: Vec<&str> = result
+            .match_indices("[US_SSN_")
+            .map(|(i, _)| {
+                let end = result[i..].find(']').unwrap() + i + 1;
+                &result[i..end]
+            })
+            .collect();
+        assert_eq!(tokens.len(), 2, "expected 2 tokens in: {result}");
+        assert_ne!(tokens[0], tokens[1], "tokens should be distinct: {result}");
+    }
+
+    #[test]
+    fn test_us_ssn_duplicate_same_token() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("SSN: 123-45-6789, repeat SSN: 123-45-6789");
+        let ssn_dets: Vec<_> = dets.iter().filter(|d| d.entity_type == "US_SSN").collect();
+        assert_eq!(ssn_dets.len(), 2, "expected 2 SSN detections: {dets:?}");
+        let tokens: Vec<&str> = result
+            .match_indices("[US_SSN_")
+            .map(|(i, _)| {
+                let end = result[i..].find(']').unwrap() + i + 1;
+                &result[i..end]
+            })
+            .collect();
+        assert_eq!(tokens.len(), 2, "expected 2 tokens in: {result}");
+        assert_eq!(tokens[0], tokens[1], "same SSN should get same token: {result}");
+    }
+
+    #[test]
+    fn test_us_ssn_at_string_start() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("SSN 123-45-6789 is on file");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "SSN at start not detected: {dets:?}"
+        );
+        assert!(result.contains("[US_SSN_"));
+    }
+
+    #[test]
+    fn test_us_ssn_at_string_end() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("tax 123-45-6789");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "SSN at end not detected: {dets:?}"
+        );
+        assert!(result.contains("[US_SSN_"));
+    }
+
+    #[test]
+    fn test_us_ssn_compact_no_delimiters_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // 9 digits without delimiters — no pattern matches this, too many false positives
+        let (_, dets) = a.anonymize_text("SSN: 123456789");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "compact SSN without delimiters should not match: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_context_beyond_window_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // CONTEXT_WINDOW is 80 chars — place keyword >80 chars before the SSN
+        let padding = "x".repeat(81);
+        let input = format!("SSN {padding} 123-45-6789");
+        let (_, dets) = a.anonymize_text(&input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "SSN with context beyond 80-char window should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_context_after() {
+        let mut a = Anonymizer::new(0.0);
+        // Context keyword AFTER the SSN — window looks both directions
+        let (result, dets) = a.anonymize_text("number 123-45-6789 is the SSN");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "SSN with context after should be detected: {dets:?}"
+        );
+        assert!(result.contains("[US_SSN_"));
+    }
+
+    #[test]
+    fn test_us_ssn_context_case_insensitive() {
+        let mut a = Anonymizer::new(0.0);
+        let inputs = [
+            "ssn: 123-45-6789",            // all lowercase
+            "Ssn: 123-45-6789",            // title case
+            "Social Security 123-45-6789", // mixed case
+        ];
+        for input in &inputs {
+            let mut a2 = Anonymizer::new(0.0);
+            let (_, dets) = a2.anonymize_text(input);
+            assert!(
+                dets.iter().any(|d| d.entity_type == "US_SSN"),
+                "case-insensitive context failed for '{input}': {dets:?}"
+            );
+        }
+        // Also verify uppercase-only (already tested elsewhere, but confirms parity)
+        let (_, dets) = a.anonymize_text("SSN: 123-45-6789");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "uppercase SSN context should work"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_context_across_newline() {
+        let mut a = Anonymizer::new(0.0);
+        // Context keyword on previous line, SSN on next — within 80-char window
+        let (result, dets) = a.anonymize_text("SSN:\n123-45-6789");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "SSN with context across newline should be detected: {dets:?}"
+        );
+        assert!(result.contains("[US_SSN_"));
+    }
+
     // ── MEDICAL_LICENSE battle tests ──
 
     #[test]
