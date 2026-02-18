@@ -997,4 +997,116 @@ mod tests {
             "MAX_INPUT_SIZE should not exceed 100MB"
         );
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Battle tests for Phase 1 validators
+    // ════════════════════════════════════════════════════════════════════
+
+    // ── iban_mod97 battle tests ──
+
+    #[test]
+    fn test_iban_mod97_all_countries() {
+        // Real IBANs from various countries (all pass mod-97)
+        let valid = [
+            "GB29NWBK60161331926819",     // UK
+            "DE89370400440532013000",       // Germany
+            "FR7630006000011234567890189",  // France
+            "ES9121000418450200051332",     // Spain
+            "IT60X0542811101000000123456",  // Italy
+            "NL91ABNA0417164300",           // Netherlands
+            "BE68539007547034",             // Belgium
+            "CH9300762011623852957",        // Switzerland
+            "AT611904300234573201",         // Austria
+            "PT50000201231234567890154",    // Portugal
+        ];
+        for iban in &valid {
+            assert!(iban_mod97(iban), "valid IBAN rejected: {iban}");
+        }
+    }
+
+    #[test]
+    fn test_iban_mod97_with_various_spacing() {
+        // Same IBAN with different spacing styles
+        assert!(iban_mod97("DE89 3704 0044 0532 0130 00"));
+        assert!(iban_mod97("DE89370400440532013000"));
+        assert!(iban_mod97("DE 89 37 04 00 44 05 32 01 30 00"));
+    }
+
+    #[test]
+    fn test_iban_mod97_check_digit_variations() {
+        // Only check digit 89 is valid for this BBAN
+        assert!(iban_mod97("DE89370400440532013000"));
+        assert!(!iban_mod97("DE88370400440532013000"));
+        assert!(!iban_mod97("DE90370400440532013000"));
+        assert!(!iban_mod97("DE00370400440532013000"));
+        assert!(!iban_mod97("DE99370400440532013000"));
+    }
+
+    #[test]
+    fn test_iban_mod97_edge_too_short() {
+        assert!(!iban_mod97("DE89"));
+        assert!(!iban_mod97(""));
+        assert!(!iban_mod97("AB"));
+    }
+
+    // ── valid_mac battle tests ──
+
+    #[test]
+    fn test_valid_mac_normal() {
+        assert!(valid_mac("00:1A:2B:3C:4D:5E"));
+        assert!(valid_mac("aa:bb:cc:dd:ee:ff"));
+    }
+
+    #[test]
+    fn test_valid_mac_all_formats() {
+        assert!(valid_mac("00:1A:2B:3C:4D:5E")); // colon
+        assert!(valid_mac("00-1A-2B-3C-4D-5E")); // hyphen
+        assert!(valid_mac("001A.2B3C.4D5E"));     // cisco
+    }
+
+    #[test]
+    fn test_valid_mac_rejects_special() {
+        assert!(!valid_mac("ff:ff:ff:ff:ff:ff")); // broadcast
+        assert!(!valid_mac("00:00:00:00:00:00")); // null
+        assert!(!valid_mac("FF:FF:FF:FF:FF:FF")); // broadcast uppercase
+    }
+
+    #[test]
+    fn test_valid_mac_near_boundaries() {
+        assert!(valid_mac("00:00:00:00:00:01")); // just above null
+        assert!(valid_mac("ff:ff:ff:ff:ff:fe")); // just below broadcast
+    }
+
+    // ── valid_us_ssn battle tests ──
+
+    #[test]
+    fn test_valid_us_ssn_good_numbers() {
+        assert!(valid_us_ssn("123-45-6789"));
+        assert!(valid_us_ssn("001-01-0001")); // minimum valid
+        assert!(valid_us_ssn("899-99-9999")); // max area < 900
+        assert!(valid_us_ssn("123 45 6789")); // spaces
+        assert!(valid_us_ssn("123456789"));   // compact
+    }
+
+    #[test]
+    fn test_valid_us_ssn_all_invalid_areas() {
+        assert!(!valid_us_ssn("000-12-3456")); // area 000
+        assert!(!valid_us_ssn("666-12-3456")); // area 666
+        assert!(!valid_us_ssn("900-12-3456")); // area 900
+        assert!(!valid_us_ssn("999-12-3456")); // area 999
+    }
+
+    #[test]
+    fn test_valid_us_ssn_zero_groups() {
+        assert!(!valid_us_ssn("123-00-6789")); // zero middle
+        assert!(!valid_us_ssn("123-45-0000")); // zero serial
+        assert!(!valid_us_ssn("123-00-0000")); // both zero
+    }
+
+    #[test]
+    fn test_valid_us_ssn_wrong_length() {
+        assert!(!valid_us_ssn("12-34-5678"));  // too few digits
+        assert!(!valid_us_ssn("1234-56-78901")); // too many digits
+        assert!(!valid_us_ssn(""));             // empty
+    }
 }

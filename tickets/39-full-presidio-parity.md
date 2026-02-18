@@ -18,13 +18,13 @@ Presidio ships ~50 built-in entity types. Below is the exhaustive 1:1 map.
 | `URL` | **Done** | — | — |
 | `CREDIT_CARD` | **Done** | Rust already has Luhn + IIN/BIN prefix validation. Presidio equivalent. | — |
 | `CRYPTO` | **Done** | Bitcoin + Ethereum patterns. Presidio also validates Base58/Bech32 checksums — we skip this (regex sufficient, false-positive risk low). | — |
-| `IP_ADDRESS` | **Partial** | IPv4 only. Need IPv6. | Low |
-| `PHONE_NUMBER` | **Partial** | French only (`+33`, `0033`, `0x`). Need generic international format. | Medium |
-| `IBAN_CODE` | **Partial** | French only. Need all-country IBAN with mod-97 checksum. | Medium |
-| `MAC_ADDRESS` | **Missing** | Colon, hyphen, and Cisco dot formats. | Low |
-| `DATE_TIME` | **Missing** | ISO 8601, French `dd/mm/yyyy`, written dates. High false-positive risk — needs careful context gating. | High |
+| `IP_ADDRESS` | **Done** | ~~IPv4 only. Need IPv6.~~ (FIXED) IPv6 pattern added: full, collapsed, link-local, loopback, IPv4-mapped. | — |
+| `PHONE_NUMBER` | **Done** | ~~French only. Need generic international format.~~ (FIXED) Generic `intl_phone` pattern added with context gating + `PHONE_EXTENSION`. | — |
+| `IBAN_CODE` | **Done** | ~~French only. Need all-country IBAN with mod-97 checksum.~~ (FIXED) Generic IBAN pattern with mod-97 validation, context-gated. FR_IBAN kept separate. | — |
+| `MAC_ADDRESS` | **Done** | ~~Colon, hyphen, and Cisco dot formats.~~ (FIXED) All 3 formats with broadcast/null rejection. | — |
+| `DATE_TIME` | **Done** | ~~ISO 8601, French `dd/mm/yyyy`, written dates.~~ (FIXED) 4 patterns: ISO 8601, EU dd/mm/yyyy (context-gated), written French, written English. | — |
 | `PERSON` | **Done** | ML NER (ONNX) + heuristic (INSEE dictionary) + sign-off + name consistency. Exceeds Presidio. | — |
-| `LOCATION` | **Missing** | NLP-dependent. Requires NER model that outputs LOC labels. | High |
+| `LOCATION` | **Done** | ~~NLP-dependent. Requires NER model that outputs LOC labels.~~ (FIXED) ML NER passes B-LOC/I-LOC labels through as LOCATION entity. | — |
 | `NRP` | **Skip** | Nationality/religion/political group. NLP-dependent, not enabled by default even in Presidio. Ethically questionable to detect. Defer indefinitely. | — |
 | `MEDICAL_LICENSE` | **Missing** | US medical license number pattern + checksum. | Low |
 
@@ -150,10 +150,10 @@ Presidio validates many entities with checksums beyond regex. Current Rust valid
 |-----------|----------|-------------|
 | **Luhn** (credit cards) | Yes | **Done** |
 | **IIN/BIN prefix** (credit cards) | No (Presidio doesn't do this) | **Done** (Rust ahead) |
-| **mod-97** (IBAN) | Yes | **Missing** — needed for generic IBAN |
-| **Country IBAN formats** (length + structure per country) | Yes (via `iban_patterns.py`) | **Missing** |
-| **IP parsing** (stdlib validation) | Yes (`ipaddress.ip_address()`) | **Partial** — regex validates octets 0-255 for IPv4, need IPv6 parsing |
-| **Phone parsing** (`python-phonenumbers`) | Yes | **Missing** — Rust uses regex only. Consider `phonenumber` crate for validation. |
+| **mod-97** (IBAN) | Yes | **Done** — `iban_mod97()` validates all IBAN_CODE detections |
+| **Country IBAN formats** (length + structure per country) | Yes (via `iban_patterns.py`) | **Partial** — regex enforces 2-letter country + 2 check digits + 11-30 BBAN. No per-country length table. |
+| **IP parsing** (stdlib validation) | Yes (`ipaddress.ip_address()`) | **Done** — regex validates octets 0-255 for IPv4, IPv6 regex covers full/collapsed/link-local/loopback/mapped forms |
+| **Phone parsing** (`python-phonenumbers`) | Yes | **Partial** — Regex-based with context gating. No stdlib-level validation but covers E.164 format with separators/area codes. |
 | **Verhoeff** (IN_AADHAAR) | Yes | **Missing** |
 | **mod-11** (UK_NHS, AU_TFN) | Yes | **Missing** |
 | **Weighted checksums** (ABA, AU_ABN, KR_BRN, PL_PESEL) | Yes | **Missing** |
@@ -286,12 +286,12 @@ These are the entities every PII tool must detect, regardless of domain.
 
 | # | Task | Entities Added | Complexity | Est. Patterns |
 |---|------|---------------|------------|---------------|
-| 1.1 | Add IPv6 pattern | `IP_ADDRESS` (complete) | Low | +1 |
-| 1.2 | Add generic international phone | `PHONE_NUMBER` (new) | Medium | +2 |
-| 1.3 | Add generic IBAN with mod-97 validation | `IBAN_CODE` (new, keeps `FR_IBAN`) | Medium | +2 |
-| 1.4 | Add MAC address patterns | `MAC_ADDRESS` (new) | Low | +3 |
-| 1.5 | Add DATE_TIME with context gating | `DATE_TIME` (new) | High | +4-6 |
-| 1.6 | Enable LOCATION from existing NER model | `LOCATION` (new) | Medium | +0 (NER labels) |
+| ~~1.1~~ | ~~Add IPv6 pattern~~ (FIXED) | `IP_ADDRESS` (complete) | Low | +1 |
+| ~~1.2~~ | ~~Add generic international phone~~ (FIXED) | `PHONE_NUMBER` (complete) | Medium | +2 |
+| ~~1.3~~ | ~~Add generic IBAN with mod-97 validation~~ (FIXED) | `IBAN_CODE` (complete) | Medium | +2 |
+| ~~1.4~~ | ~~Add MAC address patterns~~ (FIXED) | `MAC_ADDRESS` (complete) | Low | +3 |
+| ~~1.5~~ | ~~Add DATE_TIME with context gating~~ (FIXED) | `DATE_TIME` (complete) | High | +4 |
+| ~~1.6~~ | ~~Enable LOCATION from existing NER model~~ (FIXED) | `LOCATION` (complete) | Medium | +0 |
 | 1.7 | Add US_SSN | `US_SSN` (new) | Low | +2 |
 | 1.8 | Add MEDICAL_LICENSE | `MEDICAL_LICENSE` (new) | Low | +1 |
 
@@ -434,12 +434,12 @@ fn iban_country_format(iban: &str) -> bool;     // Per-country IBAN length + str
 
 - [ ] All 50 Presidio entity types have a Rust equivalent (pattern + validation)
 - [ ] All checksum validations implemented (mod-97, Verhoeff, mod-11, weighted)
-- [ ] IPv6 detection added
-- [ ] Generic international phone detection added
-- [ ] Generic IBAN with country validation added
-- [ ] MAC_ADDRESS detection added
-- [ ] DATE_TIME detection added (context-gated)
-- [ ] LOCATION detection via NER model
+- [x] IPv6 detection added
+- [x] Generic international phone detection added
+- [x] Generic IBAN with country validation added
+- [x] MAC_ADDRESS detection added
+- [x] DATE_TIME detection added (context-gated)
+- [x] LOCATION detection via NER model
 - [ ] All 6 anonymization operators implemented
 - [ ] AES encrypt/decrypt working
 - [ ] `patterns.rs` refactored into `patterns/` module structure

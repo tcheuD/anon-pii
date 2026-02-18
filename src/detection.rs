@@ -2998,6 +2998,46 @@ example-air.com"#;
         );
     }
 
+    #[test]
+    fn test_name_consistency_accent_insensitive_preserves_surrounding_text() {
+        // Verify that replacing accent-stripped names doesn't corrupt adjacent multi-byte text.
+        // "Héloïse" (7 bytes in UTF-8) and "café" surround the bare name to stress byte offsets.
+        use crate::ner::{MockNerDetector, NerSpan};
+        let text = "Héloïse saw Gaël DUPONT at the café. Later, Gael ordered thé.";
+        let gael_start = text.find("Gaël").unwrap();
+        let gael_len = "Gaël".len();
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Gaël".into(),
+                start: gael_start,
+                end: gael_start + gael_len,
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, _dets) = a.anonymize_text(text);
+        // Bare "Gael" should be caught
+        assert!(
+            !result.contains("Gael"),
+            "Bare 'Gael' should be anonymized"
+        );
+        // Surrounding multi-byte text must be intact
+        assert!(
+            result.contains("Héloïse"),
+            "Multi-byte text before name should be preserved: {result}"
+        );
+        assert!(
+            result.contains("café"),
+            "Multi-byte text after name should be preserved: {result}"
+        );
+        assert!(
+            result.contains("thé"),
+            "Multi-byte text at end should be preserved: {result}"
+        );
+    }
+
     // ── Ticket #37: last-name consistency pass ──
 
     #[test]
@@ -3043,6 +3083,31 @@ example-air.com"#;
         assert!(
             !result.contains("Kowalski"),
             "Bare last name 'Kowalski' should be caught by consistency pass"
+        );
+    }
+
+    #[test]
+    fn test_name_consistency_short_last_name_skipped() {
+        // Last names shorter than 3 chars should NOT be searched for bare occurrences
+        // to avoid false positives (e.g., "Li", "Wu", "Ma" are too common).
+        use crate::ner::{MockNerDetector, NerSpan};
+        let text = "Wei Li joined the team. The Li River is beautiful.";
+        let mock = MockNerDetector {
+            spans: vec![NerSpan {
+                text: "Wei".into(),
+                start: 0,
+                end: 3,
+                score: 0.9,
+                label: "PER".into(),
+            }],
+        };
+        let mut a = Anonymizer::new(0.0);
+        a.set_ner_detector(Box::new(mock));
+        let (result, _dets) = a.anonymize_text(text);
+        // "Li River" should NOT be anonymized — "Li" is too short for bare last name matching
+        assert!(
+            result.contains("Li River"),
+            "Short last name 'Li' should not trigger bare last name consistency: result = {result}"
         );
     }
 
@@ -3591,5 +3656,956 @@ example-air.com"#;
             dets
         );
         assert!(result.contains("[PASSWORD_"));
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Battle tests for Phase 1 entities
+    // ════════════════════════════════════════════════════════════════════
+
+    // ── PHONE_NUMBER (international) battle tests ──
+
+    #[test]
+    fn test_intl_phone_japan() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("tel: +81 3 1234 5678");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "Japan phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_brazil() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("contact: +55 11 98765 4321");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "Brazil phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_australia() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("phone +61 2 9876 5432");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "Australia phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_india() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("mobile +91 98765 43210");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "India phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_e164_strict() {
+        let mut a = Anonymizer::new(0.0);
+        // E.164 format with no spaces
+        let (result, dets) = a.anonymize_text("sms +447911123456");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "E.164 phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_dot_separated() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("fax: +49.30.123456");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "dot-separated phone not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_multiple_context_keywords() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("whatsapp +971 50 123 4567");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "'whatsapp' should trigger phone detection: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_NUMBER_"));
+    }
+
+    #[test]
+    fn test_intl_phone_not_confused_with_math() {
+        let mut a = Anonymizer::new(0.0);
+        // "+1 212 555 1234" without any context should NOT match
+        let (_, dets) = a.anonymize_text("result is +1 212 555 1234 end");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "phone without context in math-like text should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_intl_phone_short_number_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // Only 5 digits after country code — too short
+        let (_, dets) = a.anonymize_text("tel +1 12345");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "too-short intl phone should not match: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_intl_phone_consistency_same_number_same_token() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) =
+            a.anonymize_text("call +44 20 7946 0958, again call +44 20 7946 0958");
+        let tokens: Vec<_> = a
+            .mapping
+            .mappings
+            .keys()
+            .filter(|k| k.starts_with("[PHONE_NUMBER_"))
+            .collect();
+        assert_eq!(tokens.len(), 1, "same phone number should map to one token");
+        let token = tokens[0].as_str();
+        assert_eq!(
+            result.matches(token).count(),
+            2,
+            "same token should appear twice"
+        );
+    }
+
+    // ── PHONE_EXTENSION battle tests ──
+
+    #[test]
+    fn test_phone_extension_extension_keyword() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("reach us at extension 12345");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_EXTENSION"),
+            "extension keyword not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_EXTENSION_"));
+    }
+
+    #[test]
+    fn test_phone_extension_case_insensitive() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("call EXT 9876");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_EXTENSION"),
+            "case-insensitive ext not detected: {dets:?}"
+        );
+        assert!(result.contains("[PHONE_EXTENSION_"));
+    }
+
+    #[test]
+    fn test_phone_extension_two_digit_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // Only 2 digits — below min of 3
+        let (_, dets) = a.anonymize_text("ext 42");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PHONE_EXTENSION"),
+            "2-digit extension should not match: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_phone_extension_six_digit_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // 6 digits — above max of 5
+        let (_, dets) = a.anonymize_text("poste 123456");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PHONE_EXTENSION"),
+            "6-digit extension should not match: {dets:?}"
+        );
+    }
+
+    // ── IBAN_CODE (generic) battle tests ──
+
+    #[test]
+    fn test_iban_dutch() {
+        let mut a = Anonymizer::new(0.0);
+        // NL91 ABNA 0417 1643 00 — valid mod-97
+        let (result, dets) = a.anonymize_text("bank account NL91ABNA0417164300");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "Dutch IBAN not detected: {dets:?}"
+        );
+        assert!(result.contains("[IBAN_CODE_"));
+    }
+
+    #[test]
+    fn test_iban_belgian() {
+        let mut a = Anonymizer::new(0.0);
+        // BE68 5390 0754 7034 — valid mod-97
+        let (result, dets) = a.anonymize_text("iban: BE68539007547034");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "Belgian IBAN not detected: {dets:?}"
+        );
+        assert!(result.contains("[IBAN_CODE_"));
+    }
+
+    #[test]
+    fn test_iban_swiss() {
+        let mut a = Anonymizer::new(0.0);
+        // CH93 0076 2011 6238 5295 7 — valid mod-97
+        let (result, dets) = a.anonymize_text("swift transfer CH9300762011623852957");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "Swiss IBAN not detected: {dets:?}"
+        );
+        assert!(result.contains("[IBAN_CODE_"));
+    }
+
+    #[test]
+    fn test_iban_with_spaces() {
+        let mut a = Anonymizer::new(0.0);
+        // Same German IBAN but with standard 4-char groups
+        let (result, dets) =
+            a.anonymize_text("payment DE89 3704 0044 0532 0130 00");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "spaced IBAN not detected: {dets:?}"
+        );
+        assert!(result.contains("[IBAN_CODE_"));
+    }
+
+    #[test]
+    fn test_iban_off_by_one_checksum_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // DE90 instead of DE89 — should fail mod-97
+        let (_, dets) = a.anonymize_text("iban DE90370400440532013000");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "IBAN with wrong check digits should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_iban_lowercase_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // Country code must be uppercase per pattern
+        let (_, dets) = a.anonymize_text("iban de89370400440532013000");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "lowercase IBAN should not match the regex: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_iban_too_short_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // 4 check + only 6 BBAN chars = too short
+        let (_, dets) = a.anonymize_text("iban XX12ABCDEF");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "too-short IBAN should not match: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_iban_roundtrip() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "virement sur le compte iban DE89370400440532013000";
+        let (anon, _) = a.anonymize_text(input);
+        let restored = a.mapping.restore(&anon);
+        assert_eq!(restored, input, "IBAN roundtrip should restore original");
+    }
+
+    // ── MAC_ADDRESS battle tests ──
+
+    #[test]
+    fn test_mac_address_mixed_case() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("device 0A:1b:2C:3d:4E:5f online");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "mixed-case MAC not detected: {dets:?}"
+        );
+        assert!(result.contains("[MAC_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_mac_address_cisco_uppercase() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("interface AABB.CCDD.EEFF");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "uppercase Cisco MAC not detected: {dets:?}"
+        );
+        assert!(result.contains("[MAC_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_mac_address_near_broadcast_still_detected() {
+        let mut a = Anonymizer::new(0.0);
+        // ff:ff:ff:ff:ff:fe — one bit off from broadcast, should be valid
+        let (result, dets) = a.anonymize_text("device ff:ff:ff:ff:ff:fe connected");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "near-broadcast MAC should be valid: {dets:?}"
+        );
+        assert!(result.contains("[MAC_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_mac_address_broadcast_cisco_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("broadcast ffff.ffff.ffff");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "Cisco broadcast MAC should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_mac_address_null_hyphen_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("empty 00-00-00-00-00-00 address");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "null hyphen MAC should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_mac_address_null_cisco_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("default 0000.0000.0000");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "null Cisco MAC should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_mac_address_in_json_log() {
+        let mut a = Anonymizer::new(0.0);
+        let input = r#"{"device_mac": "AB:CD:EF:01:23:45", "status": "online"}"#;
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "MAC in JSON should be detected: {dets:?}"
+        );
+        assert!(!result.contains("AB:CD:EF:01:23:45"));
+    }
+
+    #[test]
+    fn test_mac_address_consistency() {
+        let mut a = Anonymizer::new(0.0);
+        let (_result, _) =
+            a.anonymize_text("device 0A:1B:2C:3D:4E:5F and again 0A:1B:2C:3D:4E:5F");
+        let tokens: Vec<_> = a
+            .mapping
+            .mappings
+            .keys()
+            .filter(|k| k.starts_with("[MAC_ADDRESS_"))
+            .collect();
+        assert_eq!(tokens.len(), 1, "same MAC should map to one token");
+    }
+
+    #[test]
+    fn test_mac_address_not_confused_with_ipv6() {
+        let mut a = Anonymizer::new(0.0);
+        // Full IPv6 should be IP_ADDRESS, not MAC_ADDRESS
+        let (_, dets) =
+            a.anonymize_text("host 2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+        let mac_dets: Vec<_> = dets
+            .iter()
+            .filter(|d| d.entity_type == "MAC_ADDRESS")
+            .collect();
+        assert!(
+            mac_dets.is_empty(),
+            "IPv6 address should not be detected as MAC: {mac_dets:?}"
+        );
+    }
+
+    // ── DATE_TIME battle tests ──
+
+    #[test]
+    fn test_date_iso8601_with_offset() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("sent at 2024-06-15T09:30:00+02:00");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "ISO date with offset not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_iso8601_with_milliseconds() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) =
+            a.anonymize_text("logged at 2024-01-15T14:30:00.123Z");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "ISO date with ms not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_iso8601_date_only() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("born 1990-05-20");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "ISO date-only not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_iso8601_space_separator() {
+        let mut a = Anonymizer::new(0.0);
+        // Space instead of T between date and time (common in logs)
+        let (result, dets) =
+            a.anonymize_text("created 2024-01-15 14:30:00Z");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "ISO date with space separator not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_eu_dot_format_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        // dd.mm.yyyy with context
+        let (result, dets) = a.anonymize_text("date de naissance: 25.12.1990");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "EU dot date not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_eu_various_contexts() {
+        let contexts = [
+            "departure 15/03/2024",
+            "arrival date 15/03/2024",
+            "dob: 15/03/1990",
+            "né le 15/03/1990",
+            "émis le 15/03/2024",
+        ];
+        for input in &contexts {
+            let mut a = Anonymizer::new(0.0);
+            let (_, dets) = a.anonymize_text(input);
+            assert!(
+                dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+                "EU date not detected in '{input}': {dets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_date_written_french_premier() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("publié le 1er mars 2023");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "'1er mars' not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_written_french_all_months() {
+        let months = [
+            "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+            "août", "septembre", "octobre", "novembre", "décembre",
+        ];
+        for month in &months {
+            let input = format!("le 15 {month} 2024");
+            let mut a = Anonymizer::new(0.0);
+            let (_, dets) = a.anonymize_text(&input);
+            assert!(
+                dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+                "French month '{month}' not detected: {dets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_date_written_french_alt_spelling() {
+        let mut a = Anonymizer::new(0.0);
+        // "fevrier" without accent and "aout" without accent
+        let (_, dets) = a.anonymize_text("le 15 fevrier 2024");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "'fevrier' (no accent) not detected: {dets:?}"
+        );
+        let mut a2 = Anonymizer::new(0.0);
+        let (_, dets2) = a2.anonymize_text("le 15 aout 2024");
+        assert!(
+            dets2.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "'aout' (no accent) not detected: {dets2:?}"
+        );
+    }
+
+    #[test]
+    fn test_date_written_english_all_months() {
+        let months = [
+            "January", "February", "March", "April", "May", "June", "July",
+            "August", "September", "October", "November", "December",
+        ];
+        for month in &months {
+            let input = format!("{month} 15, 2024");
+            let mut a = Anonymizer::new(0.0);
+            let (_, dets) = a.anonymize_text(&input);
+            assert!(
+                dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+                "English month '{month}' not detected: {dets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_date_written_english_abbreviated() {
+        let abbrevs = ["Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        for abbr in &abbrevs {
+            let input = format!("{abbr} 15, 2024");
+            let mut a = Anonymizer::new(0.0);
+            let (_, dets) = a.anonymize_text(&input);
+            assert!(
+                dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+                "English abbreviated month '{abbr}' not detected: {dets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_date_written_english_ordinal() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("born March 3rd, 2024");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "ordinal date not detected: {dets:?}"
+        );
+        assert!(result.contains("[DATE_TIME_"));
+    }
+
+    #[test]
+    fn test_date_invalid_month_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // Month 13 doesn't exist
+        let (_, dets) = a.anonymize_text("2024-13-01");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "invalid month 13 should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_date_invalid_day_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // Day 32 doesn't exist
+        let (_, dets) = a.anonymize_text("2024-01-32");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "invalid day 32 should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_date_year_boundary() {
+        let mut a = Anonymizer::new(0.0);
+        // Year 1899 — out of 19xx/20xx range for EU format
+        let (_, dets) = a.anonymize_text("date 15/01/1899");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "year 1899 should not match dd/mm/yyyy pattern: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_date_not_confused_with_semver() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("version 2.11.3");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "semver should not match as date: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_date_not_confused_with_decimal() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("temperature 98.6.50 degrees");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "decimal-like number should not be a date: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_date_iso_roundtrip() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "created at 2024-06-15T09:30:00Z";
+        let (anon, _) = a.anonymize_text(input);
+        let restored = a.mapping.restore(&anon);
+        assert_eq!(restored, input, "ISO date roundtrip should restore original");
+    }
+
+    // ── IPv6 battle tests ──
+
+    #[test]
+    fn test_ipv6_real_world_dns() {
+        let mut a = Anonymizer::new(0.0);
+        // Google public DNS
+        let (result, dets) = a.anonymize_text("dns server 2001:4860:4860::8888");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "Google DNS IPv6 not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_documentation_prefix() {
+        let mut a = Anonymizer::new(0.0);
+        // 2001:db8::/32 is documentation prefix
+        let (result, dets) = a.anonymize_text("example 2001:db8:1::ab9:C0A8:102");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "documentation IPv6 not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_uppercase() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) =
+            a.anonymize_text("host 2001:0DB8:85A3:0000:0000:8A2E:0370:7334");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "uppercase IPv6 not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_trailing_double_colon() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("prefix 2001:db8::");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "trailing :: IPv6 not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_mapped_v4_private() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("mapped ::ffff:10.0.0.1");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "IPv4-mapped private not detected: {dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_in_url_bracket() {
+        let mut a = Anonymizer::new(0.0);
+        // IPv6 in URL brackets — URL should be detected
+        let (result, dets) =
+            a.anonymize_text("visit http://[2001:db8::1]:8080/path");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "URL"),
+            "URL with IPv6 not detected: {dets:?}"
+        );
+        assert!(result.contains("[URL_"));
+    }
+
+    #[test]
+    fn test_ipv6_and_ipv4_together() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) =
+            a.anonymize_text("primary 192.168.1.1 secondary 2001:db8::1");
+        let ip_dets: Vec<_> = dets
+            .iter()
+            .filter(|d| d.entity_type == "IP_ADDRESS")
+            .collect();
+        assert_eq!(
+            ip_dets.len(),
+            2,
+            "should detect both IPv4 and IPv6: {ip_dets:?}"
+        );
+        assert!(result.contains("[IP_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_ipv6_not_hex_string() {
+        let mut a = Anonymizer::new(0.0);
+        // Random hex without colons should not match
+        let (_, dets) = a.anonymize_text("hash 0db885a30000000008a2e03707334");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "hex string without colons should not be IPv6: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_ipv6_consistency() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, _) = a.anonymize_text("host 2001:db8::1 and 2001:db8::1");
+        let tokens: Vec<_> = a
+            .mapping
+            .mappings
+            .keys()
+            .filter(|k| k.starts_with("[IP_ADDRESS_"))
+            .collect();
+        assert_eq!(tokens.len(), 1, "same IPv6 should map to one token");
+    }
+
+    // ── US_SSN battle tests ──
+
+    #[test]
+    fn test_us_ssn_valid_range() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("SSN: 001-01-0001");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "min valid SSN not detected: {dets:?}"
+        );
+        assert!(result.contains("[US_SSN_"));
+    }
+
+    #[test]
+    fn test_us_ssn_area_666_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("SSN: 666-12-3456");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "SSN area 666 should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_area_900_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("social security 900-12-3456");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "SSN area 900+ should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_zero_serial_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("SSN: 123-45-0000");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "SSN with 0000 serial should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_various_contexts() {
+        let inputs = [
+            "social security number: 123-45-6789",
+            "SSN 123-45-6789",
+            "tax id 123-45-6789",
+        ];
+        for input in &inputs {
+            let mut a = Anonymizer::new(0.0);
+            let (_, dets) = a.anonymize_text(input);
+            assert!(
+                dets.iter().any(|d| d.entity_type == "US_SSN"),
+                "US SSN not detected in '{input}': {dets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_us_ssn_not_confused_with_date_dash() {
+        let mut a = Anonymizer::new(0.0);
+        // 2024-01-15 — looks like dashes but is a date
+        let (_, dets) = a.anonymize_text("SSN: 2024-01-15");
+        // This should be DATE_TIME, not US_SSN (date_iso8601 pattern)
+        // 2024 as area is >=900 so SSN validator would reject anyway
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "ISO date should not match as US_SSN: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_us_ssn_roundtrip() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "SSN: 123-45-6789";
+        let (anon, _) = a.anonymize_text(input);
+        let restored = a.mapping.restore(&anon);
+        assert_eq!(restored, input, "US SSN roundtrip failed");
+    }
+
+    // ── MEDICAL_LICENSE battle tests ──
+
+    #[test]
+    fn test_medical_license_dea_number() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("DEA number: AB1234567");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MEDICAL_LICENSE"),
+            "DEA number not detected: {dets:?}"
+        );
+        assert!(result.contains("[MEDICAL_LICENSE_"));
+    }
+
+    #[test]
+    fn test_medical_license_npi() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("NPI provider D1234567890");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MEDICAL_LICENSE"),
+            "NPI number not detected: {dets:?}"
+        );
+        assert!(result.contains("[MEDICAL_LICENSE_"));
+    }
+
+    #[test]
+    fn test_medical_license_not_random_alphanum() {
+        let mut a = Anonymizer::new(0.0);
+        // Without medical context, XX1234567 should not match
+        let (_, dets) = a.anonymize_text("reference XX1234567");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "MEDICAL_LICENSE"),
+            "random alphanumeric should not match without context: {dets:?}"
+        );
+    }
+
+    // ── Cross-entity battle tests ──
+
+    #[test]
+    fn test_log_line_mixed_phase1_entities() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "2024-06-15T10:30:00Z device mac 0A:1B:2C:3D:4E:5F connected from 2001:db8::1";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "ISO date not detected in mixed line: {dets:?}"
+        );
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "MAC not detected in mixed line: {dets:?}"
+        );
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "IPv6 not detected in mixed line: {dets:?}"
+        );
+        assert!(!result.contains("0A:1B:2C:3D:4E:5F"));
+        assert!(!result.contains("2001:db8::1"));
+    }
+
+    #[test]
+    fn test_network_audit_log() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "2024-03-15T08:45:00+01:00 DHCP lease: mac 00:1A:2B:3C:4D:5E \
+            assigned 192.168.1.42, gateway 192.168.1.1";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "timestamp missing: {dets:?}"
+        );
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "MAC missing: {dets:?}"
+        );
+        let ip_count = dets
+            .iter()
+            .filter(|d| d.entity_type == "IP_ADDRESS")
+            .count();
+        assert!(ip_count >= 2, "should detect at least 2 IPs: {dets:?}");
+        assert!(!result.contains("00:1A:2B:3C:4D:5E"));
+        assert!(!result.contains("192.168.1.42"));
+    }
+
+    #[test]
+    fn test_banking_log_iban_and_phone() {
+        let mut a = Anonymizer::new(0.0);
+        let input = "virement de 500EUR sur le compte iban DE89370400440532013000, \
+            contact tel +49 30 12345678";
+        let (result, dets) = a.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
+            "IBAN not detected: {dets:?}"
+        );
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+            "phone not detected: {dets:?}"
+        );
+        assert!(!result.contains("DE89370400440532013000"));
+        assert!(!result.contains("+49"));
+    }
+
+    #[test]
+    fn test_json_with_phase1_entities() {
+        let mut a = Anonymizer::new(0.0);
+        let json = serde_json::json!({
+            "timestamp": "2024-01-15T14:30:00Z",
+            "device_mac": "AB:CD:EF:01:23:45",
+            "client_ip": "192.168.1.100",
+            "iban": "iban DE89370400440532013000",
+            "contact": "tel +44 20 7946 0958"
+        });
+        let (result, dets) = a.anonymize_json_value(&json);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "JSON timestamp not detected: {dets:?}"
+        );
+        assert!(
+            dets.iter().any(|d| d.entity_type == "MAC_ADDRESS"),
+            "JSON MAC not detected: {dets:?}"
+        );
+        assert!(
+            dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
+            "JSON IP not detected: {dets:?}"
+        );
+        assert!(result["device_mac"]
+            .as_str()
+            .unwrap()
+            .contains("[MAC_ADDRESS_"));
+    }
+
+    #[test]
+    fn test_all_phase1_entities_coexist() {
+        // Verify no entity type accidentally shadows another
+        let mut a = Anonymizer::new(0.0);
+        let input = "2024-01-15T10:00:00Z server 192.168.1.1 ipv6 2001:db8::1 \
+            mac 0A:1B:2C:3D:4E:5F contact tel +44 20 7946 0958 \
+            iban DE89370400440532013000 SSN: 123-45-6789 poste 4510 \
+            medical license ME12345678";
+        let (result, dets) = a.anonymize_text(input);
+        let types: Vec<&str> = dets.iter().map(|d| &*d.entity_type).collect();
+        assert!(types.contains(&"DATE_TIME"), "DATE_TIME missing: {types:?}");
+        assert!(types.contains(&"IP_ADDRESS"), "IP_ADDRESS missing: {types:?}");
+        assert!(types.contains(&"MAC_ADDRESS"), "MAC_ADDRESS missing: {types:?}");
+        assert!(types.contains(&"PHONE_NUMBER"), "PHONE_NUMBER missing: {types:?}");
+        assert!(types.contains(&"IBAN_CODE"), "IBAN_CODE missing: {types:?}");
+        assert!(types.contains(&"US_SSN"), "US_SSN missing: {types:?}");
+        assert!(types.contains(&"PHONE_EXTENSION"), "PHONE_EXTENSION missing: {types:?}");
+        assert!(types.contains(&"MEDICAL_LICENSE"), "MEDICAL_LICENSE missing: {types:?}");
+        // Verify all PII is actually replaced in output
+        assert!(!result.contains("192.168.1.1"));
+        assert!(!result.contains("0A:1B:2C:3D:4E:5F"));
+        assert!(!result.contains("123-45-6789"));
+        assert!(!result.contains("ME12345678"));
     }
 }
