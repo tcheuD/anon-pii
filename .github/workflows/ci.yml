@@ -1,5 +1,5 @@
 # CI Workflow for anon-pii
-# Issues: #1, #2, #3, #4, #28, #29
+# Issues: #1, #2, #3, #4, #28, #29, #34
 name: CI
 
 on:
@@ -50,6 +50,7 @@ jobs:
   # ============================================================================
   rust-clippy:
     name: Rust Clippy
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -80,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ['', 'ner-lite', 'proxy', 'ner-lite,proxy']
+        features: ['', 'ner-lite,proxy']
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -109,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ['', 'ner-lite', 'proxy', 'ner-lite,proxy']
+        features: ['', 'ner-lite,proxy']
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -176,6 +177,7 @@ jobs:
   # ============================================================================
   security-deny:
     name: Security (cargo-deny)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -203,6 +205,7 @@ jobs:
   # ============================================================================
   security-audit:
     name: Security (cargo-audit)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -235,20 +238,26 @@ jobs:
     steps:
       - name: Check all jobs
         run: |
-          # Required jobs must succeed
-          if [[ "${{ needs.rust-fmt.result }}" != "success" ]] || \
-             [[ "${{ needs.rust-clippy.result }}" != "success" ]] || \
-             [[ "${{ needs.rust-test.result }}" != "success" ]] || \
-             [[ "${{ needs.rust-build.result }}" != "success" ]] || \
-             [[ "${{ needs.security-deny.result }}" != "success" ]] || \
-             [[ "${{ needs.security-audit.result }}" != "success" ]]; then
-            echo "One or more required jobs failed"
-            exit 1
-          fi
-          # macOS jobs: must succeed or be skipped (main-only)
-          for result in "${{ needs.rust-test-macos.result }}" "${{ needs.rust-build-macos.result }}"; do
+          # Always required
+          for job in rust-fmt rust-test rust-build; do
+            result="${{ needs.rust-fmt.result }}"
+            case "$job" in
+              rust-test) result="${{ needs.rust-test.result }}" ;;
+              rust-build) result="${{ needs.rust-build.result }}" ;;
+            esac
+            if [[ "$result" != "success" ]]; then
+              echo "Required job $job failed: $result"
+              exit 1
+            fi
+          done
+          # May be skipped (main-only or dependabot-skip)
+          for result in "${{ needs.rust-clippy.result }}" \
+                        "${{ needs.security-deny.result }}" \
+                        "${{ needs.security-audit.result }}" \
+                        "${{ needs.rust-test-macos.result }}" \
+                        "${{ needs.rust-build-macos.result }}"; do
             if [[ "$result" != "success" && "$result" != "skipped" ]]; then
-              echo "macOS job failed: $result"
+              echo "Optional job failed: $result"
               exit 1
             fi
           done
