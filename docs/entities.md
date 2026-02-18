@@ -35,12 +35,13 @@
 | `FLIGHT_NUMBER` | Amelia codes (IZM, RLA, AME, GJT, AF), IATA/ICAO (context-aware) | 0.4 - 0.9 |
 | `CREW_CODE` | 3-letter crew codes (context-aware, with blocklist) | 0.85 |
 
-## Person Names (NER)
+## NER Entities
 
 | Entity | Backend | Score | Feature flag |
 |--------|---------|-------|--------------|
 | `PERSON` | ML — DistilBERT multilingual NER (ONNX, INT8) | 0.6 - 1.0 | `ner` |
 | `PERSON` | Heuristic — title patterns + name dictionary | 0.55 - 0.80 | `ner-lite` |
+| `LOCATION` | ML — DistilBERT multilingual NER (ONNX, INT8) | 0.6 - 1.0 | `ner` |
 
 Enabled with `--ner`. See [NER setup](ner.md).
 
