@@ -37,7 +37,7 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 /// Generate a hex string of `n_bytes` random bytes from the OS CSPRNG.
 pub fn crypto_random_hex(n_bytes: usize) -> String {
     let mut buf = vec![0u8; n_bytes];
-    getrandom::getrandom(&mut buf).expect("OS CSPRNG unavailable");
+    getrandom::fill(&mut buf).expect("OS CSPRNG unavailable");
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
