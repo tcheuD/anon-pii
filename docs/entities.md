@@ -8,7 +8,7 @@
 |--------|-------------|-------|
 | `EMAIL_ADDRESS` | Email addresses | 0.9 |
 | `URL` | HTTP/HTTPS URLs | 0.9 |
-| `IP_ADDRESS` | IPv4 addresses | 0.9 |
+| `IP_ADDRESS` | IPv4 and IPv6 addresses (full, collapsed, link-local, loopback, IPv4-mapped) | 0.9 |
 | `CREDIT_CARD` | 16-digit card numbers (Luhn validated, context-aware) | 0.7 |
 | `UUID` | Standard UUIDs | 0.95 |
 | `CRYPTO` | Bitcoin and Ethereum addresses | 0.9 |
