@@ -1,0 +1,372 @@
+//! Validation functions for PII patterns.
+//!
+//! These validators are used by the detection pipeline to filter out false positives
+//! based on checksum validation (Luhn, mod-97, etc.) or structural rules.
+
+/// Validate US SSN: reject invalid area numbers (000, 666, 900-999),
+/// zero middle group (00), and zero serial group (0000).
+pub fn valid_us_ssn(ssn: &str) -> bool {
+    let digits: String = ssn.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    let area: u32 = digits[0..3].parse().unwrap_or(0);
+    let group: u32 = digits[3..5].parse().unwrap_or(0);
+    let serial: u32 = digits[5..9].parse().unwrap_or(0);
+    // Area 000, 666, 900-999 are invalid
+    if area == 0 || area == 666 || area >= 900 {
+        return false;
+    }
+    if group == 0 || serial == 0 {
+        return false;
+    }
+    true
+}
+
+/// Reject broadcast (ff:ff:ff:ff:ff:ff) and null (00:00:00:00:00:00) MAC addresses.
+pub fn valid_mac(mac: &str) -> bool {
+    let hex: String = mac
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    hex.len() == 12 && hex != "000000000000" && hex != "ffffffffffff"
+}
+
+/// IBAN mod-97 validation (ISO 7064).
+/// Move first 4 chars to end, convert letters (A=10..Z=35), compute mod 97 == 1.
+pub fn iban_mod97(iban: &str) -> bool {
+    let clean: String = iban.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    if clean.len() < 5 {
+        return false;
+    }
+    // Rearrange: move first 4 chars to end
+    let rearranged = format!("{}{}", &clean[4..], &clean[..4]);
+    // Convert to digit string: letters become two-digit numbers (A=10..Z=35)
+    let mut digits = String::with_capacity(rearranged.len() * 2);
+    for c in rearranged.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else {
+            let val = (c.to_ascii_uppercase() as u32) - b'A' as u32 + 10;
+            digits.push_str(&val.to_string());
+        }
+    }
+    // Compute mod 97 on the large number (process in chunks to avoid bigint)
+    let mut remainder: u64 = 0;
+    for ch in digits.chars() {
+        remainder = remainder * 10 + ch.to_digit(10).unwrap() as u64;
+        remainder %= 97;
+    }
+    remainder == 1
+}
+
+/// Luhn algorithm validation for credit card numbers.
+pub fn luhn_check(number: &str) -> bool {
+    let digits: Vec<u32> = number
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() < 13 {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, &d)| {
+            if i % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum.is_multiple_of(10)
+}
+
+/// Validate that a matched number starts with a known card issuer prefix (IIN/BIN).
+/// Covers Visa, Mastercard, Amex, Discover, Diners Club, JCB, UnionPay, and Maestro.
+pub fn valid_card_prefix(number: &str) -> bool {
+    let digits: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 13 {
+        return false;
+    }
+
+    let d = digits.as_bytes();
+    let d1 = d[0];
+    let d2 = &digits[..2];
+    let d4 = if digits.len() >= 4 { &digits[..4] } else { "" };
+    let d6 = if digits.len() >= 6 { &digits[..6] } else { "" };
+
+    // Visa: starts with 4
+    if d1 == b'4' {
+        return true;
+    }
+
+    // Mastercard: 51-55 or 2221-2720
+    if let Ok(n2) = d2.parse::<u32>() {
+        if (51..=55).contains(&n2) {
+            return true;
+        }
+    }
+    if d4.len() == 4 {
+        if let Ok(n4) = d4.parse::<u32>() {
+            if (2221..=2720).contains(&n4) {
+                return true;
+            }
+        }
+    }
+
+    // Amex: 34, 37
+    if d2 == "34" || d2 == "37" {
+        return true;
+    }
+
+    // Discover: 6011, 622126-622925, 644-649, 65
+    if d4 == "6011" || d2 == "65" {
+        return true;
+    }
+    if let Ok(n3) = digits[..3].parse::<u32>() {
+        if (644..=649).contains(&n3) {
+            return true;
+        }
+    }
+    if d6.len() == 6 {
+        if let Ok(n6) = d6.parse::<u64>() {
+            if (622126..=622925).contains(&n6) {
+                return true;
+            }
+        }
+    }
+
+    // JCB: 3528-3589
+    if d4.len() == 4 {
+        if let Ok(n4) = d4.parse::<u32>() {
+            if (3528..=3589).contains(&n4) {
+                return true;
+            }
+        }
+    }
+
+    // UnionPay: 62
+    if d2 == "62" {
+        return true;
+    }
+
+    // Maestro: 5018, 5020, 5038, 5893, 6304, 6759, 6761, 6762, 6763
+    if matches!(
+        d4,
+        "5018" | "5020" | "5038" | "5893" | "6304" | "6759" | "6761" | "6762" | "6763"
+    ) {
+        return true;
+    }
+
+    // Diners Club: 300-305, 36, 38
+    if d2 == "36" || d2 == "38" {
+        return true;
+    }
+    if digits.len() >= 3 {
+        if let Ok(n3) = digits[..3].parse::<u32>() {
+            if (300..=305).contains(&n3) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_iban_mod97_valid() {
+        assert!(iban_mod97("DE89370400440532013000"));
+        assert!(iban_mod97("GB29NWBK60161331926819"));
+        assert!(iban_mod97("ES9121000418450200051332"));
+        assert!(iban_mod97("FR7630006000011234567890189"));
+        // With spaces
+        assert!(iban_mod97("DE89 3704 0044 0532 0130 00"));
+        assert!(iban_mod97("GB29 NWBK 6016 1331 9268 19"));
+    }
+
+    #[test]
+    fn test_iban_mod97_invalid() {
+        assert!(!iban_mod97("DE00370400440532013000")); // bad check digits
+        assert!(!iban_mod97("XX12345")); // too short / garbage
+        assert!(!iban_mod97("DE89370400440532013001")); // off by one
+    }
+
+    #[test]
+    fn test_luhn_valid_cards() {
+        // Known valid test card numbers
+        assert!(luhn_check("4111111111111111")); // Visa
+        assert!(luhn_check("5500000000000004")); // Mastercard
+        assert!(luhn_check("340000000000009")); // Amex (15 digits)
+        assert!(luhn_check("6011000000000004")); // Discover
+    }
+
+    #[test]
+    fn test_luhn_invalid() {
+        assert!(!luhn_check("4111111111111112")); // off by one
+        assert!(!luhn_check("1234567890123456")); // random
+        assert!(!luhn_check("123")); // too short
+    }
+
+    #[test]
+    fn test_valid_card_prefix_known_issuers() {
+        assert!(valid_card_prefix("4111111111111111")); // Visa
+        assert!(valid_card_prefix("5100000000000000")); // Mastercard 51
+        assert!(valid_card_prefix("5500000000000000")); // Mastercard 55
+        assert!(valid_card_prefix("2221000000000000")); // Mastercard 2221
+        assert!(valid_card_prefix("2720000000000000")); // Mastercard 2720
+        assert!(valid_card_prefix("340000000000000")); // Amex 34
+        assert!(valid_card_prefix("370000000000000")); // Amex 37
+        assert!(valid_card_prefix("6011000000000000")); // Discover
+        assert!(valid_card_prefix("6500000000000000")); // Discover 65
+        assert!(valid_card_prefix("3528000000000000")); // JCB
+        assert!(valid_card_prefix("6200000000000000")); // UnionPay
+        assert!(valid_card_prefix("3600000000000000")); // Diners 36
+    }
+
+    #[test]
+    fn test_valid_card_prefix_rejects_unknown() {
+        // Numbers starting with digits not assigned to any major issuer
+        assert!(!valid_card_prefix("0000000000000000"));
+        assert!(!valid_card_prefix("1000000000000000"));
+        assert!(!valid_card_prefix("7000000000000000"));
+        assert!(!valid_card_prefix("8000000000000000"));
+        assert!(!valid_card_prefix("9000000000000000"));
+    }
+
+    #[test]
+    fn test_valid_card_prefix_with_separators() {
+        // Digits are filtered, so separators shouldn't matter
+        assert!(valid_card_prefix("4111 1111 1111 1111"));
+        assert!(valid_card_prefix("4111-1111-1111-1111"));
+    }
+
+    #[test]
+    fn test_combined_luhn_and_prefix_rejects_random_16_digit() {
+        // 9999999999999999 - no valid prefix, even if it somehow passed Luhn
+        assert!(!valid_card_prefix("9999999999999999"));
+        // 1234567890123456 - prefix 1 is not a known issuer
+        assert!(!valid_card_prefix("1234567890123456"));
+    }
+
+    // ── iban_mod97 battle tests ──
+
+    #[test]
+    fn test_iban_mod97_all_countries() {
+        // Real IBANs from various countries (all pass mod-97)
+        let valid = [
+            "GB29NWBK60161331926819",     // UK
+            "DE89370400440532013000",       // Germany
+            "FR7630006000011234567890189",  // France
+            "ES9121000418450200051332",     // Spain
+            "IT60X0542811101000000123456",  // Italy
+            "NL91ABNA0417164300",           // Netherlands
+            "BE68539007547034",             // Belgium
+            "CH9300762011623852957",        // Switzerland
+            "AT611904300234573201",         // Austria
+            "PT50000201231234567890154",    // Portugal
+        ];
+        for iban in &valid {
+            assert!(iban_mod97(iban), "valid IBAN rejected: {iban}");
+        }
+    }
+
+    #[test]
+    fn test_iban_mod97_with_various_spacing() {
+        // Same IBAN with different spacing styles
+        assert!(iban_mod97("DE89 3704 0044 0532 0130 00"));
+        assert!(iban_mod97("DE89370400440532013000"));
+        assert!(iban_mod97("DE 89 37 04 00 44 05 32 01 30 00"));
+    }
+
+    #[test]
+    fn test_iban_mod97_check_digit_variations() {
+        // Only check digit 89 is valid for this BBAN
+        assert!(iban_mod97("DE89370400440532013000"));
+        assert!(!iban_mod97("DE88370400440532013000"));
+        assert!(!iban_mod97("DE90370400440532013000"));
+        assert!(!iban_mod97("DE00370400440532013000"));
+        assert!(!iban_mod97("DE99370400440532013000"));
+    }
+
+    #[test]
+    fn test_iban_mod97_edge_too_short() {
+        assert!(!iban_mod97("DE89"));
+        assert!(!iban_mod97(""));
+        assert!(!iban_mod97("AB"));
+    }
+
+    // ── valid_mac battle tests ──
+
+    #[test]
+    fn test_valid_mac_normal() {
+        assert!(valid_mac("00:1A:2B:3C:4D:5E"));
+        assert!(valid_mac("aa:bb:cc:dd:ee:ff"));
+    }
+
+    #[test]
+    fn test_valid_mac_all_formats() {
+        assert!(valid_mac("00:1A:2B:3C:4D:5E")); // colon
+        assert!(valid_mac("00-1A-2B-3C-4D-5E")); // hyphen
+        assert!(valid_mac("001A.2B3C.4D5E"));     // cisco
+    }
+
+    #[test]
+    fn test_valid_mac_rejects_special() {
+        assert!(!valid_mac("ff:ff:ff:ff:ff:ff")); // broadcast
+        assert!(!valid_mac("00:00:00:00:00:00")); // null
+        assert!(!valid_mac("FF:FF:FF:FF:FF:FF")); // broadcast uppercase
+    }
+
+    #[test]
+    fn test_valid_mac_near_boundaries() {
+        assert!(valid_mac("00:00:00:00:00:01")); // just above null
+        assert!(valid_mac("ff:ff:ff:ff:ff:fe")); // just below broadcast
+    }
+
+    // ── valid_us_ssn battle tests ──
+
+    #[test]
+    fn test_valid_us_ssn_good_numbers() {
+        assert!(valid_us_ssn("123-45-6789"));
+        assert!(valid_us_ssn("001-01-0001")); // minimum valid
+        assert!(valid_us_ssn("899-99-9999")); // max area < 900
+        assert!(valid_us_ssn("123 45 6789")); // spaces
+        assert!(valid_us_ssn("123456789"));   // compact
+    }
+
+    #[test]
+    fn test_valid_us_ssn_all_invalid_areas() {
+        assert!(!valid_us_ssn("000-12-3456")); // area 000
+        assert!(!valid_us_ssn("666-12-3456")); // area 666
+        assert!(!valid_us_ssn("900-12-3456")); // area 900
+        assert!(!valid_us_ssn("999-12-3456")); // area 999
+    }
+
+    #[test]
+    fn test_valid_us_ssn_zero_groups() {
+        assert!(!valid_us_ssn("123-00-6789")); // zero middle
+        assert!(!valid_us_ssn("123-45-0000")); // zero serial
+        assert!(!valid_us_ssn("123-00-0000")); // both zero
+    }
+
+    #[test]
+    fn test_valid_us_ssn_wrong_length() {
+        assert!(!valid_us_ssn("12-34-5678"));  // too few digits
+        assert!(!valid_us_ssn("1234-56-78901")); // too many digits
+        assert!(!valid_us_ssn(""));             // empty
+    }
+}
