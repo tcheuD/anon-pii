@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use regex::Regex;
 use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
@@ -8,6 +9,17 @@ use crate::patterns::{
     iban_mod97, luhn_check, valid_card_prefix, valid_mac, valid_us_ssn, CONTEXT_SCORE_BOOST,
     CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS,
 };
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum Operator {
+    /// Replace PII with tokens like [EMAIL_ADDRESS_a1b2c3d4] (default)
+    #[default]
+    Token,
+    /// Remove PII entirely (empty string)
+    Redact,
+    /// Keep original PII unchanged (detection-only / dry-run)
+    Keep,
+}
 
 /// Strip Unicode diacritics: "Gaël" → "Gael", "René" → "Rene".
 /// Uses NFD decomposition and removes combining marks.
@@ -258,6 +270,7 @@ pub struct Anonymizer {
     pub patterns: Vec<CompiledPattern>,
     pub mapping: Mapping,
     pub threshold: f64,
+    pub operator: Operator,
     ner_detector: Option<Box<dyn NerDetector>>,
 }
 
@@ -299,6 +312,7 @@ impl Anonymizer {
             patterns,
             mapping: Mapping::new(),
             threshold,
+            operator: Operator::default(),
             ner_detector: None,
         }
     }
@@ -850,8 +864,12 @@ impl Anonymizer {
         // Replace from end to start
         let mut result = text.to_string();
         for det in filtered.iter().rev() {
-            let token = self.mapping.add(det.entity_type, &det.original);
-            result = format!("{}{}{}", &result[..det.start], token, &result[det.end..]);
+            let replacement = match self.operator {
+                Operator::Token => self.mapping.add(det.entity_type, &det.original),
+                Operator::Redact => String::new(),
+                Operator::Keep => continue,
+            };
+            result = format!("{}{}{}", &result[..det.start], replacement, &result[det.end..]);
         }
 
         filtered.extend(url_inner_detections);
@@ -4797,5 +4815,98 @@ example-air.com"#;
         assert!(!result.contains("0A:1B:2C:3D:4E:5F"));
         assert!(!result.contains("123-45-6789"));
         assert!(!result.contains("ME12345678"));
+    }
+
+    // ── Operator tests ──
+
+    #[test]
+    fn test_operator_token_default() {
+        let mut a = Anonymizer::new(0.0);
+        assert_eq!(a.operator, Operator::Token);
+        let (result, dets) = a.anonymize_text("contact john@example.com");
+        assert!(!result.contains("john@example.com"));
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+        assert_eq!(dets.len(), 1);
+    }
+
+    #[test]
+    fn test_operator_redact_removes_pii() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Redact;
+        let (result, dets) = a.anonymize_text("contact john@example.com now");
+        assert_eq!(result, "contact  now");
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("[EMAIL_ADDRESS"));
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].entity_type, "EMAIL_ADDRESS");
+    }
+
+    #[test]
+    fn test_operator_keep_preserves_original() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Keep;
+        let input = "contact john@example.com now";
+        let (result, dets) = a.anonymize_text(input);
+        assert_eq!(result, input);
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].entity_type, "EMAIL_ADDRESS");
+    }
+
+    #[test]
+    fn test_operator_redact_multiple_entities() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Redact;
+        let (result, dets) = a.anonymize_text("email: john@example.com, ip: 192.168.1.1");
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("192.168.1.1"));
+        assert_eq!(result, "email: , ip: ");
+        assert_eq!(dets.len(), 2);
+    }
+
+    #[test]
+    fn test_operator_keep_still_detects() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Keep;
+        let (_, dets) = a.anonymize_text("email: john@example.com, ip: 192.168.1.1");
+        assert_eq!(dets.len(), 2);
+        let types: Vec<&str> = dets.iter().map(|d| d.entity_type).collect();
+        assert!(types.contains(&"EMAIL_ADDRESS"));
+        assert!(types.contains(&"IP_ADDRESS"));
+    }
+
+    #[test]
+    fn test_operator_redact_no_mapping_entries() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Redact;
+        let _ = a.anonymize_text("john@example.com");
+        assert!(a.mapping.mappings.is_empty());
+    }
+
+    #[test]
+    fn test_operator_keep_no_mapping_entries() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Keep;
+        let _ = a.anonymize_text("john@example.com");
+        assert!(a.mapping.mappings.is_empty());
+    }
+
+    #[test]
+    fn test_operator_redact_json() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Redact;
+        let json: Value = serde_json::from_str(r#"{"email": "john@example.com"}"#).unwrap();
+        let (result, dets) = a.anonymize_json_value(&json);
+        assert_eq!(result["email"], "");
+        assert_eq!(dets.len(), 1);
+    }
+
+    #[test]
+    fn test_operator_keep_json() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Keep;
+        let json: Value = serde_json::from_str(r#"{"email": "john@example.com"}"#).unwrap();
+        let (result, dets) = a.anonymize_json_value(&json);
+        assert_eq!(result["email"], "john@example.com");
+        assert_eq!(dets.len(), 1);
     }
 }

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "proxy")]
 use std::sync::Arc;
 
-use anon::detection::{Anonymizer, Detection};
+use anon::detection::{Anonymizer, Detection, Operator};
 use anon::format::{detect_format, detect_json_indent, DetectedFormat};
 use anon::mapping::Mapping;
 use anon::patterns::{MAX_INPUT_SIZE, PATTERNS};
@@ -64,6 +64,10 @@ struct Cli {
     /// Minimum confidence score (0.0-1.0)
     #[arg(long, default_value = "0.5")]
     threshold: f64,
+
+    /// Anonymization operator
+    #[arg(long, value_enum, default_value = "token")]
+    operator: Operator,
 
     /// Language for detection
     #[arg(short, long, default_value = "en")]
@@ -737,6 +741,7 @@ fn main() -> io::Result<()> {
             }
 
             let mut anonymizer = Anonymizer::new(cli.threshold);
+            anonymizer.operator = cli.operator;
 
             // Wire up NER detector if requested (ML + heuristic combined)
             #[cfg(feature = "ner")]
