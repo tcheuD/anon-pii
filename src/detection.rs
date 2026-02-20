@@ -19,6 +19,47 @@ pub enum Operator {
     Redact,
     /// Keep original PII unchanged (detection-only / dry-run)
     Keep,
+    /// Replace PII with masking characters (e.g. *****)
+    Mask,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MaskConfig {
+    pub mask_char: char,
+    pub fixed_count: Option<usize>,
+    pub from_end: bool,
+}
+
+impl Default for MaskConfig {
+    fn default() -> Self {
+        Self {
+            mask_char: '*',
+            fixed_count: None,
+            from_end: false,
+        }
+    }
+}
+
+fn apply_mask(value: &str, config: &MaskConfig) -> String {
+    let char_count = value.chars().count();
+    let mask_len = config.fixed_count.unwrap_or(char_count);
+    if config.from_end {
+        let visible = char_count.saturating_sub(mask_len);
+        let prefix: String = value.chars().take(visible).collect();
+        format!(
+            "{}{}",
+            prefix,
+            config.mask_char.to_string().repeat(char_count - visible)
+        )
+    } else {
+        let visible = char_count.saturating_sub(mask_len);
+        let suffix: String = value.chars().skip(char_count - visible).collect();
+        format!(
+            "{}{}",
+            config.mask_char.to_string().repeat(char_count - visible),
+            suffix
+        )
+    }
 }
 
 /// Strip Unicode diacritics: "Gaël" → "Gael", "René" → "Rene".
@@ -271,6 +312,7 @@ pub struct Anonymizer {
     pub mapping: Mapping,
     pub threshold: f64,
     pub operator: Operator,
+    pub mask_config: MaskConfig,
     ner_detector: Option<Box<dyn NerDetector>>,
 }
 
@@ -313,6 +355,7 @@ impl Anonymizer {
             mapping: Mapping::new(),
             threshold,
             operator: Operator::default(),
+            mask_config: MaskConfig::default(),
             ner_detector: None,
         }
     }
@@ -868,6 +911,7 @@ impl Anonymizer {
                 Operator::Token => self.mapping.add(det.entity_type, &det.original),
                 Operator::Redact => String::new(),
                 Operator::Keep => continue,
+                Operator::Mask => apply_mask(&det.original, &self.mask_config),
             };
             result = format!("{}{}{}", &result[..det.start], replacement, &result[det.end..]);
         }
@@ -4908,5 +4952,105 @@ example-air.com"#;
         let (result, dets) = a.anonymize_json_value(&json);
         assert_eq!(result["email"], "john@example.com");
         assert_eq!(dets.len(), 1);
+    }
+
+    #[test]
+    fn test_operator_mask_default() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Mask;
+        let (result, dets) = a.anonymize_text("contact john@example.com now");
+        // "john@example.com" = 16 chars → 16 asterisks
+        assert_eq!(result, "contact **************** now");
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].entity_type, "EMAIL_ADDRESS");
+    }
+
+    #[test]
+    fn test_operator_mask_custom_char() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Mask;
+        a.mask_config.mask_char = '#';
+        let (result, _) = a.anonymize_text("contact john@example.com now");
+        assert_eq!(result, "contact ################ now");
+    }
+
+    #[test]
+    fn test_operator_mask_fixed_count() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Mask;
+        a.mask_config.fixed_count = Some(5);
+        // "john@example.com" is 16 chars, mask 5 from start → 11 visible at end
+        let (result, _) = a.anonymize_text("contact john@example.com now");
+        assert_eq!(result, "contact *****example.com now");
+    }
+
+    #[test]
+    fn test_operator_mask_from_end() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Mask;
+        a.mask_config.fixed_count = Some(5);
+        a.mask_config.from_end = true;
+        // "john@example.com" is 16 chars, mask 5 from end → 11 visible at start
+        let (result, _) = a.anonymize_text("contact john@example.com now");
+        assert_eq!(result, "contact john@exampl***** now");
+    }
+
+    #[test]
+    fn test_operator_mask_full_length_default() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Mask;
+        let (result, _) = a.anonymize_text("192.168.1.1");
+        assert_eq!(result, "***********");
+        assert_eq!(result.len(), "192.168.1.1".len());
+    }
+
+    #[test]
+    fn test_operator_mask_no_mapping_entries() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Mask;
+        let _ = a.anonymize_text("john@example.com");
+        assert!(a.mapping.mappings.is_empty());
+    }
+
+    #[test]
+    fn test_operator_mask_json() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Mask;
+        let json: Value = serde_json::from_str(r#"{"ip": "192.168.1.1"}"#).unwrap();
+        let (result, dets) = a.anonymize_json_value(&json);
+        assert_eq!(result["ip"], "***********");
+        assert_eq!(dets.len(), 1);
+    }
+
+    #[test]
+    fn test_operator_mask_multiple_entities() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Mask;
+        let (result, dets) = a.anonymize_text("email: john@example.com, ip: 192.168.1.1");
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("192.168.1.1"));
+        assert!(result.contains("****************")); // 16-char email mask
+        assert!(result.contains("***********"));       // 11-char IP mask
+        assert_eq!(dets.len(), 2);
+    }
+
+    #[test]
+    fn test_apply_mask_fixed_count_exceeds_length() {
+        let masked = apply_mask("abc", &MaskConfig {
+            mask_char: '*',
+            fixed_count: Some(10),
+            from_end: false,
+        });
+        assert_eq!(masked, "***");
+    }
+
+    #[test]
+    fn test_apply_mask_zero_count() {
+        let masked = apply_mask("hello", &MaskConfig {
+            mask_char: '*',
+            fixed_count: Some(0),
+            from_end: false,
+        });
+        assert_eq!(masked, "hello");
     }
 }
