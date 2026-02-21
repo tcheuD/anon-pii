@@ -14,13 +14,14 @@ mod aviation;
 mod french;
 mod global;
 mod secrets;
+mod uk;
 mod us;
 pub mod validators;
 
 pub use aviation::CREW_CODE_BLOCKLIST;
 pub use validators::{
-    iban_mod97, luhn_check, valid_aba_routing, valid_card_prefix, valid_mac, valid_us_itin,
-    valid_us_ssn,
+    iban_mod97, luhn_check, valid_aba_routing, valid_card_prefix, valid_mac, valid_uk_nhs,
+    valid_uk_nino, valid_us_itin, valid_us_ssn,
 };
 
 /// A PII pattern definition with regex, entity type, score, and context configuration.
@@ -55,6 +56,7 @@ use aviation::AVIATION_PATTERNS;
 use french::FRENCH_PATTERNS;
 use global::GLOBAL_PATTERNS;
 use secrets::SECRETS_PATTERNS;
+use uk::UK_PATTERNS;
 use us::US_PATTERNS;
 
 /// All PII patterns aggregated into a single slice.
@@ -69,6 +71,7 @@ pub const PATTERNS: &[PiiPattern] = &{
         + FRENCH_PATTERNS.len()
         + AVIATION_PATTERNS.len()
         + US_PATTERNS.len()
+        + UK_PATTERNS.len()
         + SECRETS_PATTERNS.len();
 
     const fn build_patterns() -> [PiiPattern; TOTAL_LEN] {
@@ -143,6 +146,21 @@ pub const PATTERNS: &[PiiPattern] = &{
             j += 1;
         }
 
+        // UK patterns
+        j = 0;
+        while j < UK_PATTERNS.len() {
+            result[i] = PiiPattern {
+                name: UK_PATTERNS[j].name,
+                entity_type: UK_PATTERNS[j].entity_type,
+                pattern: UK_PATTERNS[j].pattern,
+                score: UK_PATTERNS[j].score,
+                context_keywords: UK_PATTERNS[j].context_keywords,
+                context_required: UK_PATTERNS[j].context_required,
+            };
+            i += 1;
+            j += 1;
+        }
+
         // Secrets patterns
         j = 0;
         while j < SECRETS_PATTERNS.len() {
@@ -172,10 +190,10 @@ mod tests {
 
     #[test]
     fn test_patterns_count() {
-        // Current count: 59 patterns. Update this if patterns are added/removed.
+        // Current count: 62 patterns. Update this if patterns are added/removed.
         assert_eq!(
             PATTERNS.len(),
-            59,
+            62,
             "PATTERNS count changed - update this test if intentional"
         );
     }
@@ -184,10 +202,10 @@ mod tests {
     fn test_entity_types_count() {
         use std::collections::HashSet;
         let entity_types: HashSet<&str> = PATTERNS.iter().map(|p| p.entity_type).collect();
-        // Current count: 32 unique entity types
+        // Current count: 34 unique entity types
         assert_eq!(
             entity_types.len(),
-            32,
+            34,
             "Entity type count changed - update this test if intentional"
         );
     }
@@ -220,6 +238,8 @@ mod tests {
             "PHONE_EXTENSION",
             "PHONE_NUMBER",
             "SECRET_KEY",
+            "UK_NHS",
+            "UK_NINO",
             "URL",
             "US_BANK_NUMBER",
             "US_DRIVER_LICENSE",
@@ -294,6 +314,8 @@ mod tests {
         let _ = valid_card_prefix("4111111111111111");
         let _ = valid_aba_routing("021000021");
         let _ = valid_us_itin("912-70-1234");
+        let _ = valid_uk_nhs("9434765919");
+        let _ = valid_uk_nino("AB 12 34 56 C");
     }
 
     #[test]

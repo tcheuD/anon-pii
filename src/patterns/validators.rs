@@ -226,6 +226,52 @@ pub fn valid_us_itin(s: &str) -> bool {
     matches!(group, 50..=65 | 70..=88 | 90..=92 | 94..=99)
 }
 
+/// UK NHS Number mod-11 checksum validation.
+/// Weights `[10,9,8,7,6,5,4,3,2]` applied to first 9 digits.
+/// `(11 - sum % 11)` must equal the 10th digit. Result of 11 → check digit 0; result of 10 → invalid.
+pub fn valid_uk_nhs(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 10 {
+        return false;
+    }
+    let weights = [10u32, 9, 8, 7, 6, 5, 4, 3, 2];
+    let sum: u32 = digits[..9]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let remainder = 11 - (sum % 11);
+    if remainder == 11 {
+        digits[9] == 0
+    } else if remainder == 10 {
+        false // invalid number
+    } else {
+        digits[9] == remainder
+    }
+}
+
+/// UK NINO prefix blocklist validation.
+/// Rejects invalid prefix pairs: BG, GB, NK, KN, NT, TN, ZZ.
+pub fn valid_uk_nino(s: &str) -> bool {
+    let prefix: String = s
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .take(2)
+        .collect::<String>()
+        .to_ascii_uppercase();
+    if prefix.len() != 2 {
+        return false;
+    }
+    !matches!(
+        prefix.as_str(),
+        "BG" | "GB" | "NK" | "KN" | "NT" | "TN" | "ZZ"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,5 +521,73 @@ mod tests {
     fn test_valid_us_itin_wrong_length() {
         assert!(!valid_us_itin("912-70-123")); // 8 digits
         assert!(!valid_us_itin("912-70-12345")); // 10 digits
+    }
+
+    // ── valid_uk_nhs tests ──
+
+    #[test]
+    fn test_valid_uk_nhs_known_good() {
+        // 943 476 5919: sum = 9*10+4*9+3*8+4*7+7*6+6*5+5*4+9*3+1*2 = 90+36+24+28+42+30+20+27+2 = 299
+        // 11 - (299 % 11) = 11 - 2 = 9 → check digit 9 ✓
+        assert!(valid_uk_nhs("9434765919"));
+        assert!(valid_uk_nhs("943 476 5919")); // spaced format
+    }
+
+    #[test]
+    fn test_valid_uk_nhs_check_digit_zero() {
+        // sum=0 → 0%11=0 → 11-0=11 → check digit 0
+        assert!(valid_uk_nhs("0000000000"));
+    }
+
+    #[test]
+    fn test_valid_uk_nhs_rejects_bad_checksum() {
+        // Flip last digit
+        assert!(!valid_uk_nhs("9434765910"));
+        assert!(!valid_uk_nhs("9434765918"));
+    }
+
+    #[test]
+    fn test_valid_uk_nhs_rejects_remainder_10() {
+        // 4*10+3*9=67 → 67%11=1 → 11-1=10 → no valid check digit
+        assert!(!valid_uk_nhs("4300000000"));
+        assert!(!valid_uk_nhs("4300000001"));
+    }
+
+    #[test]
+    fn test_valid_uk_nhs_wrong_length() {
+        assert!(!valid_uk_nhs("943476591")); // 9 digits
+        assert!(!valid_uk_nhs("94347659199")); // 11 digits
+        assert!(!valid_uk_nhs(""));
+    }
+
+    // ── valid_uk_nino tests ──
+
+    #[test]
+    fn test_valid_uk_nino_good_prefixes() {
+        assert!(valid_uk_nino("AB 12 34 56 C"));
+        assert!(valid_uk_nino("CE123456A"));
+        assert!(valid_uk_nino("WR 99 99 99 D"));
+    }
+
+    #[test]
+    fn test_valid_uk_nino_rejects_blocklisted_prefixes() {
+        assert!(!valid_uk_nino("BG 12 34 56 A"));
+        assert!(!valid_uk_nino("GB 12 34 56 A"));
+        assert!(!valid_uk_nino("NK 12 34 56 A"));
+        assert!(!valid_uk_nino("KN 12 34 56 A"));
+        assert!(!valid_uk_nino("NT 12 34 56 A"));
+        assert!(!valid_uk_nino("TN 12 34 56 A"));
+        assert!(!valid_uk_nino("ZZ 12 34 56 A"));
+    }
+
+    #[test]
+    fn test_valid_uk_nino_case_insensitive() {
+        assert!(valid_uk_nino("ab 12 34 56 c"));
+        assert!(!valid_uk_nino("bg 12 34 56 a"));
+    }
+
+    #[test]
+    fn test_valid_uk_nino_no_alpha() {
+        assert!(!valid_uk_nino("12345678")); // no prefix letters at all
     }
 }
