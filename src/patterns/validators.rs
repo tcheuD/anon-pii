@@ -328,6 +328,97 @@ pub fn valid_uk_nino(s: &str) -> bool {
     )
 }
 
+/// Verhoeff algorithm tables for IN_AADHAAR validation.
+/// Based on the dihedral group D5 — catches all single-digit and adjacent transposition errors.
+///
+/// Verhoeff multiplication table (D5 group).
+const VERHOEFF_D: [[u8; 10]; 10] = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+    [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+    [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+    [4, 0, 1, 2, 3, 9, 5, 6, 7, 8],
+    [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+    [6, 5, 9, 8, 7, 1, 0, 4, 3, 2],
+    [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+    [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+    [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+];
+
+/// Verhoeff permutation table.
+const VERHOEFF_P: [[u8; 10]; 8] = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+    [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+    [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+    [9, 4, 5, 3, 1, 2, 6, 8, 7, 0],
+    [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+    [2, 7, 9, 3, 8, 0, 6, 4, 1, 5],
+    [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
+];
+
+/// Verhoeff checksum validation: processes digits right-to-left, result must be 0.
+pub fn verhoeff_check(s: &str) -> bool {
+    let digits: Vec<u8> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10).map(|d| d as u8))
+        .collect();
+    if digits.is_empty() {
+        return false;
+    }
+    let mut c: u8 = 0;
+    for (i, &d) in digits.iter().rev().enumerate() {
+        let p_idx = i % 8;
+        let p_val = VERHOEFF_P[p_idx][d as usize];
+        c = VERHOEFF_D[c as usize][p_val as usize];
+    }
+    c == 0
+}
+
+/// IN_AADHAAR validation: Verhoeff checksum + palindrome rejection + first digit 2-9.
+pub fn valid_in_aadhaar(s: &str) -> bool {
+    let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() != 12 {
+        return false;
+    }
+    // First digit must be 2-9
+    if digits.as_bytes()[0] < b'2' {
+        return false;
+    }
+    // Reject palindromes (e.g. 123456654321)
+    let rev: String = digits.chars().rev().collect();
+    if digits == rev {
+        return false;
+    }
+    // Reject repeated digits (e.g. 222222222222)
+    if digits.chars().all(|c| c == digits.as_bytes()[0] as char) {
+        return false;
+    }
+    verhoeff_check(&digits)
+}
+
+/// IN_GSTIN validation: state code 01-37 (+ 97 for other territory).
+pub fn valid_in_gstin(s: &str) -> bool {
+    let clean: String = s
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    if clean.len() != 15 {
+        return false;
+    }
+    // First 2 digits = state code
+    let state: u32 = match clean[..2].parse() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    if !(1..=37).contains(&state) && state != 97 {
+        return false;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -719,5 +810,110 @@ mod tests {
     #[test]
     fn test_valid_es_nie_case_insensitive() {
         assert!(valid_es_nie("x1234567l")); // lowercase
+    }
+
+    // ── verhoeff_check tests ──
+
+    #[test]
+    fn test_verhoeff_known_good() {
+        // Wikipedia example: "2363" has Verhoeff checksum 0
+        assert!(verhoeff_check("2363"));
+        // Single-digit zero is valid (trivial)
+        assert!(verhoeff_check("0"));
+    }
+
+    #[test]
+    fn test_verhoeff_known_bad() {
+        assert!(!verhoeff_check("2364")); // off by one from valid
+        assert!(!verhoeff_check("1234")); // random
+    }
+
+    #[test]
+    fn test_verhoeff_detects_transpositions() {
+        // 2363 is valid; 2633 (swapped 3 and 6) should be invalid
+        assert!(verhoeff_check("2363"));
+        assert!(!verhoeff_check("2633"));
+    }
+
+    #[test]
+    fn test_verhoeff_empty() {
+        assert!(!verhoeff_check(""));
+    }
+
+    // ── valid_in_aadhaar tests ──
+
+    #[test]
+    fn test_valid_in_aadhaar_verhoeff() {
+        // 12-digit number where Verhoeff passes
+        // Build from Verhoeff: "23456789012" → need to compute valid check digit
+        // Let's use a known valid Aadhaar: 234567890120 fails, try computing manually
+        // For test purposes, use the Verhoeff "generate" logic to find valid numbers
+        // 499118665246 — known Aadhaar-format number that passes Verhoeff
+        assert!(valid_in_aadhaar("499118665246"));
+    }
+
+    #[test]
+    fn test_valid_in_aadhaar_rejects_starts_with_0_or_1() {
+        assert!(!valid_in_aadhaar("099118665246")); // starts with 0
+        assert!(!valid_in_aadhaar("199118665246")); // starts with 1
+    }
+
+    #[test]
+    fn test_valid_in_aadhaar_rejects_palindrome() {
+        // 234565654321 — palindrome should be rejected regardless of checksum
+        assert!(!valid_in_aadhaar("234565654321"));
+        // 210000000012 — palindrome
+        assert!(!valid_in_aadhaar("210000000012"));
+    }
+
+    #[test]
+    fn test_valid_in_aadhaar_rejects_repeated_digits() {
+        assert!(!valid_in_aadhaar("222222222222"));
+        assert!(!valid_in_aadhaar("999999999999"));
+    }
+
+    #[test]
+    fn test_valid_in_aadhaar_wrong_length() {
+        assert!(!valid_in_aadhaar("23456789012")); // 11 digits
+        assert!(!valid_in_aadhaar("2345678901234")); // 13 digits
+        assert!(!valid_in_aadhaar(""));
+    }
+
+    #[test]
+    fn test_valid_in_aadhaar_with_spaces() {
+        // Spaced format should also work (digits are filtered)
+        assert!(valid_in_aadhaar("4991 1866 5246"));
+    }
+
+    // ── valid_in_gstin tests ──
+
+    #[test]
+    fn test_valid_in_gstin_known_good() {
+        // State code 27 (Maharashtra) + PAN AAPFU0939F + entity 1 + Z + check V
+        assert!(valid_in_gstin("27AAPFU0939F1ZV"));
+        // State code 01 (Jammu & Kashmir)
+        assert!(valid_in_gstin("01AAPFU0939F1ZV"));
+        // State code 37 (Andhra Pradesh)
+        assert!(valid_in_gstin("37AAPFU0939F1ZV"));
+    }
+
+    #[test]
+    fn test_valid_in_gstin_rejects_bad_state_code() {
+        assert!(!valid_in_gstin("00AAPFU0939F1ZV")); // state 00 invalid
+        assert!(!valid_in_gstin("38AAPFU0939F1ZV")); // state 38 invalid
+        assert!(!valid_in_gstin("99AAPFU0939F1ZV")); // state 99 invalid
+    }
+
+    #[test]
+    fn test_valid_in_gstin_state_code_97() {
+        // 97 = "Other territory" — valid special code
+        assert!(valid_in_gstin("97AAPFU0939F1ZV"));
+    }
+
+    #[test]
+    fn test_valid_in_gstin_wrong_length() {
+        assert!(!valid_in_gstin("27AAPFU0939F1Z")); // 14 chars
+        assert!(!valid_in_gstin("27AAPFU0939F1ZVX")); // 16 chars
+        assert!(!valid_in_gstin(""));
     }
 }
