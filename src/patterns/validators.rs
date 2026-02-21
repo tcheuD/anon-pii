@@ -650,6 +650,62 @@ pub fn valid_kr_brn(s: &str) -> bool {
     digits[9] == check
 }
 
+/// SG NRIC/FIN checksum validation.
+/// Prefix [STFGM] + 7 digits + check letter. Weights `[2,7,6,5,4,3,2]`,
+/// prefix-dependent offset and check letter table.
+pub fn valid_sg_nric_fin(s: &str) -> bool {
+    let upper = s.to_ascii_uppercase();
+    let bytes = upper.as_bytes();
+    if bytes.len() != 9 {
+        return false;
+    }
+    let prefix = bytes[0];
+    if !matches!(prefix, b'S' | b'T' | b'F' | b'G' | b'M') {
+        return false;
+    }
+    let check_letter = bytes[8];
+    if !check_letter.is_ascii_uppercase() {
+        return false;
+    }
+
+    let digits: Vec<u32> = bytes[1..8]
+        .iter()
+        .filter_map(|&b| (b as char).to_digit(10))
+        .collect();
+    if digits.len() != 7 {
+        return false;
+    }
+
+    let weights: [u32; 7] = [2, 7, 6, 5, 4, 3, 2];
+    let sum: u32 = digits
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+
+    let offset: u32 = match prefix {
+        b'T' | b'G' => 4,
+        b'M' => 3,
+        _ => 0, // S, F
+    };
+
+    let mut index = ((sum + offset) % 11) as usize;
+
+    // S/T prefix: citizen check letter table
+    // F/G prefix: foreigner check letter table
+    // M prefix: foreigner table with rotation
+    let table: &[u8; 11] = match prefix {
+        b'S' | b'T' => b"JZIHGFEDCBA",
+        b'M' => {
+            index = 10 - index;
+            b"KLJNPQRTUWX"
+        }
+        _ => b"XWUTRQPNMLK", // F, G
+    };
+
+    check_letter == table[index]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1413,5 +1469,74 @@ mod tests {
         // Total: 125
         // Check: (10 - 125%10) % 10 = (10-5)%10 = 5
         assert!(valid_kr_brn("1234567815"));
+    }
+
+    // ── valid_sg_nric_fin tests ──
+
+    #[test]
+    fn test_valid_sg_nric_fin_s_prefix() {
+        // S prefix (citizen, born before 2000), offset=0
+        // S1234567: weights [2,7,6,5,4,3,2]
+        // sum = 2+14+18+20+20+18+14 = 106
+        // index = (106 + 0) % 11 = 7 → table[7] = 'D'
+        assert!(valid_sg_nric_fin("S1234567D"));
+    }
+
+    #[test]
+    fn test_valid_sg_nric_fin_t_prefix() {
+        // T prefix (citizen, born 2000+), offset=4
+        // T1234567: sum = 106
+        // index = (106 + 4) % 11 = 0 → table[0] = 'J'
+        assert!(valid_sg_nric_fin("T1234567J"));
+    }
+
+    #[test]
+    fn test_valid_sg_nric_fin_f_prefix() {
+        // F prefix (foreigner, before 2000), offset=0
+        // F1234567: sum = 106
+        // index = (106 + 0) % 11 = 7 → F/G table[7] = 'N'
+        assert!(valid_sg_nric_fin("F1234567N"));
+    }
+
+    #[test]
+    fn test_valid_sg_nric_fin_g_prefix() {
+        // G prefix (foreigner, 2000-2021), offset=4
+        // G1234567: sum = 106
+        // index = (106 + 4) % 11 = 0 → F/G table[0] = 'X'
+        assert!(valid_sg_nric_fin("G1234567X"));
+    }
+
+    #[test]
+    fn test_valid_sg_nric_fin_m_prefix() {
+        // M prefix (foreigner, 2022+), offset=3
+        // M1234567: sum = 106
+        // index = (106 + 3) % 11 = 10 → rotated: 10 - 10 = 0 → M table[0] = 'K'
+        assert!(valid_sg_nric_fin("M1234567K"));
+    }
+
+    #[test]
+    fn test_valid_sg_nric_fin_rejects_bad_check_letter() {
+        assert!(!valid_sg_nric_fin("S1234567A")); // expected D
+        assert!(!valid_sg_nric_fin("T1234567A")); // expected J
+        assert!(!valid_sg_nric_fin("F1234567A")); // expected N
+    }
+
+    #[test]
+    fn test_valid_sg_nric_fin_rejects_invalid_prefix() {
+        assert!(!valid_sg_nric_fin("A1234567D")); // A is not valid
+        assert!(!valid_sg_nric_fin("X1234567D"));
+    }
+
+    #[test]
+    fn test_valid_sg_nric_fin_wrong_length() {
+        assert!(!valid_sg_nric_fin("S123456D")); // 8 chars (6 digits)
+        assert!(!valid_sg_nric_fin("S12345678D")); // 10 chars (8 digits)
+        assert!(!valid_sg_nric_fin(""));
+    }
+
+    #[test]
+    fn test_valid_sg_nric_fin_case_insensitive() {
+        assert!(valid_sg_nric_fin("s1234567d")); // lowercase
+        assert!(valid_sg_nric_fin("s1234567D")); // mixed case
     }
 }
