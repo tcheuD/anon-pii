@@ -863,7 +863,50 @@ mod tests {
             .unwrap();
         let body = std::str::from_utf8(&bytes).unwrap();
         assert!(body.starts_with("openapi: 3.0.3"));
-        assert!(body.contains("/analyze:"));
-        assert!(body.contains("/anonymize:"));
+    }
+
+    /// Guard against spec↔code drift. If you add or remove a route, this test
+    /// fails until you update both the router AND docs/openapi.yaml.
+    #[tokio::test]
+    async fn test_openapi_spec_covers_all_routes() {
+        // Routes registered in the router (source of truth: fn router())
+        let api_routes = [
+            "/analyze",
+            "/anonymize",
+            "/supportedentities",
+            "/health",
+            "/openapi.yaml",
+        ];
+
+        // Extract paths from the YAML spec (lines matching `  /path:` under `paths:`)
+        let spec = OPENAPI_SPEC;
+        let spec_paths: Vec<&str> = spec
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with('/') && trimmed.ends_with(':') && !line.starts_with("      ")
+                {
+                    Some(&trimmed[..trimmed.len() - 1])
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Every router route must be in the spec
+        for route in &api_routes {
+            assert!(
+                spec_paths.contains(route),
+                "Route {route} is in the router but missing from docs/openapi.yaml"
+            );
+        }
+
+        // Every spec path must be in the router
+        for path in &spec_paths {
+            assert!(
+                api_routes.contains(path),
+                "Path {path} is in docs/openapi.yaml but missing from the router"
+            );
+        }
     }
 }
