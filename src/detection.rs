@@ -25,6 +25,16 @@ pub enum Operator {
     Keep,
     /// Replace PII with masking characters (e.g. *****)
     Mask,
+    /// Replace PII with a cryptographic hash
+    Hash,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum HashAlgo {
+    #[default]
+    Sha256,
+    Sha512,
+    Md5,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -63,6 +73,25 @@ fn apply_mask(value: &str, config: &MaskConfig) -> String {
             config.mask_char.to_string().repeat(char_count - visible),
             suffix
         )
+    }
+}
+
+fn apply_hash(value: &str, algo: HashAlgo) -> String {
+    use sha2::Digest;
+
+    match algo {
+        HashAlgo::Sha256 => {
+            let hash = sha2::Sha256::digest(value.as_bytes());
+            format!("{:x}", hash)
+        }
+        HashAlgo::Sha512 => {
+            let hash = sha2::Sha512::digest(value.as_bytes());
+            format!("{:x}", hash)
+        }
+        HashAlgo::Md5 => {
+            let hash = md5::compute(value.as_bytes());
+            format!("{:x}", hash)
+        }
     }
 }
 
@@ -317,6 +346,7 @@ pub struct Anonymizer {
     pub threshold: f64,
     pub operator: Operator,
     pub mask_config: MaskConfig,
+    pub hash_algo: HashAlgo,
     ner_detector: Option<Box<dyn NerDetector>>,
 }
 
@@ -360,6 +390,7 @@ impl Anonymizer {
             threshold,
             operator: Operator::default(),
             mask_config: MaskConfig::default(),
+            hash_algo: HashAlgo::default(),
             ner_detector: None,
         }
     }
@@ -1140,6 +1171,7 @@ impl Anonymizer {
                 Operator::Redact => String::new(),
                 Operator::Keep => continue,
                 Operator::Mask => apply_mask(&det.original, &self.mask_config),
+                Operator::Hash => apply_hash(&det.original, self.hash_algo),
             };
             result = format!(
                 "{}{}{}",
@@ -5325,6 +5357,119 @@ example-air.com"#;
             },
         );
         assert_eq!(masked, "hello");
+    }
+
+    // ── Hash operator tests ──
+
+    #[test]
+    fn test_operator_hash_sha256() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Hash;
+        let (result, dets) = a.anonymize_text("contact john@example.com now");
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("[EMAIL_ADDRESS"));
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].entity_type, "EMAIL_ADDRESS");
+        // SHA-256 produces a 64-char hex string
+        let hash_part = result.strip_prefix("contact ").unwrap();
+        let hash_part = hash_part.strip_suffix(" now").unwrap();
+        assert_eq!(hash_part.len(), 64);
+        assert!(hash_part.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_operator_hash_sha512() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Hash;
+        a.hash_algo = HashAlgo::Sha512;
+        let (result, dets) = a.anonymize_text("contact john@example.com now");
+        assert!(!result.contains("john@example.com"));
+        assert_eq!(dets.len(), 1);
+        let hash_part = result.strip_prefix("contact ").unwrap();
+        let hash_part = hash_part.strip_suffix(" now").unwrap();
+        // SHA-512 produces a 128-char hex string
+        assert_eq!(hash_part.len(), 128);
+        assert!(hash_part.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_operator_hash_md5() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Hash;
+        a.hash_algo = HashAlgo::Md5;
+        let (result, dets) = a.anonymize_text("contact john@example.com now");
+        assert!(!result.contains("john@example.com"));
+        assert_eq!(dets.len(), 1);
+        let hash_part = result.strip_prefix("contact ").unwrap();
+        let hash_part = hash_part.strip_suffix(" now").unwrap();
+        // MD5 produces a 32-char hex string
+        assert_eq!(hash_part.len(), 32);
+        assert!(hash_part.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_operator_hash_deterministic() {
+        let mut a1 = Anonymizer::new(0.0);
+        a1.operator = Operator::Hash;
+        let (r1, _) = a1.anonymize_text("john@example.com");
+
+        let mut a2 = Anonymizer::new(0.0);
+        a2.operator = Operator::Hash;
+        let (r2, _) = a2.anonymize_text("john@example.com");
+
+        assert_eq!(r1, r2, "same input should produce same hash");
+    }
+
+    #[test]
+    fn test_operator_hash_different_inputs_differ() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Hash;
+        let (r1, _) = a.anonymize_text("john@example.com");
+        let (r2, _) = a.anonymize_text("jane@example.com");
+        assert_ne!(r1, r2);
+    }
+
+    #[test]
+    fn test_operator_hash_no_mapping_entries() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Hash;
+        let _ = a.anonymize_text("john@example.com");
+        assert!(a.mapping.mappings.is_empty());
+    }
+
+    #[test]
+    fn test_operator_hash_json() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Hash;
+        let json: Value = serde_json::from_str(r#"{"email": "john@example.com"}"#).unwrap();
+        let (result, dets) = a.anonymize_json_value(&json);
+        let hashed = result["email"].as_str().unwrap();
+        assert_eq!(hashed.len(), 64);
+        assert!(hashed.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(dets.len(), 1);
+    }
+
+    #[test]
+    fn test_operator_hash_multiple_entities() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Hash;
+        let (result, dets) = a.anonymize_text("email: john@example.com, ip: 192.168.1.1");
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("192.168.1.1"));
+        assert_eq!(dets.len(), 2);
+    }
+
+    #[test]
+    fn test_apply_hash_known_vectors() {
+        // Verify against known SHA-256 hash of "test"
+        let hash = apply_hash("test", HashAlgo::Sha256);
+        assert_eq!(
+            hash,
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        );
+
+        let hash = apply_hash("test", HashAlgo::Md5);
+        assert_eq!(hash, "098f6bcd4621d373cade4e832627b4f6");
     }
 
     // ── US_BANK_NUMBER tests ──

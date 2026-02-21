@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "proxy")]
 use std::sync::Arc;
 
-use anon::detection::{Anonymizer, Detection, MaskConfig, Operator};
+use anon::detection::{Anonymizer, Detection, HashAlgo, MaskConfig, Operator};
 use anon::format::{detect_format, detect_json_indent, DetectedFormat};
 use anon::mapping::Mapping;
 use anon::patterns::{MAX_INPUT_SIZE, PATTERNS};
@@ -80,6 +80,10 @@ struct Cli {
     /// Mask from end instead of start
     #[arg(long)]
     mask_from_end: bool,
+
+    /// Hash algorithm (used with --operator hash)
+    #[arg(long, value_enum, default_value = "sha256")]
+    hash_algo: HashAlgo,
 
     /// Language for detection
     #[arg(short, long, default_value = "en")]
@@ -759,6 +763,7 @@ fn main() -> io::Result<()> {
                 fixed_count: cli.mask_count,
                 from_end: cli.mask_from_end,
             };
+            anonymizer.hash_algo = cli.hash_algo;
 
             // Wire up NER detector if requested (ML + heuristic combined)
             #[cfg(feature = "ner")]

@@ -28,12 +28,13 @@ ort = { version = "=2.0.0-rc.11", features = ["load-dynamic"], optional = true }
 tokenizers = { version = "=0.22.2", optional = true, default-features = false, features = ["fancy-regex"] }
 ndarray = { version = "0.17", optional = true }
 ureq = { version = "3", optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = "0.10"
+md5 = "0.7"
 
 [features]
 default = []
 proxy = ["dep:tokio", "dep:axum", "dep:reqwest", "dep:futures", "dep:bytes"]
-ner = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:ureq", "dep:sha2", "ner-lite"]
+ner = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:ureq", "ner-lite"]
 ner-lite = []
 
 [profile.release]
