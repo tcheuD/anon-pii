@@ -706,6 +706,28 @@ pub fn valid_sg_nric_fin(s: &str) -> bool {
     check_letter == table[index]
 }
 
+/// PL PESEL checksum validation.
+/// 11 digits, weights `[1,3,7,9,1,3,7,9,1,3]` on first 10 digits,
+/// check digit = `(10 - sum % 10) % 10`.
+pub fn valid_pl_pesel(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 11 {
+        return false;
+    }
+    let weights: [u32; 10] = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3];
+    let sum: u32 = digits[..10]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let check = (10 - (sum % 10)) % 10;
+    digits[10] == check
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1538,5 +1560,42 @@ mod tests {
     fn test_valid_sg_nric_fin_case_insensitive() {
         assert!(valid_sg_nric_fin("s1234567d")); // lowercase
         assert!(valid_sg_nric_fin("s1234567D")); // mixed case
+    }
+
+    // ── valid_pl_pesel tests ──
+
+    #[test]
+    fn test_valid_pl_pesel_known_good() {
+        // 44051401359: weights [1,3,7,9,1,3,7,9,1,3]
+        // 4*1+4*3+0*7+5*9+1*1+4*3+0*7+1*9+3*1+5*3 = 4+12+0+45+1+12+0+9+3+15 = 101
+        // check = (10 - 101%10) % 10 = (10-1)%10 = 9
+        assert!(valid_pl_pesel("44051401359"));
+    }
+
+    #[test]
+    fn test_valid_pl_pesel_2000s_century() {
+        // 02211307589: born 2002-01-13 (month 21 = January 2000s)
+        assert!(valid_pl_pesel("02211307589"));
+    }
+
+    #[test]
+    fn test_valid_pl_pesel_rejects_bad_checksum() {
+        assert!(!valid_pl_pesel("44051401358")); // expected 9, got 8
+        assert!(!valid_pl_pesel("44051401350")); // expected 9, got 0
+    }
+
+    #[test]
+    fn test_valid_pl_pesel_wrong_length() {
+        assert!(!valid_pl_pesel("4405140135")); // 10 digits
+        assert!(!valid_pl_pesel("440514013590")); // 12 digits
+        assert!(!valid_pl_pesel(""));
+    }
+
+    #[test]
+    fn test_valid_pl_pesel_check_digit_zero() {
+        // 02122401358: check digit computation
+        // 0*1+2*3+1*7+2*9+2*1+4*3+0*7+1*9+3*1+5*3 = 0+6+7+18+2+12+0+9+3+15 = 72
+        // check = (10 - 72%10) % 10 = (10-2)%10 = 8
+        assert!(valid_pl_pesel("02122401358"));
     }
 }

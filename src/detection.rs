@@ -8,9 +8,9 @@ use crate::ner::{NerDetector, PERSON_BLOCKLIST};
 use crate::patterns::{
     iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare,
     valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif, valid_in_aadhaar, valid_in_gstin,
-    valid_it_fiscal_code, valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac, valid_sg_nric_fin,
-    valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn, CONTEXT_SCORE_BOOST, CONTEXT_WINDOW,
-    CREW_CODE_BLOCKLIST, PATTERNS,
+    valid_it_fiscal_code, valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac, valid_pl_pesel,
+    valid_sg_nric_fin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn,
+    CONTEXT_SCORE_BOOST, CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -647,6 +647,9 @@ impl Anonymizer {
                 if pat.entity_type == "SG_NRIC_FIN" && !valid_sg_nric_fin(mat.as_str()) {
                     continue;
                 }
+                if pat.entity_type == "PL_PESEL" && !valid_pl_pesel(mat.as_str()) {
+                    continue;
+                }
 
                 // Compute detection score with optional context boost
                 let detection_score =
@@ -769,6 +772,9 @@ impl Anonymizer {
                         continue;
                     }
                     if pat.entity_type == "SG_NRIC_FIN" && !valid_sg_nric_fin(matched) {
+                        continue;
+                    }
+                    if pat.entity_type == "PL_PESEL" && !valid_pl_pesel(matched) {
                         continue;
                     }
 
@@ -1052,6 +1058,11 @@ impl Anonymizer {
                                     }
                                     if pat.entity_type == "SG_NRIC_FIN"
                                         && !valid_sg_nric_fin(mat.as_str())
+                                    {
+                                        continue;
+                                    }
+                                    if pat.entity_type == "PL_PESEL"
+                                        && !valid_pl_pesel(mat.as_str())
                                     {
                                         continue;
                                     }
@@ -7041,5 +7052,76 @@ example-air.com"#;
                 "SG_UEN not detected with context '{ctx}': {dets:?}"
             );
         }
+    }
+
+    // ── PL_PESEL tests ──
+
+    #[test]
+    fn test_pl_pesel_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("PESEL: 44051401359");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PL_PESEL"),
+            "PL_PESEL not detected with context: {dets:?}"
+        );
+        assert!(!result.contains("44051401359"));
+        assert!(result.contains("[PL_PESEL_"));
+    }
+
+    #[test]
+    fn test_pl_pesel_no_context_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("44051401359");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PL_PESEL"),
+            "PL_PESEL should not match without context: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_pl_pesel_bad_checksum_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("PESEL: 44051401358");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "PL_PESEL"),
+            "PL_PESEL with bad checksum should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_pl_pesel_various_contexts() {
+        let mut a = Anonymizer::new(0.0);
+        let contexts = [
+            "Nr PESEL: 44051401359",
+            "Numer PESEL: 44051401359",
+            "Polish ID: 44051401359",
+            "identyfikator: 44051401359",
+        ];
+        for ctx in &contexts {
+            let (_, dets) = a.anonymize_text(ctx);
+            assert!(
+                dets.iter().any(|d| d.entity_type == "PL_PESEL"),
+                "PL_PESEL not detected with context '{ctx}': {dets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pl_pesel_roundtrip() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_text("PESEL: 44051401359");
+        assert!(!result.contains("44051401359"));
+        assert!(result.contains("[PL_PESEL_"));
+    }
+
+    #[test]
+    fn test_pl_pesel_2000s_century() {
+        let mut a = Anonymizer::new(0.0);
+        // Born 2002-01-13 (month 21 = January 2000s)
+        let (_, dets) = a.anonymize_text("PESEL: 02211307589");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "PL_PESEL"),
+            "PL_PESEL with 2000s century encoding not detected: {dets:?}"
+        );
     }
 }
