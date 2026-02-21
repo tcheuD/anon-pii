@@ -1,5 +1,5 @@
 use aes::Aes128;
-use cbc::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
+use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use clap::ValueEnum;
 use regex::Regex;
 use serde_json::Value;
@@ -117,14 +117,65 @@ fn apply_encrypt(value: &str, key: &[u8]) -> String {
         _ => unreachable!("key length validated at CLI parse time"),
     };
 
-    let mut out = String::with_capacity((16 + ciphertext.len()) * 2);
+    let mut hex = String::with_capacity((16 + ciphertext.len()) * 2);
     for b in &iv_bytes {
-        out.push_str(&format!("{:02x}", b));
+        hex.push_str(&format!("{:02x}", b));
     }
     for b in &ciphertext {
-        out.push_str(&format!("{:02x}", b));
+        hex.push_str(&format!("{:02x}", b));
     }
-    out
+    format!("ENC[{hex}]")
+}
+
+type Aes128CbcDec = cbc::Decryptor<Aes128>;
+type Aes192CbcDec = cbc::Decryptor<aes::Aes192>;
+type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+
+fn decrypt_single(hex: &str, key: &[u8]) -> Option<String> {
+    if hex.len() < 64 || !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    let raw: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect::<Result<Vec<u8>, _>>()
+        .ok()?;
+    if raw.len() < 32 {
+        return None;
+    }
+    let (iv, ct) = raw.split_at(16);
+
+    let plaintext = match key.len() {
+        16 => Aes128CbcDec::new(key.into(), iv.into())
+            .decrypt_padded_vec_mut::<Pkcs7>(ct)
+            .ok()?,
+        24 => Aes192CbcDec::new(key.into(), iv.into())
+            .decrypt_padded_vec_mut::<Pkcs7>(ct)
+            .ok()?,
+        32 => Aes256CbcDec::new(key.into(), iv.into())
+            .decrypt_padded_vec_mut::<Pkcs7>(ct)
+            .ok()?,
+        _ => return None,
+    };
+    String::from_utf8(plaintext).ok()
+}
+
+pub fn decrypt_encrypted(text: &str, key: &[u8]) -> String {
+    let enc_re = Regex::new(r"ENC\[([0-9a-f]{64,})\]").unwrap();
+    let mut result = String::with_capacity(text.len());
+    let mut last = 0;
+    for cap in enc_re.captures_iter(text) {
+        let m = cap.get(0).unwrap();
+        result.push_str(&text[last..m.start()]);
+        if let Some(plaintext) = decrypt_single(&cap[1], key) {
+            result.push_str(&plaintext);
+        } else {
+            result.push_str(m.as_str());
+        }
+        last = m.end();
+    }
+    result.push_str(&text[last..]);
+    result
 }
 
 /// Parse a hex-encoded AES key, returning the raw bytes.
@@ -5540,75 +5591,42 @@ example-air.com"#;
     }
 
     #[test]
-    fn test_operator_encrypt_output_is_hex() {
+    fn test_operator_encrypt_output_format() {
         let mut a = Anonymizer::new(0.0);
         a.operator = Operator::Encrypt;
         a.encrypt_key = Some(vec![0u8; 16]);
         let (result, _) = a.anonymize_text("contact john@example.com now");
-        // Extract the encrypted part (between "contact " and " now")
-        let encrypted = result
-            .strip_prefix("contact ")
+        assert!(result.starts_with("contact ENC["));
+        assert!(result.ends_with("] now"));
+        let inner = result
+            .strip_prefix("contact ENC[")
             .unwrap()
-            .strip_suffix(" now")
+            .strip_suffix("] now")
             .unwrap();
-        // Must be valid hex
-        assert!(encrypted.chars().all(|c| c.is_ascii_hexdigit()));
-        // IV (16 bytes = 32 hex) + ciphertext (at least 1 block = 32 hex)
-        assert!(encrypted.len() >= 64);
+        assert!(inner.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(inner.len() >= 64);
     }
 
     #[test]
     fn test_operator_encrypt_roundtrip_aes128() {
-        use aes::Aes128;
-        use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
-        type Aes128CbcDec = cbc::Decryptor<Aes128>;
-
         let key = vec![0x42u8; 16];
         let mut a = Anonymizer::new(0.0);
         a.operator = Operator::Encrypt;
         a.encrypt_key = Some(key.clone());
-        let (result, _) = a.anonymize_text("contact john@example.com now");
-        let encrypted = result
-            .strip_prefix("contact ")
-            .unwrap()
-            .strip_suffix(" now")
-            .unwrap();
-
-        // Decode hex
-        let raw: Vec<u8> = (0..encrypted.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&encrypted[i..i + 2], 16).unwrap())
-            .collect();
-        let (iv, ct) = raw.split_at(16);
-        let plaintext = Aes128CbcDec::new(key.as_slice().into(), iv.into())
-            .decrypt_padded_vec_mut::<Pkcs7>(&ct)
-            .unwrap();
-        assert_eq!(std::str::from_utf8(&plaintext).unwrap(), "john@example.com");
+        let (encrypted, _) = a.anonymize_text("contact john@example.com now");
+        let restored = decrypt_encrypted(&encrypted, &key);
+        assert_eq!(restored, "contact john@example.com now");
     }
 
     #[test]
     fn test_operator_encrypt_roundtrip_aes256() {
-        use aes::Aes256;
-        use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
-        type Aes256CbcDec = cbc::Decryptor<Aes256>;
-
         let key = vec![0xABu8; 32];
         let mut a = Anonymizer::new(0.0);
         a.operator = Operator::Encrypt;
         a.encrypt_key = Some(key.clone());
-        let (result, _) = a.anonymize_text("192.168.1.1");
-        // Entire input is an IP, so result is just the ciphertext
-        let encrypted = result.as_str();
-
-        let raw: Vec<u8> = (0..encrypted.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&encrypted[i..i + 2], 16).unwrap())
-            .collect();
-        let (iv, ct) = raw.split_at(16);
-        let plaintext = Aes256CbcDec::new(key.as_slice().into(), iv.into())
-            .decrypt_padded_vec_mut::<Pkcs7>(&ct)
-            .unwrap();
-        assert_eq!(std::str::from_utf8(&plaintext).unwrap(), "192.168.1.1");
+        let (encrypted, _) = a.anonymize_text("192.168.1.1");
+        let restored = decrypt_encrypted(&encrypted, &key);
+        assert_eq!(restored, "192.168.1.1");
     }
 
     #[test]
@@ -5624,7 +5642,6 @@ example-air.com"#;
         a2.encrypt_key = Some(key);
         let (r2, _) = a2.anonymize_text("john@example.com");
 
-        // Different IVs → different ciphertext each time
         assert_ne!(r1, r2);
     }
 
@@ -5652,7 +5669,7 @@ example-air.com"#;
     fn test_operator_encrypt_multiple_entities() {
         let mut a = Anonymizer::new(0.0);
         a.operator = Operator::Encrypt;
-        a.encrypt_key = Some(vec![0u8; 32]); // 256-bit key
+        a.encrypt_key = Some(vec![0u8; 32]);
         let (result, dets) = a.anonymize_text("email: john@example.com, ip: 192.168.1.1");
         assert!(!result.contains("john@example.com"));
         assert!(!result.contains("192.168.1.1"));
@@ -5660,31 +5677,63 @@ example-air.com"#;
     }
 
     #[test]
-    fn test_operator_encrypt_aes192() {
-        use aes::Aes192;
-        use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
-        type Aes192CbcDec = cbc::Decryptor<Aes192>;
-
-        let key = vec![0x55u8; 24]; // 192-bit key
+    fn test_operator_encrypt_roundtrip_aes192() {
+        let key = vec![0x55u8; 24];
         let mut a = Anonymizer::new(0.0);
         a.operator = Operator::Encrypt;
         a.encrypt_key = Some(key.clone());
-        let (result, _) = a.anonymize_text("contact john@example.com now");
-        let encrypted = result
-            .strip_prefix("contact ")
-            .unwrap()
-            .strip_suffix(" now")
-            .unwrap();
+        let (encrypted, _) = a.anonymize_text("contact john@example.com now");
+        let restored = decrypt_encrypted(&encrypted, &key);
+        assert_eq!(restored, "contact john@example.com now");
+    }
 
-        let raw: Vec<u8> = (0..encrypted.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&encrypted[i..i + 2], 16).unwrap())
-            .collect();
-        let (iv, ct) = raw.split_at(16);
-        let plaintext = Aes192CbcDec::new(key.as_slice().into(), iv.into())
-            .decrypt_padded_vec_mut::<Pkcs7>(&ct)
-            .unwrap();
-        assert_eq!(std::str::from_utf8(&plaintext).unwrap(), "john@example.com");
+    // ── Decrypt tests ──
+
+    #[test]
+    fn test_decrypt_encrypted_roundtrip() {
+        let key = vec![0u8; 16];
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(key.clone());
+        let (encrypted, _) = a.anonymize_text("email: john@example.com, ip: 192.168.1.1");
+        let restored = decrypt_encrypted(&encrypted, &key);
+        assert_eq!(restored, "email: john@example.com, ip: 192.168.1.1");
+    }
+
+    #[test]
+    fn test_decrypt_encrypted_preserves_non_encrypted_text() {
+        let key = vec![0u8; 16];
+        let input = "hello world, no encrypted data here";
+        let result = decrypt_encrypted(input, &key);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_decrypt_encrypted_wrong_key_preserves_token() {
+        let key = vec![0u8; 16];
+        let wrong_key = vec![0xFFu8; 16];
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(key);
+        let (encrypted, _) = a.anonymize_text("john@example.com");
+        let result = decrypt_encrypted(&encrypted, &wrong_key);
+        // Wrong key → decryption fails → ENC[...] token preserved as-is
+        assert!(result.starts_with("ENC["));
+    }
+
+    #[test]
+    fn test_decrypt_encrypted_json_roundtrip() {
+        let key = vec![0u8; 32];
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(key.clone());
+        let json: Value =
+            serde_json::from_str(r#"{"email": "john@example.com", "ip": "10.0.0.1"}"#).unwrap();
+        let (encrypted_json, _) = a.anonymize_json_value(&json);
+        let encrypted_str = serde_json::to_string(&encrypted_json).unwrap();
+        let restored = decrypt_encrypted(&encrypted_str, &key);
+        assert!(restored.contains("john@example.com"));
+        assert!(restored.contains("10.0.0.1"));
     }
 
     #[test]

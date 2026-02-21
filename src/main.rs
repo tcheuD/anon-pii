@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "proxy")]
 use std::sync::Arc;
 
-use anon::detection::{parse_encrypt_key, Anonymizer, Detection, HashAlgo, MaskConfig, Operator};
+use anon::detection::{
+    decrypt_encrypted, parse_encrypt_key, Anonymizer, Detection, HashAlgo, MaskConfig, Operator,
+};
 use anon::format::{detect_format, detect_json_indent, DetectedFormat};
 use anon::mapping::Mapping;
 use anon::patterns::{MAX_INPUT_SIZE, PATTERNS};
@@ -119,6 +121,11 @@ enum Commands {
         /// Output file (writes to stdout if not provided)
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// AES decryption key, hex-encoded (decrypts ENC[...] tokens)
+        /// Must be 32 (128-bit), 48 (192-bit), or 64 (256-bit) hex characters
+        #[arg(long)]
+        decrypt_key: Option<String>,
     },
     /// List all supported entity types
     ListEntities,
@@ -544,24 +551,53 @@ fn main() -> io::Result<()> {
             input,
             mapping,
             output,
+            decrypt_key,
         }) => {
             let resolved_input = input.or(input_positional);
             let content = read_input(resolved_input.as_ref())?;
+
+            let dk = decrypt_key
+                .as_deref()
+                .map(|hex| {
+                    parse_encrypt_key(hex)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
+                })
+                .transpose()?;
+
             let mapping_path = mapping.unwrap_or_else(default_mapping_path);
-            let mapping_content = fs::read_to_string(&mapping_path)?;
-            let mut mapping: Mapping = match serde_json::from_str(&mapping_content) {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("Error: invalid mapping file: {e}");
-                    std::process::exit(1);
-                }
-            };
-            mapping.rebuild_caches();
+            let has_mapping = mapping_path.exists();
 
-            let result = mapping.restore(&content);
+            let mut result = content.clone();
+
+            if has_mapping {
+                let mapping_content = fs::read_to_string(&mapping_path)?;
+                let mut m: Mapping = match serde_json::from_str(&mapping_content) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!("Error: invalid mapping file: {e}");
+                        std::process::exit(1);
+                    }
+                };
+                m.rebuild_caches();
+                result = m.restore(&result);
+                eprintln!("Restored {} entities from mapping", m.mappings.len());
+            }
+
+            if let Some(key) = &dk {
+                result = decrypt_encrypted(&result, key);
+            }
+
+            if !has_mapping && dk.is_none() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "no mapping file found at {} and no --decrypt-key provided",
+                        mapping_path.display()
+                    ),
+                ));
+            }
+
             write_output(output.as_ref(), &result)?;
-
-            eprintln!("Restored {} entities", mapping.mappings.len());
         }
         #[cfg(feature = "ner")]
         Some(Commands::DownloadModel { model_dir }) => {
