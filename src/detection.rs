@@ -10,8 +10,8 @@ use crate::patterns::{
     valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code,
     valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn,
     valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number,
-    valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn, CONTEXT_SCORE_BOOST, CONTEXT_WINDOW,
-    CREW_CODE_BLOCKLIST, PATTERNS,
+    valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn, CONTEXT_SCORE_BOOST,
+    CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -662,6 +662,9 @@ impl Anonymizer {
                 {
                     continue;
                 }
+                if pat.entity_type == "TH_TNIN" && !valid_th_tnin(mat.as_str()) {
+                    continue;
+                }
 
                 // Compute detection score with optional context boost
                 let detection_score =
@@ -798,6 +801,9 @@ impl Anonymizer {
                     if pat.entity_type == "FI_PERSONAL_IDENTITY_CODE"
                         && !valid_fi_identity_code(matched)
                     {
+                        continue;
+                    }
+                    if pat.entity_type == "TH_TNIN" && !valid_th_tnin(matched) {
                         continue;
                     }
 
@@ -1100,6 +1106,10 @@ impl Anonymizer {
                                     }
                                     if pat.entity_type == "FI_PERSONAL_IDENTITY_CODE"
                                         && !valid_fi_identity_code(mat.as_str())
+                                    {
+                                        continue;
+                                    }
+                                    if pat.entity_type == "TH_TNIN" && !valid_th_tnin(mat.as_str())
                                     {
                                         continue;
                                     }
@@ -7394,5 +7404,66 @@ example-air.com"#;
                 .any(|d| d.entity_type == "FI_PERSONAL_IDENTITY_CODE"),
             "FI_PERSONAL_IDENTITY_CODE with individual 000 should be rejected: {dets:?}"
         );
+    }
+
+    // ── TH_TNIN tests ──
+    // Note: test values start with 3+ to avoid FR_SSN pattern overlap ([12]...)
+
+    #[test]
+    fn test_th_tnin_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("Thai national ID: 3100912345997");
+        assert!(
+            dets.iter().any(|d| d.entity_type == "TH_TNIN"),
+            "TH_TNIN not detected with context: {dets:?}"
+        );
+        assert!(!result.contains("3100912345997"));
+        assert!(result.contains("[TH_TNIN_"));
+    }
+
+    #[test]
+    fn test_th_tnin_no_context_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("3100912345997");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "TH_TNIN"),
+            "TH_TNIN should not match without context: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_th_tnin_bad_checksum_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("Thai citizen id: 3100912345990");
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "TH_TNIN"),
+            "TH_TNIN with bad checksum should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_th_tnin_various_contexts() {
+        let mut a = Anonymizer::new(0.0);
+        let contexts = [
+            "Thailand identification number 3100912345997",
+            "TNIN: 3100912345997",
+            "citizen id 3100912345997 for thai resident",
+            "บัตรประชาชน 3100912345997",
+        ];
+        for ctx in &contexts {
+            let (_, dets) = a.anonymize_text(ctx);
+            assert!(
+                dets.iter().any(|d| d.entity_type == "TH_TNIN"),
+                "TH_TNIN not detected with context '{ctx}': {dets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_th_tnin_roundtrip() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_text("Thai national ID: 3100912345997");
+        assert!(!result.contains("3100912345997"));
+        assert!(result.contains("[TH_TNIN_"));
     }
 }

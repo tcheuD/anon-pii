@@ -798,6 +798,28 @@ pub fn valid_si_tax_number(s: &str) -> bool {
     }
 }
 
+/// Thai National Identification Number (TNIN) checksum validation.
+/// 13 digits, weights `[13,12,11,10,9,8,7,6,5,4,3,2]` on first 12 digits,
+/// check digit = `(11 - sum % 11) % 10`.
+pub fn valid_th_tnin(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 13 {
+        return false;
+    }
+    let weights: [u32; 12] = [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2];
+    let sum: u32 = digits[..12]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let check = (11 - (sum % 11)) % 10;
+    digits[12] == check
+}
+
 /// Finnish Personal Identity Code (henkilötunnus / HETU) validation.
 /// Format: DDMMYYCSSSQ (11 chars). C = century separator (+, -, Y, A).
 /// SSS = individual number (002-899). Q = mod-31 control character from
@@ -1885,5 +1907,38 @@ mod tests {
         // Let me compute: 10101002 % 31 = 10101002 / 31 = 325839 rem 23
         // CONTROL_CHARS[23] = 'S'
         assert!(valid_fi_identity_code("010101-002S"));
+    }
+
+    // ── valid_th_tnin tests ──
+
+    #[test]
+    fn test_valid_th_tnin_known_good() {
+        // 1123456789014: weights [13..2], sum=315, 315%11=7, (11-7)%10=4 ✓
+        assert!(valid_th_tnin("1123456789014"));
+    }
+
+    #[test]
+    fn test_valid_th_tnin_another_valid() {
+        // 3100912345997: sum=257, 257%11=4, (11-4)%10=7 ✓
+        assert!(valid_th_tnin("3100912345997"));
+    }
+
+    #[test]
+    fn test_valid_th_tnin_check_digit_zero() {
+        // 1100100001014: sum=40, 40%11=7, (11-7)%10=4 ✓
+        assert!(valid_th_tnin("1100100001014"));
+    }
+
+    #[test]
+    fn test_valid_th_tnin_rejects_bad_checksum() {
+        assert!(!valid_th_tnin("1123456789015")); // expected 4, got 5
+        assert!(!valid_th_tnin("1123456789010")); // expected 4, got 0
+    }
+
+    #[test]
+    fn test_valid_th_tnin_wrong_length() {
+        assert!(!valid_th_tnin("112345678901")); // 12 digits
+        assert!(!valid_th_tnin("11234567890140")); // 14 digits
+        assert!(!valid_th_tnin(""));
     }
 }
