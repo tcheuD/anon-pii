@@ -383,6 +383,90 @@ pub fn valid_it_fiscal_code(s: &str) -> bool {
     upper[15] == expected
 }
 
+/// AU ABN (Australian Business Number) weighted checksum validation.
+/// Subtract 1 from first digit, multiply by weights `[10,1,3,5,7,9,11,13,15,17,19]`,
+/// sum mod 89 must equal 0.
+pub fn valid_au_abn(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 11 {
+        return false;
+    }
+    let weights: [u32; 11] = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
+    let mut adjusted = digits.clone();
+    adjusted[0] = adjusted[0].wrapping_sub(1); // subtract 1 from first digit
+    let sum: u32 = adjusted
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    sum.is_multiple_of(89)
+}
+
+/// AU ACN (Australian Company Number) checksum validation.
+/// Weights `[8,7,6,5,4,3,2,1]` on first 8 digits, check digit = `(10 - sum % 10) % 10`.
+pub fn valid_au_acn(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    let weights: [u32; 8] = [8, 7, 6, 5, 4, 3, 2, 1];
+    let sum: u32 = digits[..8]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let check = (10 - (sum % 10)) % 10;
+    digits[8] == check
+}
+
+/// AU TFN (Tax File Number) weighted checksum validation.
+/// Weights `[1,4,3,7,5,8,6,9,10]`, sum mod 11 must equal 0.
+pub fn valid_au_tfn(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    let weights: [u32; 9] = [1, 4, 3, 7, 5, 8, 6, 9, 10];
+    let sum: u32 = digits
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    sum.is_multiple_of(11)
+}
+
+/// AU Medicare number checksum validation.
+/// Weights `[1,3,7,9,1,3,7,9]` on first 8 digits, check digit (9th) = sum % 10.
+pub fn valid_au_medicare(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() < 10 {
+        return false;
+    }
+    let weights: [u32; 8] = [1, 3, 7, 9, 1, 3, 7, 9];
+    let sum: u32 = digits[..8]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    digits[8] == sum % 10
+}
+
 /// UK NINO prefix blocklist validation.
 /// Rejects invalid prefix pairs: BG, GB, NK, KN, NT, TN, ZZ.
 pub fn valid_uk_nino(s: &str) -> bool {
@@ -1027,5 +1111,116 @@ mod tests {
         assert!(!valid_in_gstin("27AAPFU0939F1Z")); // 14 chars
         assert!(!valid_in_gstin("27AAPFU0939F1ZVX")); // 16 chars
         assert!(!valid_in_gstin(""));
+    }
+
+    // ── valid_au_abn tests ──
+
+    #[test]
+    fn test_valid_au_abn_known_good() {
+        // ATO: 51 824 753 556
+        // Subtract 1 from first digit: [4,1,8,2,4,7,5,3,5,5,6]
+        // Weights: [10,1,3,5,7,9,11,13,15,17,19]
+        // Sum: 40+1+24+10+28+63+55+39+75+85+114 = 534, 534 % 89 = 0 ✓
+        assert!(valid_au_abn("51824753556"));
+        // With spaces
+        assert!(valid_au_abn("51 824 753 556"));
+        // Telstra: 33 051 775 556
+        assert!(valid_au_abn("33051775556"));
+    }
+
+    #[test]
+    fn test_valid_au_abn_rejects_bad_checksum() {
+        assert!(!valid_au_abn("51824753557")); // off by one
+        assert!(!valid_au_abn("12345678901")); // random
+    }
+
+    #[test]
+    fn test_valid_au_abn_wrong_length() {
+        assert!(!valid_au_abn("5182475355")); // 10 digits
+        assert!(!valid_au_abn("518247535560")); // 12 digits
+        assert!(!valid_au_abn(""));
+    }
+
+    // ── valid_au_acn tests ──
+
+    #[test]
+    fn test_valid_au_acn_known_good() {
+        // 000 000 019: weights [8,7,6,5,4,3,2,1] on first 8 → 0+0+0+0+0+0+0+1=1
+        // check = (10 - 1%10) % 10 = 9 ✓
+        assert!(valid_au_acn("000000019"));
+        // Telstra ACN: 004 085 616
+        // First 8: 0,0,4,0,8,5,6,1 → 0+0+24+0+32+15+12+1=84
+        // check = (10 - 84%10) % 10 = (10-4)%10 = 6 ✓
+        assert!(valid_au_acn("004085616"));
+        // With spaces
+        assert!(valid_au_acn("004 085 616"));
+    }
+
+    #[test]
+    fn test_valid_au_acn_rejects_bad_checksum() {
+        assert!(!valid_au_acn("000000010")); // expected 9
+        assert!(!valid_au_acn("004085617")); // off by one
+    }
+
+    #[test]
+    fn test_valid_au_acn_check_digit_zero() {
+        // First 8 digits sum to multiple of 10 → check digit 0
+        // 0,0,0,0,0,0,0,0 → sum=0 → (10-0)%10=0
+        assert!(valid_au_acn("000000000"));
+    }
+
+    #[test]
+    fn test_valid_au_acn_wrong_length() {
+        assert!(!valid_au_acn("00000001")); // 8 digits
+        assert!(!valid_au_acn("0000000190")); // 10 digits
+        assert!(!valid_au_acn(""));
+    }
+
+    // ── valid_au_tfn tests ──
+
+    #[test]
+    fn test_valid_au_tfn_known_good() {
+        // 123 456 782: weights [1,4,3,7,5,8,6,9,10]
+        // 1+8+9+28+25+48+42+72+20 = 253, 253 % 11 = 0 ✓
+        assert!(valid_au_tfn("123456782"));
+        // With spaces
+        assert!(valid_au_tfn("123 456 782"));
+    }
+
+    #[test]
+    fn test_valid_au_tfn_rejects_bad_checksum() {
+        assert!(!valid_au_tfn("123456789")); // sum=323, 323%11=4 ≠ 0
+        assert!(!valid_au_tfn("123456783")); // off by one
+    }
+
+    #[test]
+    fn test_valid_au_tfn_wrong_length() {
+        assert!(!valid_au_tfn("12345678")); // 8 digits
+        assert!(!valid_au_tfn("1234567820")); // 10 digits
+        assert!(!valid_au_tfn(""));
+    }
+
+    // ── valid_au_medicare tests ──
+
+    #[test]
+    fn test_valid_au_medicare_known_good() {
+        // 2123 45670 1: weights [1,3,7,9,1,3,7,9] on first 8 digits
+        // 2*1+1*3+2*7+3*9+4*1+5*3+6*7+7*9 = 2+3+14+27+4+15+42+63 = 170
+        // check digit (9th) = 170 % 10 = 0 → digit 9 is 0 ✓
+        assert!(valid_au_medicare("2123456701"));
+        // With spaces
+        assert!(valid_au_medicare("2123 45670 1"));
+    }
+
+    #[test]
+    fn test_valid_au_medicare_rejects_bad_checksum() {
+        assert!(!valid_au_medicare("2123456711")); // check should be 0, not 1
+        assert!(!valid_au_medicare("2123456791")); // check should be 0, not 9
+    }
+
+    #[test]
+    fn test_valid_au_medicare_wrong_length() {
+        assert!(!valid_au_medicare("212345670")); // 9 digits
+        assert!(!valid_au_medicare(""));
     }
 }
