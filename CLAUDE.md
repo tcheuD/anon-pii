@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Rust (default — regex-only, no NER, no proxy)
 cargo build --release      # binary at target/release/anon
-cargo test                 # ~630 tests (lib + integration)
+cargo test                 # ~647 tests (lib + integration)
 
 # With features
 cargo build --features ner-lite        # heuristic name detection (zero deps)
@@ -86,6 +86,10 @@ src/
 
 CLI → format detection → `Anonymizer` dispatches to `anonymize_text()` or `anonymize_json_value()` → normalization pipeline (NFKC → unicode escapes → percent encoding) → regex matching with overlap resolution → token replacement via `Mapping`.
 
+### Anonymization operators
+
+`Operator` enum in `detection.rs`: `Token` (default), `Redact`, `Keep`, `Mask`, `Hash`. Each wired in a single match arm in `anonymize_text()` — JSON/CSV/SQL all delegate to it. Adding a new operator: add enum variant, config fields to `Anonymizer`, `apply_*` function, match arm, CLI flag in `main.rs`, tests.
+
 ### Pattern system
 
 `PATTERNS` array of `PiiPattern` structs (~97 patterns, 63 entity types), each with a regex, entity type, confidence score, optional `context_keywords`, and `context_required` bool.
@@ -132,7 +136,7 @@ Tokens follow `[ENTITY_TYPE_XXXX]` format with random hex suffix (e.g., `[EMAIL_
 |------|--------|-------------|
 | (default) | Regex-only detection | None beyond core |
 | `ner-lite` | Heuristic name detection (titles, name dictionaries) | None (zero deps) |
-| `ner` | ML name detection via ONNX DistilBERT (implies `ner-lite`) | ort, tokenizers, ndarray, ureq, sha2 |
+| `ner` | ML name detection via ONNX DistilBERT (implies `ner-lite`) | ort, tokenizers, ndarray, ureq |
 | `proxy` | Reverse proxy + web UI | tokio, axum, reqwest, futures, bytes |
 
 ## Entity naming
