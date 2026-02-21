@@ -26,13 +26,23 @@ async fn validate_host(req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
+const OPENAPI_SPEC: &str = include_str!("../../docs/openapi.json");
+
 fn router() -> Router {
     Router::new()
         .route("/analyze", post(handlers::analyze))
         .route("/anonymize", post(handlers::anonymize))
         .route("/supportedentities", get(handlers::supported_entities))
         .route("/health", get(handlers::health))
+        .route("/openapi.json", get(openapi_spec))
         .layer(middleware::from_fn(validate_host))
+}
+
+async fn openapi_spec() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        OPENAPI_SPEC,
+    )
 }
 
 pub async fn run(port: u16) -> std::io::Result<()> {
@@ -64,6 +74,7 @@ mod tests {
             .route("/anonymize", post(handlers::anonymize))
             .route("/supportedentities", get(handlers::supported_entities))
             .route("/health", get(handlers::health))
+            .route("/openapi.json", get(openapi_spec))
     }
 
     #[tokio::test]
@@ -826,5 +837,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_openapi_spec_returns_valid_json() {
+        let resp = app()
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        let spec: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(spec["openapi"], "3.0.3");
+        assert_eq!(spec["paths"].as_object().unwrap().len(), 5);
     }
 }
