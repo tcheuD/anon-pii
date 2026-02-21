@@ -88,7 +88,9 @@ CLI → format detection → `Anonymizer` dispatches to `anonymize_text()` or `a
 
 ### Anonymization operators
 
-`Operator` enum in `detection.rs`: `Token` (default), `Redact`, `Keep`, `Mask`, `Hash`. Each wired in a single match arm in `anonymize_text()` — JSON/CSV/SQL all delegate to it. Adding a new operator: add enum variant, config fields to `Anonymizer`, `apply_*` function, match arm, CLI flag in `main.rs`, tests.
+`Operator` enum in `detection.rs`: `Token` (default), `Redact`, `Keep`, `Mask`, `Hash`, `Encrypt`. Each wired in a single match arm in `anonymize_text()` — JSON/CSV/SQL all delegate to it. Adding a new operator: add enum variant, config fields to `Anonymizer`, `apply_*` function, match arm, CLI flag in `main.rs`, tests.
+
+`Encrypt` uses AES-CBC (128/192/256-bit) with PKCS7 padding. A random 16-byte IV is generated per detection and prepended to the ciphertext. Output is hex-encoded (`IV || ciphertext`). Requires `--encrypt-key <hex>` (32/48/64 hex chars). Reversible without a mapping file.
 
 ### Pattern system
 

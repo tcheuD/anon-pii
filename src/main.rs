@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "proxy")]
 use std::sync::Arc;
 
-use anon::detection::{Anonymizer, Detection, HashAlgo, MaskConfig, Operator};
+use anon::detection::{parse_encrypt_key, Anonymizer, Detection, HashAlgo, MaskConfig, Operator};
 use anon::format::{detect_format, detect_json_indent, DetectedFormat};
 use anon::mapping::Mapping;
 use anon::patterns::{MAX_INPUT_SIZE, PATTERNS};
@@ -84,6 +84,11 @@ struct Cli {
     /// Hash algorithm (used with --operator hash)
     #[arg(long, value_enum, default_value = "sha256")]
     hash_algo: HashAlgo,
+
+    /// AES encryption key, hex-encoded (used with --operator encrypt)
+    /// Must be 32 (128-bit), 48 (192-bit), or 64 (256-bit) hex characters
+    #[arg(long)]
+    encrypt_key: Option<String>,
 
     /// Language for detection
     #[arg(short, long, default_value = "en")]
@@ -764,6 +769,17 @@ fn main() -> io::Result<()> {
                 from_end: cli.mask_from_end,
             };
             anonymizer.hash_algo = cli.hash_algo;
+            if cli.operator == Operator::Encrypt {
+                let hex = cli.encrypt_key.as_deref().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--encrypt-key is required when using --operator encrypt",
+                    )
+                })?;
+                let key = parse_encrypt_key(hex)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+                anonymizer.encrypt_key = Some(key);
+            }
 
             // Wire up NER detector if requested (ML + heuristic combined)
             #[cfg(feature = "ner")]

@@ -30,6 +30,8 @@ ndarray = { version = "0.17", optional = true }
 ureq = { version = "3", optional = true }
 sha2 = "0.10"
 md5 = "0.7"
+aes = "0.8.4"
+cbc = { version = "0.1.2", features = ["alloc"] }
 
 [features]
 default = []

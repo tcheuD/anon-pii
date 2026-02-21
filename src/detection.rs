@@ -1,3 +1,5 @@
+use aes::Aes128;
+use cbc::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
 use clap::ValueEnum;
 use regex::Regex;
 use serde_json::Value;
@@ -27,7 +29,13 @@ pub enum Operator {
     Mask,
     /// Replace PII with a cryptographic hash
     Hash,
+    /// AES-CBC encrypt PII (reversible without mapping file)
+    Encrypt,
 }
+
+type Aes128CbcEnc = cbc::Encryptor<Aes128>;
+type Aes192CbcEnc = cbc::Encryptor<aes::Aes192>;
+type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum HashAlgo {
@@ -93,6 +101,46 @@ fn apply_hash(value: &str, algo: HashAlgo) -> String {
             format!("{:x}", hash)
         }
     }
+}
+
+fn apply_encrypt(value: &str, key: &[u8]) -> String {
+    let mut iv_bytes = [0u8; 16];
+    getrandom::fill(&mut iv_bytes).expect("getrandom failed");
+
+    let ciphertext = match key.len() {
+        16 => Aes128CbcEnc::new(key.into(), &iv_bytes.into())
+            .encrypt_padded_vec_mut::<Pkcs7>(value.as_bytes()),
+        24 => Aes192CbcEnc::new(key.into(), &iv_bytes.into())
+            .encrypt_padded_vec_mut::<Pkcs7>(value.as_bytes()),
+        32 => Aes256CbcEnc::new(key.into(), &iv_bytes.into())
+            .encrypt_padded_vec_mut::<Pkcs7>(value.as_bytes()),
+        _ => unreachable!("key length validated at CLI parse time"),
+    };
+
+    let mut out = String::with_capacity((16 + ciphertext.len()) * 2);
+    for b in &iv_bytes {
+        out.push_str(&format!("{:02x}", b));
+    }
+    for b in &ciphertext {
+        out.push_str(&format!("{:02x}", b));
+    }
+    out
+}
+
+/// Parse a hex-encoded AES key, returning the raw bytes.
+/// Accepts 32 (128-bit), 48 (192-bit), or 64 (256-bit) hex characters.
+pub fn parse_encrypt_key(hex: &str) -> Result<Vec<u8>, String> {
+    if hex.len() != 32 && hex.len() != 48 && hex.len() != 64 {
+        return Err(format!(
+            "encrypt key must be 32, 48, or 64 hex characters (128/192/256-bit), got {}",
+            hex.len()
+        ));
+    }
+    let bytes: Result<Vec<u8>, _> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect();
+    bytes.map_err(|e| format!("invalid hex in encrypt key: {e}"))
 }
 
 /// Strip Unicode diacritics: "Gaël" → "Gael", "René" → "Rene".
@@ -347,6 +395,7 @@ pub struct Anonymizer {
     pub operator: Operator,
     pub mask_config: MaskConfig,
     pub hash_algo: HashAlgo,
+    pub encrypt_key: Option<Vec<u8>>,
     ner_detector: Option<Box<dyn NerDetector>>,
 }
 
@@ -391,6 +440,7 @@ impl Anonymizer {
             operator: Operator::default(),
             mask_config: MaskConfig::default(),
             hash_algo: HashAlgo::default(),
+            encrypt_key: None,
             ner_detector: None,
         }
     }
@@ -1172,6 +1222,10 @@ impl Anonymizer {
                 Operator::Keep => continue,
                 Operator::Mask => apply_mask(&det.original, &self.mask_config),
                 Operator::Hash => apply_hash(&det.original, self.hash_algo),
+                Operator::Encrypt => apply_encrypt(
+                    &det.original,
+                    self.encrypt_key.as_ref().expect("encrypt_key required"),
+                ),
             };
             result = format!(
                 "{}{}{}",
@@ -5470,6 +5524,193 @@ example-air.com"#;
 
         let hash = apply_hash("test", HashAlgo::Md5);
         assert_eq!(hash, "098f6bcd4621d373cade4e832627b4f6");
+    }
+
+    // ── Encrypt operator tests ──
+
+    #[test]
+    fn test_operator_encrypt_replaces_pii() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(vec![0u8; 16]); // 128-bit zero key for testing
+        let (result, dets) = a.anonymize_text("contact john@example.com now");
+        assert!(!result.contains("john@example.com"));
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].entity_type, "EMAIL_ADDRESS");
+    }
+
+    #[test]
+    fn test_operator_encrypt_output_is_hex() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(vec![0u8; 16]);
+        let (result, _) = a.anonymize_text("contact john@example.com now");
+        // Extract the encrypted part (between "contact " and " now")
+        let encrypted = result
+            .strip_prefix("contact ")
+            .unwrap()
+            .strip_suffix(" now")
+            .unwrap();
+        // Must be valid hex
+        assert!(encrypted.chars().all(|c| c.is_ascii_hexdigit()));
+        // IV (16 bytes = 32 hex) + ciphertext (at least 1 block = 32 hex)
+        assert!(encrypted.len() >= 64);
+    }
+
+    #[test]
+    fn test_operator_encrypt_roundtrip_aes128() {
+        use aes::Aes128;
+        use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+        type Aes128CbcDec = cbc::Decryptor<Aes128>;
+
+        let key = vec![0x42u8; 16];
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(key.clone());
+        let (result, _) = a.anonymize_text("contact john@example.com now");
+        let encrypted = result
+            .strip_prefix("contact ")
+            .unwrap()
+            .strip_suffix(" now")
+            .unwrap();
+
+        // Decode hex
+        let raw: Vec<u8> = (0..encrypted.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&encrypted[i..i + 2], 16).unwrap())
+            .collect();
+        let (iv, ct) = raw.split_at(16);
+        let plaintext = Aes128CbcDec::new(key.as_slice().into(), iv.into())
+            .decrypt_padded_vec_mut::<Pkcs7>(&ct)
+            .unwrap();
+        assert_eq!(std::str::from_utf8(&plaintext).unwrap(), "john@example.com");
+    }
+
+    #[test]
+    fn test_operator_encrypt_roundtrip_aes256() {
+        use aes::Aes256;
+        use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+        type Aes256CbcDec = cbc::Decryptor<Aes256>;
+
+        let key = vec![0xABu8; 32];
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(key.clone());
+        let (result, _) = a.anonymize_text("192.168.1.1");
+        // Entire input is an IP, so result is just the ciphertext
+        let encrypted = result.as_str();
+
+        let raw: Vec<u8> = (0..encrypted.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&encrypted[i..i + 2], 16).unwrap())
+            .collect();
+        let (iv, ct) = raw.split_at(16);
+        let plaintext = Aes256CbcDec::new(key.as_slice().into(), iv.into())
+            .decrypt_padded_vec_mut::<Pkcs7>(&ct)
+            .unwrap();
+        assert_eq!(std::str::from_utf8(&plaintext).unwrap(), "192.168.1.1");
+    }
+
+    #[test]
+    fn test_operator_encrypt_nondeterministic() {
+        let key = vec![0u8; 16];
+        let mut a1 = Anonymizer::new(0.0);
+        a1.operator = Operator::Encrypt;
+        a1.encrypt_key = Some(key.clone());
+        let (r1, _) = a1.anonymize_text("john@example.com");
+
+        let mut a2 = Anonymizer::new(0.0);
+        a2.operator = Operator::Encrypt;
+        a2.encrypt_key = Some(key);
+        let (r2, _) = a2.anonymize_text("john@example.com");
+
+        // Different IVs → different ciphertext each time
+        assert_ne!(r1, r2);
+    }
+
+    #[test]
+    fn test_operator_encrypt_no_mapping_entries() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(vec![0u8; 16]);
+        let _ = a.anonymize_text("john@example.com");
+        assert!(a.mapping.mappings.is_empty());
+    }
+
+    #[test]
+    fn test_operator_encrypt_json() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(vec![0u8; 16]);
+        let json: Value = serde_json::from_str(r#"{"email": "john@example.com"}"#).unwrap();
+        let (result, dets) = a.anonymize_json_value(&json);
+        assert!(!result.to_string().contains("john@example.com"));
+        assert_eq!(dets.len(), 1);
+    }
+
+    #[test]
+    fn test_operator_encrypt_multiple_entities() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(vec![0u8; 32]); // 256-bit key
+        let (result, dets) = a.anonymize_text("email: john@example.com, ip: 192.168.1.1");
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("192.168.1.1"));
+        assert_eq!(dets.len(), 2);
+    }
+
+    #[test]
+    fn test_operator_encrypt_aes192() {
+        use aes::Aes192;
+        use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+        type Aes192CbcDec = cbc::Decryptor<Aes192>;
+
+        let key = vec![0x55u8; 24]; // 192-bit key
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Encrypt;
+        a.encrypt_key = Some(key.clone());
+        let (result, _) = a.anonymize_text("contact john@example.com now");
+        let encrypted = result
+            .strip_prefix("contact ")
+            .unwrap()
+            .strip_suffix(" now")
+            .unwrap();
+
+        let raw: Vec<u8> = (0..encrypted.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&encrypted[i..i + 2], 16).unwrap())
+            .collect();
+        let (iv, ct) = raw.split_at(16);
+        let plaintext = Aes192CbcDec::new(key.as_slice().into(), iv.into())
+            .decrypt_padded_vec_mut::<Pkcs7>(&ct)
+            .unwrap();
+        assert_eq!(std::str::from_utf8(&plaintext).unwrap(), "john@example.com");
+    }
+
+    #[test]
+    fn test_parse_encrypt_key_valid_128() {
+        let key = parse_encrypt_key("00112233445566778899aabbccddeeff").unwrap();
+        assert_eq!(key.len(), 16);
+        assert_eq!(key[0], 0x00);
+        assert_eq!(key[15], 0xff);
+    }
+
+    #[test]
+    fn test_parse_encrypt_key_valid_256() {
+        let hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let key = parse_encrypt_key(hex).unwrap();
+        assert_eq!(key.len(), 32);
+    }
+
+    #[test]
+    fn test_parse_encrypt_key_invalid_length() {
+        assert!(parse_encrypt_key("0011").is_err());
+        assert!(parse_encrypt_key("").is_err());
+    }
+
+    #[test]
+    fn test_parse_encrypt_key_invalid_hex() {
+        assert!(parse_encrypt_key("gghhiijjkkllmmnnooppqqrrssttuuvv").is_err());
     }
 
     // ── US_BANK_NUMBER tests ──
