@@ -21,6 +21,7 @@ mod kr;
 mod pl;
 mod secrets;
 mod sg;
+mod si;
 mod uk;
 mod us;
 pub mod validators;
@@ -30,7 +31,8 @@ pub use validators::{
     iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare,
     valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif, valid_in_aadhaar, valid_in_gstin,
     valid_it_fiscal_code, valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac, valid_pl_pesel,
-    valid_sg_nric_fin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn, verhoeff_check,
+    valid_sg_nric_fin, valid_si_emso, valid_si_tax_number, valid_uk_nhs, valid_uk_nino,
+    valid_us_itin, valid_us_ssn, verhoeff_check,
 };
 
 /// A PII pattern definition with regex, entity type, score, and context configuration.
@@ -72,6 +74,7 @@ use kr::KR_PATTERNS;
 use pl::PL_PATTERNS;
 use secrets::SECRETS_PATTERNS;
 use sg::SG_PATTERNS;
+use si::SI_PATTERNS;
 use uk::UK_PATTERNS;
 use us::US_PATTERNS;
 
@@ -95,6 +98,7 @@ pub const PATTERNS: &[PiiPattern] = &{
         + KR_PATTERNS.len()
         + SG_PATTERNS.len()
         + PL_PATTERNS.len()
+        + SI_PATTERNS.len()
         + SECRETS_PATTERNS.len();
 
     const fn build_patterns() -> [PiiPattern; TOTAL_LEN] {
@@ -289,6 +293,21 @@ pub const PATTERNS: &[PiiPattern] = &{
             j += 1;
         }
 
+        // SI patterns
+        j = 0;
+        while j < SI_PATTERNS.len() {
+            result[i] = PiiPattern {
+                name: SI_PATTERNS[j].name,
+                entity_type: SI_PATTERNS[j].entity_type,
+                pattern: SI_PATTERNS[j].pattern,
+                score: SI_PATTERNS[j].score,
+                context_keywords: SI_PATTERNS[j].context_keywords,
+                context_required: SI_PATTERNS[j].context_required,
+            };
+            i += 1;
+            j += 1;
+        }
+
         // Secrets patterns
         j = 0;
         while j < SECRETS_PATTERNS.len() {
@@ -318,10 +337,10 @@ mod tests {
 
     #[test]
     fn test_patterns_count() {
-        // Current count: 93 patterns. Update this if patterns are added/removed.
+        // Current count: 95 patterns. Update this if patterns are added/removed.
         assert_eq!(
             PATTERNS.len(),
-            93,
+            95,
             "PATTERNS count changed - update this test if intentional"
         );
     }
@@ -330,10 +349,10 @@ mod tests {
     fn test_entity_types_count() {
         use std::collections::HashSet;
         let entity_types: HashSet<&str> = PATTERNS.iter().map(|p| p.entity_type).collect();
-        // Current count: 59 unique entity types
+        // Current count: 61 unique entity types
         assert_eq!(
             entity_types.len(),
-            59,
+            61,
             "Entity type count changed - update this test if intentional"
         );
     }
@@ -391,6 +410,8 @@ mod tests {
             "SECRET_KEY",
             "SG_NRIC_FIN",
             "SG_UEN",
+            "SI_EMSO",
+            "SI_TAX_NUMBER",
             "UK_NHS",
             "UK_NINO",
             "URL",
@@ -484,6 +505,8 @@ mod tests {
         let _ = valid_kr_brn("1234567891");
         let _ = valid_sg_nric_fin("S1234567D");
         let _ = valid_pl_pesel("44051401359");
+        let _ = valid_si_emso("0101006500006");
+        let _ = valid_si_tax_number("15012557");
     }
 
     #[test]

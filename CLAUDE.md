@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Rust (default — regex-only, no NER, no proxy)
 cargo build --release      # binary at target/release/anon
-cargo test                 # ~575 tests (lib + integration)
+cargo test                 # ~597 tests (lib + integration)
 
 # With features
 cargo build --features ner-lite        # heuristic name detection (zero deps)
@@ -60,6 +60,7 @@ src/
 │   ├── kr.rs          # KR_RRN, KR_BRN, KR_DRIVER_LICENSE, KR_FRN, KR_PASSPORT
 │   ├── sg.rs          # SG_NRIC_FIN, SG_UEN
 │   ├── pl.rs          # PL_PESEL
+│   ├── si.rs          # SI_EMSO, SI_TAX_NUMBER
 │   └── validators.rs  # Luhn, mod-97, mod-11, Verhoeff, weighted checksums
 ├── mapping.rs         # Token↔original mapping, persistence, LRU eviction
 ├── format.rs          # Format auto-detection (JSON/SQL/CSV/text)
@@ -85,12 +86,12 @@ CLI → format detection → `Anonymizer` dispatches to `anonymize_text()` or `a
 
 ### Pattern system
 
-`PATTERNS` array of `PiiPattern` structs (~93 patterns, 59 entity types), each with a regex, entity type, confidence score, optional `context_keywords`, and `context_required` bool.
+`PATTERNS` array of `PiiPattern` structs (~95 patterns, 61 entity types), each with a regex, entity type, confidence score, optional `context_keywords`, and `context_required` bool.
 
 - `context_required: true` = binary gate (no keyword nearby → no match). Used by IBAN, CREDIT_CARD, PHONE_NUMBER, some AIRCRAFT_REGISTRATION patterns.
 - `context_required: false` + keywords = score boost (+0.15). Used by FR_PHONE_NUMBER, FR_IBAN, FR_SSN.
 - CREW_CODE uses a ~250-entry blocklist of common words/abbreviations to reduce false positives.
-- Validators: Luhn (credit cards), mod-97 (IBAN), Verhoeff (Aadhaar), mod-11 (NHS, TFN), weighted checksums (ABN, ACN, ABA, BRN, NRIC/FIN, PESEL), mod-23 (NIF/NIE), fiscal code (IT), SSN prefix blocklist, MAC broadcast/null rejection.
+- Validators: Luhn (credit cards), mod-97 (IBAN), Verhoeff (Aadhaar), mod-11 (NHS, TFN), weighted checksums (ABN, ACN, ABA, BRN, NRIC/FIN, PESEL, EMŠO, SI tax), mod-23 (NIF/NIE), fiscal code (IT), SSN prefix blocklist, MAC broadcast/null rejection.
 
 ### Adding a new country entity
 

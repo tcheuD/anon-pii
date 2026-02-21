@@ -728,6 +728,76 @@ pub fn valid_pl_pesel(s: &str) -> bool {
     digits[10] == check
 }
 
+/// SI EMŠO (Enotna Matična Številka Občana) checksum validation.
+/// 13 digits: DDMMYYYRRBBBC. Weights `[7,6,5,4,3,2,7,6,5,4,3,2]` on first 12,
+/// check digit = `11 - sum % 11`. Result of 11 → K=0; result of 10 → invalid.
+/// Regional code (digits 8-9) must be 50-59 for Slovenia.
+pub fn valid_si_emso(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 13 {
+        return false;
+    }
+    // Regional code (0-indexed positions 7-8) must be 50-59 for Slovenia
+    let region = digits[7] * 10 + digits[8];
+    if !(50..=59).contains(&region) {
+        return false;
+    }
+    let weights: [u32; 12] = [7, 6, 5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+    let sum: u32 = digits[..12]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let remainder = sum % 11;
+    if remainder == 0 {
+        digits[12] == 0
+    } else {
+        let check = 11 - remainder;
+        if check == 10 {
+            return false; // cannot encode as single digit
+        }
+        digits[12] == check
+    }
+}
+
+/// SI Tax Number (Davčna Številka) checksum validation.
+/// 8 digits, first digit 1-9. Weights `[8,7,6,5,4,3,2]` on first 7,
+/// check digit = `11 - sum % 11`. Result of 10 → K=0; result of 11 → invalid.
+pub fn valid_si_tax_number(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 8 {
+        return false;
+    }
+    // First digit must not be 0
+    if digits[0] == 0 {
+        return false;
+    }
+    let weights: [u32; 7] = [8, 7, 6, 5, 4, 3, 2];
+    let sum: u32 = digits[..7]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let remainder = sum % 11;
+    if remainder == 0 {
+        return false; // invalid — check digit would be 11
+    }
+    let check = 11 - remainder;
+    if check == 10 {
+        digits[7] == 0
+    } else {
+        digits[7] == check
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1597,5 +1667,85 @@ mod tests {
         // 0*1+2*3+1*7+2*9+2*1+4*3+0*7+1*9+3*1+5*3 = 0+6+7+18+2+12+0+9+3+15 = 72
         // check = (10 - 72%10) % 10 = (10-2)%10 = 8
         assert!(valid_pl_pesel("02122401358"));
+    }
+
+    // ── valid_si_emso tests ──
+
+    #[test]
+    fn test_valid_si_emso_known_good() {
+        // 0101006500006: DDMMYYY=0101006, RR=50, BBB=000, K=6
+        // Weights: [7,6,5,4,3,2,7,6,5,4,3,2]
+        // 0*7+1*6+0*5+1*4+0*3+0*2+6*7+5*6+0*5+0*4+0*3+0*2 = 0+6+0+4+0+0+42+30+0+0+0+0 = 82
+        // 82 % 11 = 5, check = 11-5 = 6 ✓
+        assert!(valid_si_emso("0101006500006"));
+    }
+
+    #[test]
+    fn test_valid_si_emso_check_digit_zero() {
+        // 0010006500000: sum = 0+0+5+0+0+0+42+30+0+0+0+0 = 77; 77%11=0 → check=0 ✓
+        assert!(valid_si_emso("0010006500000"));
+    }
+
+    #[test]
+    fn test_valid_si_emso_rejects_bad_region() {
+        // Region 49 (not Slovenia)
+        assert!(!valid_si_emso("0101006490006"));
+        // Region 60 (not Slovenia)
+        assert!(!valid_si_emso("0101006600006"));
+    }
+
+    #[test]
+    fn test_valid_si_emso_rejects_bad_checksum() {
+        assert!(!valid_si_emso("0101006500007")); // expected 6
+        assert!(!valid_si_emso("0101006500005")); // expected 6
+    }
+
+    #[test]
+    fn test_valid_si_emso_wrong_length() {
+        assert!(!valid_si_emso("010100650000")); // 12 digits
+        assert!(!valid_si_emso("01010065000060")); // 14 digits
+        assert!(!valid_si_emso(""));
+    }
+
+    // ── valid_si_tax_number tests ──
+
+    #[test]
+    fn test_valid_si_tax_number_known_good() {
+        // 15012557: weights [8,7,6,5,4,3,2]
+        // 1*8+5*7+0*6+1*5+2*4+5*3+5*2 = 8+35+0+5+8+15+10 = 81
+        // 81 % 11 = 4, check = 11-4 = 7 ✓
+        assert!(valid_si_tax_number("15012557"));
+    }
+
+    #[test]
+    fn test_valid_si_tax_number_check_digit_zero() {
+        // 10001000: sum = 1*8+0+0+0+1*4+0+0 = 12; 12%11=1 → check=10 → K=0 ✓
+        assert!(valid_si_tax_number("10001000"));
+    }
+
+    #[test]
+    fn test_valid_si_tax_number_rejects_leading_zero() {
+        assert!(!valid_si_tax_number("05012557"));
+    }
+
+    #[test]
+    fn test_valid_si_tax_number_rejects_bad_checksum() {
+        assert!(!valid_si_tax_number("15012558")); // expected 7
+        assert!(!valid_si_tax_number("15012550")); // expected 7
+    }
+
+    #[test]
+    fn test_valid_si_tax_number_rejects_remainder_zero() {
+        // Need sum % 11 = 0 → invalid (check digit would be 11)
+        // d0*8 = 11 → not possible. Need combo: 11k.
+        // 10000100 → 1*8+0+0+0+0+1*3+0 = 11; 11%11=0 → INVALID ✓
+        assert!(!valid_si_tax_number("10000100"));
+    }
+
+    #[test]
+    fn test_valid_si_tax_number_wrong_length() {
+        assert!(!valid_si_tax_number("1501255")); // 7 digits
+        assert!(!valid_si_tax_number("150125570")); // 9 digits
+        assert!(!valid_si_tax_number(""));
     }
 }

@@ -138,7 +138,7 @@ anon list-entities
 
 ## Detected entities
 
-Emails, URLs, IPs, UUIDs, credit cards, crypto addresses, French phones, IBANs, SSNs, passports, aircraft registrations, flight numbers, crew codes, JWT/auth tokens, and person names (with `--ner`). Detection works through URL-encoded and Unicode-escaped text.
+61 entity types across 13 countries: emails, URLs, IPs, UUIDs, credit cards, IBANs, phones, dates, crypto addresses, MAC addresses, secrets/tokens, and person names (with `--ner`). Country-specific patterns include SSNs, passports, driver's licenses, tax IDs, and national IDs for US, UK, FR, ES, IT, IN, AU, KR, SG, PL, and SI — each with checksum validation where applicable. Detection works through URL-encoded and Unicode-escaped text.
 
 See [docs/entities.md](docs/entities.md) for the full reference with confidence scores and context keywords.
 
@@ -146,7 +146,7 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 
 | Guide | Description |
 |-------|-------------|
-| [Entity types](docs/entities.md) | All 14+ entity types, scores, context-aware detection |
+| [Entity types](docs/entities.md) | All 61 entity types, scores, context-aware detection |
 | [Proxy mode](docs/proxy.md) | Anonymizing reverse proxy for the Anthropic API |
 | [NER setup](docs/ner.md) | Person name detection — heuristic and ML backends |
 | [YouTrack integration](docs/youtrack.md) | `scripts/yt` — fetch issues with human review |
