@@ -89,36 +89,36 @@ Presidio ships ~50 built-in entity types. Below is the exhaustive 1:1 map.
 
 | Presidio Entity | Rust Status | Validation Needed | Complexity |
 |----------------|-------------|-------------------|------------|
-| `KR_RRN` | **Missing** | 13-digit resident registration, checksum | Low |
-| `KR_BRN` | **Missing** | 10-digit business registration, weighted checksum | Low |
-| `KR_DRIVER_LICENSE` | **Missing** | Pattern | Low |
-| `KR_FRN` | **Missing** | Foreign registration number | Low |
-| `KR_PASSPORT` | **Missing** | Pattern | Low |
+| `KR_RRN` | **Done** | ~~13-digit resident registration, checksum~~ (FIXED) `valid_kr_rrn()` with weights `[2,3,4,5,6,7,8,9,2,3,4,5]` mod-11-then-mod-10, gender digit 1-4, context-gated | Low |
+| `KR_BRN` | **Done** | ~~10-digit business registration, weighted checksum~~ (FIXED) `valid_kr_brn()` with weights `[1,3,7,1,3,7,1,3,5]` + carry, context-gated | Low |
+| `KR_DRIVER_LICENSE` | **Done** | ~~Pattern~~ (FIXED) Regional code 11-28, context-gated | Low |
+| `KR_FRN` | **Done** | ~~Foreign registration number~~ (FIXED) Same checksum as RRN, gender digit 5-8, context-gated | Low |
+| `KR_PASSPORT` | **Done** | ~~Pattern~~ (FIXED) Type letter [MSROD] + 8 digits, context-gated | Low |
 
 ### 1I. Singapore (2 entities)
 
 | Presidio Entity | Rust Status | Validation Needed | Complexity |
 |----------------|-------------|-------------------|------------|
-| `SG_NRIC_FIN` | **Missing** | First char S/T/F/G/M + 7 digits + check letter | Low |
-| `SG_UEN` | **Missing** | Unique entity number, pattern + context | Low |
+| `SG_NRIC_FIN` | **Done** | ~~First char S/T/F/G/M + 7 digits + check letter~~ (FIXED) `valid_sg_nric_fin()` with prefix-dependent weighted checksum (weights `[2,7,6,5,4,3,2]` mod-11), three check-letter tables for S/T, F/G, M prefixes, context-gated | Low |
+| `SG_UEN` | **Done** | ~~Unique entity number, pattern + context~~ (FIXED) 2 patterns: Format B (company, 4-digit year + 5 digits + check letter) and Format C (entity, `[RST]` + 2-digit year + 2-letter type + 4 digits + check), both context-gated | Low |
 
 ### 1J. Poland (1 entity)
 
 | Presidio Entity | Rust Status | Validation Needed | Complexity |
 |----------------|-------------|-------------------|------------|
-| `PL_PESEL` | **Missing** | 11-digit, weighted checksum `[1,3,7,9,1,3,7,9,1,3]` mod-10 | Low |
+| `PL_PESEL` | **Done** | ~~11-digit, weighted checksum `[1,3,7,9,1,3,7,9,1,3]` mod-10~~ (FIXED) `valid_pl_pesel()` with weighted checksum, context-gated | Low |
 
 ### 1K. Finland (1 entity)
 
 | Presidio Entity | Rust Status | Validation Needed | Complexity |
 |----------------|-------------|-------------------|------------|
-| `FI_PERSONAL_IDENTITY_CODE` | **Missing** | 11-char, date validation + mod-31 control character lookup | Medium |
+| `FI_PERSONAL_IDENTITY_CODE` | ~~**Missing**~~ (FIXED) | ~~11-char, date validation + mod-31 control character lookup~~ `valid_fi_identity_code()` with date validation, individual number range 002-899, mod-31 control character lookup, context-gated | Medium |
 
 ### 1L. Thailand (1 entity)
 
 | Presidio Entity | Rust Status | Validation Needed | Complexity |
 |----------------|-------------|-------------------|------------|
-| `TH_TNIN` | **Missing** | 13-digit Thai national ID | Low |
+| `TH_TNIN` | ~~**Missing**~~ (FIXED) | ~~13-digit Thai national ID~~ `valid_th_tnin()` with weighted checksum [13..2] mod-11, context-gated | Low |
 
 ### Entity Tally
 
@@ -135,8 +135,8 @@ Presidio ships ~50 built-in entity types. Below is the exhaustive 1:1 map.
 | Singapore | 2 | 0 | 0 | 2 |
 | Poland | 1 | 0 | 0 | 1 |
 | Finland | 1 | 0 | 0 | 1 |
-| Thailand | 1 | 0 | 0 | 1 |
-| **Total** | **50** | **7** | **3** | **40** |
+| Thailand | 1 | 0 | 0 | ~~1~~ 0 |
+| **Total** | **50** | **7** | **3** | ~~40~~ **39** |
 
 Plus Rust has 6 entity types Presidio lacks: `UUID`, `AUTH_TOKEN`, `JOB_TITLE`, `EMPLOYEE_ID`, `PHONE_EXTENSION`, `CREW_CODE`.
 
@@ -158,7 +158,7 @@ Presidio validates many entities with checksums beyond regex. Current Rust valid
 | **mod-11** (UK_NHS, AU_TFN) | Yes | **Done** — `valid_uk_nhs()` for UK_NHS, `valid_au_tfn()` for AU_TFN |
 | **Weighted checksums** (ABA, AU_ABN, AU_ACN, KR_BRN, PL_PESEL) | Yes | **Partial** — `valid_aba_routing()`, `valid_au_abn()`, `valid_au_acn()` implemented; KR_BRN, PL_PESEL still missing |
 | **IT fiscal code** (odd/even weighted, mod-26) | Yes | **Missing** |
-| **FI identity code** (date + mod-31) | Yes | **Missing** |
+| **FI identity code** (date + mod-31) | Yes | **Done** — `valid_fi_identity_code()` with date validation, individual number 002-899, mod-31 control character lookup |
 | **Base58/Bech32 checksum** (crypto) | Yes | **Skip** — regex is sufficient, extremely low false-positive rate |
 
 **Decision:** Implement checksum validation for every entity that Presidio validates. This is cheap in Rust and prevents false positives. Implement them as `fn validate_xxx(s: &str) -> bool` functions in `patterns.rs`, called from the detection pipeline (same pattern as existing `luhn_check` / `valid_card_prefix`).
@@ -173,9 +173,9 @@ Presidio has 8 anonymization operators. Rust currently has 1 (token replacement)
 |----------|----------|-------------|------------|
 | `replace` | Replace with `<ENTITY_TYPE>` or custom value | **Done** (as `[ENTITY_TYPE_hex]` tokens) | — |
 | `redact` | Remove PII completely (empty string) | **Missing** | Trivial |
-| `hash` | SHA-256/512/MD5 hash of PII | **Missing** | Low (use `sha2`/`md5` crates) |
+| `hash` | SHA-256/512/MD5 hash of PII | ~~**Missing**~~ (FIXED) `--operator hash --hash-algo sha256\|sha512\|md5` | Low |
 | `mask` | Replace with repeated char (`****`) | **Missing** | Low |
-| `encrypt` | AES-CBC encryption (reversible) | **Missing** | Medium (use `aes`/`cbc` crates) |
+| `encrypt` | AES-CBC encryption (reversible) | ~~**Missing**~~ (FIXED) `--operator encrypt --encrypt-key <hex>` AES-128/192/256-CBC with PKCS7, random IV prepended, hex output | Medium (use `aes`/`cbc` crates) |
 | `decrypt` | Reverse AES-CBC | **Missing** | Medium |
 | `keep` | No-op (preserve original) | **Missing** | Trivial |
 | `custom` | User-provided lambda | **Missing** | Medium (CLI: format string; library: closure) |
@@ -309,11 +309,11 @@ Implement all country recognizers. Group by country, each is a self-contained PR
 | 2.4 | Italy entities | `IT_FISCAL_CODE`, `IT_DRIVER_LICENSE`, `IT_VAT_CODE`, `IT_PASSPORT`, `IT_IDENTITY_CARD` | Medium (fiscal code checksum) |
 | 2.5 | India entities | `IN_AADHAAR`, `IN_PAN`, `IN_VEHICLE_REGISTRATION`, `IN_PASSPORT`, `IN_VOTER`, `IN_GSTIN` | Medium (Verhoeff algorithm) |
 | ~~2.6~~ | ~~Australia entities~~ (FIXED) | `AU_ABN`, `AU_ACN`, `AU_TFN`, `AU_MEDICARE` | Low |
-| 2.7 | South Korea entities | `KR_RRN`, `KR_BRN`, `KR_DRIVER_LICENSE`, `KR_FRN`, `KR_PASSPORT` | Low |
-| 2.8 | Singapore entities | `SG_NRIC_FIN`, `SG_UEN` | Low |
-| 2.9 | Poland entity | `PL_PESEL` | Low |
-| 2.10 | Finland entity | `FI_PERSONAL_IDENTITY_CODE` | Medium (date + mod-31) |
-| 2.11 | Thailand entity | `TH_TNIN` | Low |
+| ~~2.7~~ | ~~South Korea entities~~ (FIXED) | `KR_RRN`, `KR_BRN`, `KR_DRIVER_LICENSE`, `KR_FRN`, `KR_PASSPORT` | Low |
+| ~~2.8~~ | ~~Singapore entities~~ (FIXED) | `SG_NRIC_FIN`, `SG_UEN` | Low |
+| ~~2.9~~ | ~~Poland entity~~ (FIXED) | `PL_PESEL` | Low |
+| ~~2.10~~ | ~~Finland entity~~ (FIXED) | `FI_PERSONAL_IDENTITY_CODE` | Medium (date + mod-31) |
+| ~~2.11~~ | ~~Thailand entity~~ (FIXED) | `TH_TNIN` | Low |
 
 **Result after Phase 2:** All ~50 Presidio entity types covered.
 
@@ -323,8 +323,8 @@ Implement all country recognizers. Group by country, each is a self-contained PR
 |---|------|------------|
 | 3.1 | Add `--operator` flag with `redact`, `keep` modes | Low |
 | 3.2 | Add `mask` operator with `--mask-char`, `--mask-count` | Low |
-| 3.3 | Add `hash` operator with `--hash-algo` (sha256/sha512/md5) | Low |
-| 3.4 | Add `encrypt` operator (AES-CBC) with `--encrypt-key` | Medium |
+| ~~3.3~~ | ~~Add `hash` operator with `--hash-algo` (sha256/sha512/md5)~~ (FIXED) | Low |
+| ~~3.4~~ | ~~Add `encrypt` operator (AES-CBC) with `--encrypt-key`~~ (FIXED) | Medium |
 | 3.5 | Add `decrypt` to restore command | Medium |
 | 3.6 | Add `--replace-with` format string for custom replacement | Low |
 
