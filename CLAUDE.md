@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Rust (default — regex-only, no NER, no proxy)
 cargo build --release      # binary at target/release/anon
-cargo test                 # ~321 tests (lib + integration)
+cargo test                 # ~545 tests (lib + integration)
 
 # With features
 cargo build --features ner-lite        # heuristic name detection (zero deps)
@@ -45,7 +45,20 @@ src/
 ├── main.rs            # CLI (clap derive), Commands enum, I/O, mapping file ops
 ├── lib.rs             # pub mod re-exports (proxy/ui gated on "proxy" feature)
 ├── detection.rs       # Anonymizer: normalization pipeline, detection, overlap resolution
-├── patterns.rs        # PATTERNS array, PiiPattern structs, validators, CREW_CODE_BLOCKLIST
+├── patterns/           # PII pattern definitions organized by country/category
+│   ├── mod.rs         # PiiPattern struct, PATTERNS aggregation, constants
+│   ├── global.rs      # EMAIL, URL, IP, PHONE, IBAN, CREDIT_CARD, CRYPTO, MAC, DATE_TIME
+│   ├── french.rs      # FR_PHONE, FR_IBAN, FR_SSN, FR_PASSPORT
+│   ├── aviation.rs    # AIRCRAFT_REGISTRATION, FLIGHT_NUMBER, CREW_CODE, EMPLOYEE_ID
+│   ├── secrets.rs     # AUTH_TOKEN, SECRET_KEY, PASSWORD, CONNECTION_STRING
+│   ├── us.rs          # US_SSN, US_DRIVER_LICENSE, US_ITIN, US_PASSPORT, US_MBI, ABA_ROUTING, etc.
+│   ├── uk.rs          # UK_NHS, UK_NINO
+│   ├── es.rs          # ES_NIF, ES_NIE
+│   ├── it.rs          # IT_FISCAL_CODE, IT_DRIVER_LICENSE, IT_VAT_CODE, IT_PASSPORT, IT_IDENTITY_CARD
+│   ├── in_.rs         # IN_AADHAAR, IN_PAN, IN_VEHICLE_REGISTRATION, IN_PASSPORT, IN_VOTER, IN_GSTIN
+│   ├── au.rs          # AU_ABN, AU_ACN, AU_TFN, AU_MEDICARE
+│   ├── kr.rs          # KR_RRN, KR_BRN, KR_DRIVER_LICENSE, KR_FRN, KR_PASSPORT
+│   └── validators.rs  # Luhn, mod-97, mod-11, Verhoeff, weighted checksums
 ├── mapping.rs         # Token↔original mapping, persistence, LRU eviction
 ├── format.rs          # Format auto-detection (JSON/SQL/CSV/text)
 ├── ner/               # Named entity recognition (behind feature flags)
@@ -70,12 +83,20 @@ CLI → format detection → `Anonymizer` dispatches to `anonymize_text()` or `a
 
 ### Pattern system
 
-`PATTERNS` array of `PiiPattern` structs (~45 patterns, 15+ entity types), each with a regex, entity type, confidence score, optional `context_keywords`, and `context_required` bool.
+`PATTERNS` array of `PiiPattern` structs (~89 patterns, 56 entity types), each with a regex, entity type, confidence score, optional `context_keywords`, and `context_required` bool.
 
 - `context_required: true` = binary gate (no keyword nearby → no match). Used by IBAN, CREDIT_CARD, PHONE_NUMBER, some AIRCRAFT_REGISTRATION patterns.
 - `context_required: false` + keywords = score boost (+0.15). Used by FR_PHONE_NUMBER, FR_IBAN, FR_SSN.
 - CREW_CODE uses a ~250-entry blocklist of common words/abbreviations to reduce false positives.
-- Validators: Luhn (credit cards), mod-97 (IBAN), SSN prefix blocklist, MAC broadcast/null rejection.
+- Validators: Luhn (credit cards), mod-97 (IBAN), Verhoeff (Aadhaar), mod-11 (NHS, TFN), weighted checksums (ABN, ACN, ABA, BRN), mod-23 (NIF/NIE), fiscal code (IT), SSN prefix blocklist, MAC broadcast/null rejection.
+
+### Adding a new country entity
+
+1. Create `src/patterns/<cc>.rs` with `<CC>_PATTERNS` constant
+2. Add validators to `src/patterns/validators.rs` (if checksum needed)
+3. Register in `src/patterns/mod.rs`: add `mod`, `use`, export validators, update `TOTAL_LEN`, add copy block, update test counts/expected list
+4. Wire validators in `detection.rs` in **3 locations**: `anonymize_text()`, `anonymize_json_value()`, and URL inner detections (search for `AU_MEDICARE` to find all 3)
+5. Add integration tests in `detection.rs` (context match, no-context rejection, bad checksum rejection, roundtrip, various contexts)
 
 ### Overlap resolution
 
