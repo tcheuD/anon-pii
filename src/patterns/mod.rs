@@ -13,6 +13,7 @@
 mod au;
 mod aviation;
 mod es;
+mod fi;
 mod french;
 mod global;
 mod in_;
@@ -29,10 +30,10 @@ pub mod validators;
 pub use aviation::CREW_CODE_BLOCKLIST;
 pub use validators::{
     iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare,
-    valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif, valid_in_aadhaar, valid_in_gstin,
-    valid_it_fiscal_code, valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac, valid_pl_pesel,
-    valid_sg_nric_fin, valid_si_emso, valid_si_tax_number, valid_uk_nhs, valid_uk_nino,
-    valid_us_itin, valid_us_ssn, verhoeff_check,
+    valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code,
+    valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn,
+    valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number,
+    valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn, verhoeff_check,
 };
 
 /// A PII pattern definition with regex, entity type, score, and context configuration.
@@ -66,6 +67,7 @@ pub const MAX_INPUT_SIZE: u64 = 50 * 1024 * 1024;
 use au::AU_PATTERNS;
 use aviation::AVIATION_PATTERNS;
 use es::ES_PATTERNS;
+use fi::FI_PATTERNS;
 use french::FRENCH_PATTERNS;
 use global::GLOBAL_PATTERNS;
 use in_::IN_PATTERNS;
@@ -99,6 +101,7 @@ pub const PATTERNS: &[PiiPattern] = &{
         + SG_PATTERNS.len()
         + PL_PATTERNS.len()
         + SI_PATTERNS.len()
+        + FI_PATTERNS.len()
         + SECRETS_PATTERNS.len();
 
     const fn build_patterns() -> [PiiPattern; TOTAL_LEN] {
@@ -308,6 +311,21 @@ pub const PATTERNS: &[PiiPattern] = &{
             j += 1;
         }
 
+        // FI patterns
+        j = 0;
+        while j < FI_PATTERNS.len() {
+            result[i] = PiiPattern {
+                name: FI_PATTERNS[j].name,
+                entity_type: FI_PATTERNS[j].entity_type,
+                pattern: FI_PATTERNS[j].pattern,
+                score: FI_PATTERNS[j].score,
+                context_keywords: FI_PATTERNS[j].context_keywords,
+                context_required: FI_PATTERNS[j].context_required,
+            };
+            i += 1;
+            j += 1;
+        }
+
         // Secrets patterns
         j = 0;
         while j < SECRETS_PATTERNS.len() {
@@ -337,10 +355,10 @@ mod tests {
 
     #[test]
     fn test_patterns_count() {
-        // Current count: 95 patterns. Update this if patterns are added/removed.
+        // Current count: 96 patterns. Update this if patterns are added/removed.
         assert_eq!(
             PATTERNS.len(),
-            95,
+            96,
             "PATTERNS count changed - update this test if intentional"
         );
     }
@@ -349,10 +367,10 @@ mod tests {
     fn test_entity_types_count() {
         use std::collections::HashSet;
         let entity_types: HashSet<&str> = PATTERNS.iter().map(|p| p.entity_type).collect();
-        // Current count: 61 unique entity types
+        // Current count: 62 unique entity types
         assert_eq!(
             entity_types.len(),
-            61,
+            62,
             "Entity type count changed - update this test if intentional"
         );
     }
@@ -377,6 +395,7 @@ mod tests {
             "EMPLOYEE_ID",
             "ES_NIE",
             "ES_NIF",
+            "FI_PERSONAL_IDENTITY_CODE",
             "FLIGHT_NUMBER",
             "FR_IBAN",
             "FR_PASSPORT",
@@ -507,6 +526,7 @@ mod tests {
         let _ = valid_pl_pesel("44051401359");
         let _ = valid_si_emso("0101006500006");
         let _ = valid_si_tax_number("15012557");
+        let _ = valid_fi_identity_code("131052-308T");
     }
 
     #[test]

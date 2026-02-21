@@ -798,6 +798,58 @@ pub fn valid_si_tax_number(s: &str) -> bool {
     }
 }
 
+/// Finnish Personal Identity Code (henkilötunnus / HETU) validation.
+/// Format: DDMMYYCSSSQ (11 chars). C = century separator (+, -, Y, A).
+/// SSS = individual number (002-899). Q = mod-31 control character from
+/// lookup table `"0123456789ABCDEFHJKLMNPRSTUVWXY"`.
+pub fn valid_fi_identity_code(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 11 {
+        return false;
+    }
+
+    // First 6 chars must be digits (DDMMYY)
+    if !bytes[..6].iter().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    // Chars 7-9 must be digits (SSS)
+    if !bytes[7..10].iter().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+
+    let dd: u32 = s[0..2].parse().unwrap_or(0);
+    let mm: u32 = s[2..4].parse().unwrap_or(0);
+
+    // Century separator
+    let sep = bytes[6].to_ascii_uppercase();
+    if !matches!(sep, b'+' | b'-' | b'Y' | b'A') {
+        return false;
+    }
+
+    // Basic date range check
+    if !(1..=31).contains(&dd) || !(1..=12).contains(&mm) {
+        return false;
+    }
+
+    // Individual number 002-899
+    let individual: u32 = s[7..10].parse().unwrap_or(0);
+    if !(2..=899).contains(&individual) {
+        return false;
+    }
+
+    // Mod-31 control character: concatenate DDMMYY + SSS → 9-digit number
+    let nine_digits: u64 = match format!("{}{}", &s[0..6], &s[7..10]).parse() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+
+    const CONTROL_CHARS: &[u8; 31] = b"0123456789ABCDEFHJKLMNPRSTUVWXY";
+    let remainder = (nine_digits % 31) as usize;
+    let expected = CONTROL_CHARS[remainder];
+
+    bytes[10].to_ascii_uppercase() == expected
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1747,5 +1799,91 @@ mod tests {
         assert!(!valid_si_tax_number("1501255")); // 7 digits
         assert!(!valid_si_tax_number("150125570")); // 9 digits
         assert!(!valid_si_tax_number(""));
+    }
+
+    // ── valid_fi_identity_code tests ──
+
+    #[test]
+    fn test_valid_fi_identity_code_known_good() {
+        // 131052-308T: 131052308 % 31 = 131052308 / 31 = 4227493 rem 25
+        // CONTROL_CHARS[25] = 'T' ✓
+        assert!(valid_fi_identity_code("131052-308T"));
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_century_plus() {
+        // Born 1800s: 010199+0022
+        // 010199002 % 31 = 2 → CONTROL_CHARS[2] = '2'
+        assert!(valid_fi_identity_code("010199+0022"));
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_century_a() {
+        // Born 2000s: 010100A002B
+        // 010100002 % 31 = 325806 rem 16 → CONTROL_CHARS[16] = 'H'
+        assert!(valid_fi_identity_code("010100A002H"));
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_century_y() {
+        // Y is alternative 1900s separator
+        // 010199002 % 31 = 2 → CONTROL_CHARS[2] = '2'
+        assert!(valid_fi_identity_code("010199Y0022"));
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_rejects_bad_control() {
+        assert!(!valid_fi_identity_code("131052-308A")); // expected T
+        assert!(!valid_fi_identity_code("131052-3080")); // expected T
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_rejects_bad_date() {
+        assert!(!valid_fi_identity_code("320152-308T")); // day 32
+        assert!(!valid_fi_identity_code("011352-308T")); // month 13
+        assert!(!valid_fi_identity_code("000152-308T")); // day 00
+        assert!(!valid_fi_identity_code("010052-308T")); // month 00
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_rejects_bad_individual() {
+        // Individual number 000 (< 2)
+        assert!(!valid_fi_identity_code("131052-000T"));
+        // Individual number 001 (< 2)
+        assert!(!valid_fi_identity_code("131052-001T"));
+        // Individual number 900 (> 899)
+        assert!(!valid_fi_identity_code("131052-900T"));
+        // Individual number 999 (> 899)
+        assert!(!valid_fi_identity_code("131052-999T"));
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_rejects_bad_separator() {
+        assert!(!valid_fi_identity_code("131052X308T")); // X not valid separator
+        assert!(!valid_fi_identity_code("131052B308T")); // B not valid separator
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_wrong_length() {
+        assert!(!valid_fi_identity_code("131052-308")); // 10 chars
+        assert!(!valid_fi_identity_code("131052-308TT")); // 12 chars
+        assert!(!valid_fi_identity_code(""));
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_case_insensitive() {
+        // Lowercase control character
+        assert!(valid_fi_identity_code("131052-308t"));
+        // Lowercase century separator
+        assert!(valid_fi_identity_code("010100a002H"));
+    }
+
+    #[test]
+    fn test_valid_fi_identity_code_control_char_digit() {
+        // 010101-0020: 010101002 % 31 = 325842 rem 6 → CONTROL_CHARS[6] = '6'
+        // 010101002 / 31 = 325842.0, 325842 * 31 = 10101102, but 010101002 = 10101002
+        // Let me compute: 10101002 % 31 = 10101002 / 31 = 325839 rem 23
+        // CONTROL_CHARS[23] = 'S'
+        assert!(valid_fi_identity_code("010101-002S"));
     }
 }

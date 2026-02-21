@@ -7,11 +7,11 @@ use crate::mapping::Mapping;
 use crate::ner::{NerDetector, PERSON_BLOCKLIST};
 use crate::patterns::{
     iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare,
-    valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif, valid_in_aadhaar, valid_in_gstin,
-    valid_it_fiscal_code, valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac, valid_pl_pesel,
-    valid_sg_nric_fin, valid_si_emso, valid_si_tax_number, valid_uk_nhs, valid_uk_nino,
-    valid_us_itin, valid_us_ssn, CONTEXT_SCORE_BOOST, CONTEXT_WINDOW, CREW_CODE_BLOCKLIST,
-    PATTERNS,
+    valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code,
+    valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn,
+    valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number,
+    valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn, CONTEXT_SCORE_BOOST, CONTEXT_WINDOW,
+    CREW_CODE_BLOCKLIST, PATTERNS,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -657,6 +657,11 @@ impl Anonymizer {
                 if pat.entity_type == "SI_TAX_NUMBER" && !valid_si_tax_number(mat.as_str()) {
                     continue;
                 }
+                if pat.entity_type == "FI_PERSONAL_IDENTITY_CODE"
+                    && !valid_fi_identity_code(mat.as_str())
+                {
+                    continue;
+                }
 
                 // Compute detection score with optional context boost
                 let detection_score =
@@ -788,6 +793,11 @@ impl Anonymizer {
                         continue;
                     }
                     if pat.entity_type == "SI_TAX_NUMBER" && !valid_si_tax_number(matched) {
+                        continue;
+                    }
+                    if pat.entity_type == "FI_PERSONAL_IDENTITY_CODE"
+                        && !valid_fi_identity_code(matched)
+                    {
                         continue;
                     }
 
@@ -1085,6 +1095,11 @@ impl Anonymizer {
                                     }
                                     if pat.entity_type == "SI_TAX_NUMBER"
                                         && !valid_si_tax_number(mat.as_str())
+                                    {
+                                        continue;
+                                    }
+                                    if pat.entity_type == "FI_PERSONAL_IDENTITY_CODE"
+                                        && !valid_fi_identity_code(mat.as_str())
                                     {
                                         continue;
                                     }
@@ -7274,5 +7289,110 @@ example-air.com"#;
         let (result, _) = a.anonymize_text("tax number: 15012557");
         assert!(!result.contains("15012557"));
         assert!(result.contains("[SI_TAX_NUMBER_"));
+    }
+
+    // ── FI_PERSONAL_IDENTITY_CODE tests ──
+
+    #[test]
+    fn test_fi_identity_code_with_context() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("Henkilötunnus: 131052-308T");
+        assert!(
+            dets.iter()
+                .any(|d| d.entity_type == "FI_PERSONAL_IDENTITY_CODE"),
+            "FI_PERSONAL_IDENTITY_CODE not detected with context: {dets:?}"
+        );
+        assert!(!result.contains("131052-308T"));
+        assert!(result.contains("[FI_PERSONAL_IDENTITY_CODE_"));
+    }
+
+    #[test]
+    fn test_fi_identity_code_no_context_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("131052-308T");
+        assert!(
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "FI_PERSONAL_IDENTITY_CODE"),
+            "FI_PERSONAL_IDENTITY_CODE should not match without context: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_fi_identity_code_bad_checksum_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text("HETU: 131052-308A");
+        assert!(
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "FI_PERSONAL_IDENTITY_CODE"),
+            "FI_PERSONAL_IDENTITY_CODE with bad checksum should be rejected: {dets:?}"
+        );
+    }
+
+    #[test]
+    fn test_fi_identity_code_century_plus() {
+        let mut a = Anonymizer::new(0.0);
+        // 010199002 % 31 = 2 → CONTROL_CHARS[2] = '2'
+        let (result, dets) = a.anonymize_text("HETU: 010199+0022");
+        assert!(
+            dets.iter()
+                .any(|d| d.entity_type == "FI_PERSONAL_IDENTITY_CODE"),
+            "FI_PERSONAL_IDENTITY_CODE with + separator not detected: {dets:?}"
+        );
+        assert!(result.contains("[FI_PERSONAL_IDENTITY_CODE_"));
+    }
+
+    #[test]
+    fn test_fi_identity_code_century_a() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text("HETU: 010100A002H");
+        assert!(
+            dets.iter()
+                .any(|d| d.entity_type == "FI_PERSONAL_IDENTITY_CODE"),
+            "FI_PERSONAL_IDENTITY_CODE with A separator not detected: {dets:?}"
+        );
+        assert!(result.contains("[FI_PERSONAL_IDENTITY_CODE_"));
+    }
+
+    #[test]
+    fn test_fi_identity_code_various_contexts() {
+        let mut a = Anonymizer::new(0.0);
+        let contexts = [
+            "Henkilötunnus: 131052-308T",
+            "HETU: 131052-308T",
+            "personal identity code 131052-308T",
+            "Finland identification number: 131052-308T",
+            "Finnish ID: 131052-308T",
+        ];
+        for ctx in &contexts {
+            let (_, dets) = a.anonymize_text(ctx);
+            assert!(
+                dets.iter()
+                    .any(|d| d.entity_type == "FI_PERSONAL_IDENTITY_CODE"),
+                "FI_PERSONAL_IDENTITY_CODE not detected with context '{ctx}': {dets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_fi_identity_code_roundtrip() {
+        let mut a = Anonymizer::new(0.0);
+        let (result, _) = a.anonymize_text("HETU: 131052-308T");
+        assert!(!result.contains("131052-308T"));
+        assert!(result.contains("[FI_PERSONAL_IDENTITY_CODE_"));
+    }
+
+    #[test]
+    fn test_fi_identity_code_bad_individual_number_rejected() {
+        let mut a = Anonymizer::new(0.0);
+        // Individual number 000 is invalid (< 002)
+        let (_, dets) = a.anonymize_text("HETU: 131052-000T");
+        assert!(
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "FI_PERSONAL_IDENTITY_CODE"),
+            "FI_PERSONAL_IDENTITY_CODE with individual 000 should be rejected: {dets:?}"
+        );
     }
 }
