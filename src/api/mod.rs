@@ -28,6 +28,21 @@ async fn validate_host(req: Request, next: Next) -> Response {
 
 const OPENAPI_SPEC: &str = include_str!("../../docs/openapi.yaml");
 
+const SWAGGER_UI_HTML: &str = r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>anon — API docs</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"/>
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>SwaggerUIBundle({url:"/openapi.yaml",dom_id:"#swagger-ui"})</script>
+</body>
+</html>"##;
+
 fn router() -> Router {
     Router::new()
         .route("/analyze", post(handlers::analyze))
@@ -35,6 +50,7 @@ fn router() -> Router {
         .route("/supportedentities", get(handlers::supported_entities))
         .route("/health", get(handlers::health))
         .route("/openapi.yaml", get(openapi_spec))
+        .route("/docs", get(swagger_ui))
         .layer(middleware::from_fn(validate_host))
 }
 
@@ -45,10 +61,15 @@ async fn openapi_spec() -> impl IntoResponse {
     )
 }
 
+async fn swagger_ui() -> impl IntoResponse {
+    axum::response::Html(SWAGGER_UI_HTML)
+}
+
 pub async fn run(port: u16) -> std::io::Result<()> {
     let app = router();
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     eprintln!("anon api listening on http://{addr}");
+    eprintln!("API docs available at http://{addr}/docs");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
@@ -75,6 +96,7 @@ mod tests {
             .route("/supportedentities", get(handlers::supported_entities))
             .route("/health", get(handlers::health))
             .route("/openapi.yaml", get(openapi_spec))
+            .route("/docs", get(swagger_ui))
     }
 
     #[tokio::test]
@@ -869,7 +891,9 @@ mod tests {
     /// fails until you update both the router AND docs/openapi.yaml.
     #[tokio::test]
     async fn test_openapi_spec_covers_all_routes() {
-        // Routes registered in the router (source of truth: fn router())
+        // API routes documented in the spec (source of truth: fn router())
+        // Utility routes like /docs (Swagger UI) are excluded — they serve
+        // the spec, they are not part of it.
         let api_routes = [
             "/analyze",
             "/anonymize",
