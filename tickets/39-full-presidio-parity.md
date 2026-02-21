@@ -80,10 +80,10 @@ Presidio ships ~50 built-in entity types. Below is the exhaustive 1:1 map.
 
 | Presidio Entity | Rust Status | Validation Needed | Complexity |
 |----------------|-------------|-------------------|------------|
-| `AU_ABN` | **Missing** | 11-digit, weighted checksum `[10,1,3,5,7,9,11,13,15,17,19]` mod-89 | Low |
-| `AU_ACN` | **Missing** | 9-digit, checksum | Low |
-| `AU_TFN` | **Missing** | 9-digit, weighted checksum `[1,4,3,7,5,8,6,9,10]` mod-11 | Low |
-| `AU_MEDICARE` | **Missing** | Pattern + context | Low |
+| `AU_ABN` | **Done** | ~~11-digit, weighted checksum `[10,1,3,5,7,9,11,13,15,17,19]` mod-89~~ (FIXED) 2 patterns (formatted + compact), `valid_au_abn()` weighted checksum, context-gated | Low |
+| `AU_ACN` | **Done** | ~~9-digit, checksum~~ (FIXED) 2 patterns (formatted + compact), `valid_au_acn()` weighted checksum, context-gated | Low |
+| `AU_TFN` | **Done** | ~~9-digit, weighted checksum `[1,4,3,7,5,8,6,9,10]` mod-11~~ (FIXED) 2 patterns (formatted + compact), `valid_au_tfn()` weighted mod-11 checksum, context-gated | Low |
+| `AU_MEDICARE` | **Done** | ~~Pattern + context~~ (FIXED) 2 patterns (formatted + compact), `valid_au_medicare()` weighted checksum on first 9 digits, context-gated | Low |
 
 ### 1H. South Korea (5 entities)
 
@@ -155,8 +155,8 @@ Presidio validates many entities with checksums beyond regex. Current Rust valid
 | **IP parsing** (stdlib validation) | Yes (`ipaddress.ip_address()`) | **Done** — regex validates octets 0-255 for IPv4, IPv6 regex covers full/collapsed/link-local/loopback/mapped forms |
 | **Phone parsing** (`python-phonenumbers`) | Yes | **Partial** — Regex-based with context gating. No stdlib-level validation but covers E.164 format with separators/area codes. |
 | **Verhoeff** (IN_AADHAAR) | Yes | **Missing** |
-| **mod-11** (UK_NHS, AU_TFN) | Yes | **Partial** — `valid_uk_nhs()` implemented for UK_NHS, AU_TFN still missing |
-| **Weighted checksums** (ABA, AU_ABN, KR_BRN, PL_PESEL) | Yes | **Missing** |
+| **mod-11** (UK_NHS, AU_TFN) | Yes | **Done** — `valid_uk_nhs()` for UK_NHS, `valid_au_tfn()` for AU_TFN |
+| **Weighted checksums** (ABA, AU_ABN, AU_ACN, KR_BRN, PL_PESEL) | Yes | **Partial** — `valid_aba_routing()`, `valid_au_abn()`, `valid_au_acn()` implemented; KR_BRN, PL_PESEL still missing |
 | **IT fiscal code** (odd/even weighted, mod-26) | Yes | **Missing** |
 | **FI identity code** (date + mod-31) | Yes | **Missing** |
 | **Base58/Bech32 checksum** (crypto) | Yes | **Skip** — regex is sufficient, extremely low false-positive rate |
@@ -308,7 +308,7 @@ Implement all country recognizers. Group by country, each is a self-contained PR
 | ~~2.3~~ | ~~Spain entities~~ (FIXED) | `ES_NIF`, `ES_NIE` | Low |
 | 2.4 | Italy entities | `IT_FISCAL_CODE`, `IT_DRIVER_LICENSE`, `IT_VAT_CODE`, `IT_PASSPORT`, `IT_IDENTITY_CARD` | Medium (fiscal code checksum) |
 | 2.5 | India entities | `IN_AADHAAR`, `IN_PAN`, `IN_VEHICLE_REGISTRATION`, `IN_PASSPORT`, `IN_VOTER`, `IN_GSTIN` | Medium (Verhoeff algorithm) |
-| 2.6 | Australia entities | `AU_ABN`, `AU_ACN`, `AU_TFN`, `AU_MEDICARE` | Low |
+| ~~2.6~~ | ~~Australia entities~~ (FIXED) | `AU_ABN`, `AU_ACN`, `AU_TFN`, `AU_MEDICARE` | Low |
 | 2.7 | South Korea entities | `KR_RRN`, `KR_BRN`, `KR_DRIVER_LICENSE`, `KR_FRN`, `KR_PASSPORT` | Low |
 | 2.8 | Singapore entities | `SG_NRIC_FIN`, `SG_UEN` | Low |
 | 2.9 | Poland entity | `PL_PESEL` | Low |
