@@ -576,6 +576,80 @@ pub fn valid_in_gstin(s: &str) -> bool {
     true
 }
 
+/// KR_RRN (Resident Registration Number) checksum validation.
+/// 13 digits: YYMMDD-SBBCCNN. Weights `[2,3,4,5,6,7,8,9,2,3,4,5]` on first 12,
+/// check digit = `(11 - sum % 11) % 10`. Gender digit (pos 7) must be 1-4.
+pub fn valid_kr_rrn(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 13 {
+        return false;
+    }
+    // Gender digit (7th digit, 0-indexed 6) must be 1-4 for citizens
+    if !(1..=4).contains(&digits[6]) {
+        return false;
+    }
+    kr_rrn_checksum(&digits)
+}
+
+/// KR_FRN (Foreign Registration Number) checksum validation.
+/// Same checksum as KR_RRN but gender digit (pos 7) must be 5-8.
+pub fn valid_kr_frn(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 13 {
+        return false;
+    }
+    // Gender digit must be 5-8 for foreigners
+    if !(5..=8).contains(&digits[6]) {
+        return false;
+    }
+    kr_rrn_checksum(&digits)
+}
+
+/// Shared RRN/FRN checksum: weights [2,3,4,5,6,7,8,9,2,3,4,5], check = (11 - sum%11) % 10.
+fn kr_rrn_checksum(digits: &[u32]) -> bool {
+    let weights: [u32; 12] = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5];
+    let sum: u32 = digits[..12]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let check = (11 - (sum % 11)) % 10;
+    digits[12] == check
+}
+
+/// KR_BRN (Business Registration Number) weighted checksum validation.
+/// 10 digits: XXX-XX-XXXXX. Weights `[1,3,7,1,3,7,1,3,5]` on first 9.
+/// Position 9 has special carry: add `floor(digit[8] * 5 / 10)`.
+/// Check digit = `(10 - sum % 10) % 10`.
+pub fn valid_kr_brn(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 10 {
+        return false;
+    }
+    let weights: [u32; 9] = [1, 3, 7, 1, 3, 7, 1, 3, 5];
+    let mut sum: u32 = digits[..9]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    // Special carry for position 9 (0-indexed 8)
+    sum += (digits[8] * 5) / 10;
+    let check = (10 - (sum % 10)) % 10;
+    digits[9] == check
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1222,5 +1296,122 @@ mod tests {
     fn test_valid_au_medicare_wrong_length() {
         assert!(!valid_au_medicare("212345670")); // 9 digits
         assert!(!valid_au_medicare(""));
+    }
+
+    // ── valid_kr_rrn tests ──
+
+    #[test]
+    fn test_valid_kr_rrn_known_good() {
+        // 850101-1234561: compute checksum
+        // Digits: [8,5,0,1,0,1,1,2,3,4,5,6,1]
+        // Weights: [2,3,4,5,6,7,8,9,2,3,4,5]
+        // Sum: 16+15+0+5+0+7+8+18+6+12+20+30 = 137
+        // (11 - 137%11) % 10 = (11 - 5) % 10 = 6 % 10 = 6
+        // But last digit is 1, so this doesn't pass. Let me compute a valid one.
+        // 850101-1234566: check = 6 ✓
+        assert!(valid_kr_rrn("850101-1234566"));
+    }
+
+    #[test]
+    fn test_valid_kr_rrn_gender_digits() {
+        // Gender digit must be 1-4
+        // Use same base with gender=2: 850101-2234560
+        // Digits: [8,5,0,1,0,1,2,2,3,4,5,6,0]
+        // Sum: 16+15+0+5+0+7+16+18+6+12+20+30 = 145
+        // (11 - 145%11) % 10 = (11 - 2) % 10 = 9 % 10 = 9
+        // So 850101-2234569 should be valid
+        assert!(valid_kr_rrn("850101-2234569"));
+    }
+
+    #[test]
+    fn test_valid_kr_rrn_rejects_foreign_gender_digit() {
+        // Gender digit 5-8 should be rejected (those are for KR_FRN)
+        assert!(!valid_kr_rrn("850101-5234566"));
+        assert!(!valid_kr_rrn("850101-6234566"));
+        assert!(!valid_kr_rrn("850101-7234566"));
+        assert!(!valid_kr_rrn("850101-8234566"));
+    }
+
+    #[test]
+    fn test_valid_kr_rrn_rejects_bad_checksum() {
+        assert!(!valid_kr_rrn("850101-1234567")); // expected 6
+        assert!(!valid_kr_rrn("850101-1234560")); // expected 6
+    }
+
+    #[test]
+    fn test_valid_kr_rrn_wrong_length() {
+        assert!(!valid_kr_rrn("850101-123456")); // 12 digits
+        assert!(!valid_kr_rrn("850101-12345678")); // 14 digits
+        assert!(!valid_kr_rrn(""));
+    }
+
+    // ── valid_kr_frn tests ──
+
+    #[test]
+    fn test_valid_kr_frn_known_good() {
+        // 850101-5234560: gender digit 5 (foreign male, 1900s)
+        // Digits: [8,5,0,1,0,1,5,2,3,4,5,6,0]
+        // Sum: 16+15+0+5+0+7+40+18+6+12+20+30 = 169
+        // (11 - 169%11) % 10 = (11 - 4) % 10 = 7 % 10 = 7
+        // So 850101-5234567 should be valid
+        assert!(valid_kr_frn("850101-5234567"));
+    }
+
+    #[test]
+    fn test_valid_kr_frn_rejects_citizen_gender_digit() {
+        assert!(!valid_kr_frn("850101-1234566")); // gender 1 = citizen
+        assert!(!valid_kr_frn("850101-2234569")); // gender 2 = citizen
+    }
+
+    #[test]
+    fn test_valid_kr_frn_rejects_bad_checksum() {
+        assert!(!valid_kr_frn("850101-5234560")); // expected 7
+    }
+
+    #[test]
+    fn test_valid_kr_frn_wrong_length() {
+        assert!(!valid_kr_frn("850101-523456")); // 12 digits
+        assert!(!valid_kr_frn(""));
+    }
+
+    // ── valid_kr_brn tests ──
+
+    #[test]
+    fn test_valid_kr_brn_known_good() {
+        // 123-45-67891: compute
+        // Digits: [1,2,3,4,5,6,7,8,9,1]
+        // Weights: [1,3,7,1,3,7,1,3,5]
+        // Products: 1+6+21+4+15+42+7+24+45 = 165
+        // Carry: floor(9*5/10) = floor(4.5) = 4
+        // Total: 165 + 4 = 169
+        // Check: (10 - 169%10) % 10 = (10 - 9) % 10 = 1 ✓
+        assert!(valid_kr_brn("123-45-67891"));
+        // Compact
+        assert!(valid_kr_brn("1234567891"));
+    }
+
+    #[test]
+    fn test_valid_kr_brn_rejects_bad_checksum() {
+        assert!(!valid_kr_brn("123-45-67890")); // expected 1
+        assert!(!valid_kr_brn("123-45-67892")); // expected 1
+    }
+
+    #[test]
+    fn test_valid_kr_brn_wrong_length() {
+        assert!(!valid_kr_brn("123-45-6789")); // 9 digits
+        assert!(!valid_kr_brn("123-45-678901")); // 11 digits
+        assert!(!valid_kr_brn(""));
+    }
+
+    #[test]
+    fn test_valid_kr_brn_zero_carry() {
+        // Test with digit[8] where carry is 0 (digit[8]*5 < 10)
+        // digit[8] = 1 → 1*5=5, carry = 0
+        // Digits: [1,2,3,4,5,6,7,8,1,?]
+        // Products: 1+6+21+4+15+42+7+24+5 = 125
+        // Carry: floor(1*5/10) = 0
+        // Total: 125
+        // Check: (10 - 125%10) % 10 = (10-5)%10 = 5
+        assert!(valid_kr_brn("1234567815"));
     }
 }
