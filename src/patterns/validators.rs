@@ -310,6 +310,79 @@ pub fn valid_es_nie(s: &str) -> bool {
     letter == expected
 }
 
+/// Italian fiscal code (codice fiscale) checksum validation.
+/// 16-char code: positions use different value tables for odd (1st, 3rd, …) and even (2nd, 4th, …)
+/// positions. Sum mod 26 must equal the 16th character (check letter).
+pub fn valid_it_fiscal_code(s: &str) -> bool {
+    let upper: Vec<u8> = s
+        .bytes()
+        .filter(|b| b.is_ascii_alphanumeric())
+        .map(|b| b.to_ascii_uppercase())
+        .collect();
+    if upper.len() != 16 {
+        return false;
+    }
+
+    // Odd-position values (1-indexed positions 1,3,5,…15 → 0-indexed 0,2,4,…14)
+    fn odd_value(c: u8) -> Option<u32> {
+        match c {
+            b'0' | b'A' => Some(1),
+            b'1' | b'B' => Some(0),
+            b'2' | b'C' => Some(5),
+            b'3' | b'D' => Some(7),
+            b'4' | b'E' => Some(9),
+            b'5' | b'F' => Some(13),
+            b'6' | b'G' => Some(15),
+            b'7' | b'H' => Some(17),
+            b'8' | b'I' => Some(19),
+            b'9' | b'J' => Some(21),
+            b'K' => Some(2),
+            b'L' => Some(4),
+            b'M' => Some(18),
+            b'N' => Some(20),
+            b'O' => Some(11),
+            b'P' => Some(3),
+            b'Q' => Some(6),
+            b'R' => Some(8),
+            b'S' => Some(12),
+            b'T' => Some(14),
+            b'U' => Some(16),
+            b'V' => Some(10),
+            b'W' => Some(22),
+            b'X' => Some(25),
+            b'Y' => Some(24),
+            b'Z' => Some(23),
+            _ => None,
+        }
+    }
+
+    // Even-position values: letters A=0..Z=25, digits 0..9
+    fn even_value(c: u8) -> Option<u32> {
+        match c {
+            b'0'..=b'9' => Some((c - b'0') as u32),
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            _ => None,
+        }
+    }
+
+    let mut sum: u32 = 0;
+    for (i, &c) in upper[..15].iter().enumerate() {
+        let val = if i % 2 == 0 {
+            // 0-indexed even = 1-indexed odd
+            odd_value(c)
+        } else {
+            even_value(c)
+        };
+        match val {
+            Some(v) => sum += v,
+            None => return false,
+        }
+    }
+
+    let expected = b'A' + (sum % 26) as u8;
+    upper[15] == expected
+}
+
 /// UK NINO prefix blocklist validation.
 /// Rejects invalid prefix pairs: BG, GB, NK, KN, NT, TN, ZZ.
 pub fn valid_uk_nino(s: &str) -> bool {
@@ -719,5 +792,44 @@ mod tests {
     #[test]
     fn test_valid_es_nie_case_insensitive() {
         assert!(valid_es_nie("x1234567l")); // lowercase
+    }
+
+    // ── valid_it_fiscal_code tests ──
+
+    #[test]
+    fn test_valid_it_fiscal_code_constructed() {
+        // AAABBB00A00A000: all positions computed manually
+        // Odd (0,2,4,6,8,10,12,14): A(1)+A(1)+B(0)+0(1)+A(1)+0(1)+0(1)+0(1) = 7
+        // Even (1,3,5,7,9,11,13): A(0)+B(1)+B(1)+0(0)+0(0)+A(0)+0(0) = 2
+        // Total=9, 9%26=9 → 'J'
+        assert!(valid_it_fiscal_code("AAABBB00A00A000J"));
+    }
+
+    #[test]
+    fn test_valid_it_fiscal_code_wrong_check() {
+        assert!(!valid_it_fiscal_code("AAABBB00A00A000K")); // expected J
+        assert!(!valid_it_fiscal_code("AAABBB00A00A000A")); // expected J
+    }
+
+    #[test]
+    fn test_valid_it_fiscal_code_wrong_length() {
+        assert!(!valid_it_fiscal_code("AAABBB00A00A00J")); // 15 chars
+        assert!(!valid_it_fiscal_code("AAABBB00A00A0000J")); // 17 chars
+        assert!(!valid_it_fiscal_code("")); // empty
+    }
+
+    #[test]
+    fn test_valid_it_fiscal_code_case_insensitive() {
+        assert!(valid_it_fiscal_code("aaabbb00a00a000j")); // lowercase
+        assert!(valid_it_fiscal_code("AaAbBb00A00a000J")); // mixed case
+    }
+
+    #[test]
+    fn test_valid_it_fiscal_code_various_valid() {
+        // BNCLRD99A01H501: B(0)+N(13)+C(5)+L(11)+R(8)+D(3)+9(21)+9(9)+A(1)+0(0)+1(0)+H(7)+5(13)+0(0)+1(0) = 91
+        // Odd: B(0)+C(5)+R(8)+9(21)+A(1)+1(0)+5(13)+1(0) = 48
+        // Even: N(13)+L(11)+D(3)+9(9)+0(0)+H(7)+0(0) = 43
+        // Total=91, 91%26=13 → 'N'
+        assert!(valid_it_fiscal_code("BNCLRD99A01H501N"));
     }
 }
