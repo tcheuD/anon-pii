@@ -183,6 +183,49 @@ pub fn valid_card_prefix(number: &str) -> bool {
     false
 }
 
+/// ABA routing number validation: 9-digit, valid Federal Reserve prefix, weighted checksum.
+/// Weights `[3,7,1,3,7,1,3,7,1]` mod-10 must equal 0.
+pub fn valid_aba_routing(s: &str) -> bool {
+    let digits: Vec<u32> = s
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    // Valid Federal Reserve routing symbol (first 2 digits)
+    let prefix = digits[0] * 10 + digits[1];
+    let valid_prefix = (1..=12).contains(&prefix)
+        || (21..=32).contains(&prefix)
+        || (61..=72).contains(&prefix)
+        || prefix == 80;
+    if !valid_prefix {
+        return false;
+    }
+    let weights = [3u32, 7, 1, 3, 7, 1, 3, 7, 1];
+    let sum: u32 = digits
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    sum.is_multiple_of(10)
+}
+
+/// Validate US ITIN: must start with 9, group digits (4th-5th) in valid ranges
+/// (50-65, 70-88, 90-92, 94-99).
+pub fn valid_us_itin(s: &str) -> bool {
+    let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    if !digits.starts_with('9') {
+        return false;
+    }
+    let group: u32 = digits[3..5].parse().unwrap_or(0);
+    matches!(group, 50..=65 | 70..=88 | 90..=92 | 94..=99)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,16 +311,16 @@ mod tests {
     fn test_iban_mod97_all_countries() {
         // Real IBANs from various countries (all pass mod-97)
         let valid = [
-            "GB29NWBK60161331926819",     // UK
-            "DE89370400440532013000",       // Germany
-            "FR7630006000011234567890189",  // France
-            "ES9121000418450200051332",     // Spain
-            "IT60X0542811101000000123456",  // Italy
-            "NL91ABNA0417164300",           // Netherlands
-            "BE68539007547034",             // Belgium
-            "CH9300762011623852957",        // Switzerland
-            "AT611904300234573201",         // Austria
-            "PT50000201231234567890154",    // Portugal
+            "GB29NWBK60161331926819",      // UK
+            "DE89370400440532013000",      // Germany
+            "FR7630006000011234567890189", // France
+            "ES9121000418450200051332",    // Spain
+            "IT60X0542811101000000123456", // Italy
+            "NL91ABNA0417164300",          // Netherlands
+            "BE68539007547034",            // Belgium
+            "CH9300762011623852957",       // Switzerland
+            "AT611904300234573201",        // Austria
+            "PT50000201231234567890154",   // Portugal
         ];
         for iban in &valid {
             assert!(iban_mod97(iban), "valid IBAN rejected: {iban}");
@@ -321,7 +364,7 @@ mod tests {
     fn test_valid_mac_all_formats() {
         assert!(valid_mac("00:1A:2B:3C:4D:5E")); // colon
         assert!(valid_mac("00-1A-2B-3C-4D-5E")); // hyphen
-        assert!(valid_mac("001A.2B3C.4D5E"));     // cisco
+        assert!(valid_mac("001A.2B3C.4D5E")); // cisco
     }
 
     #[test]
@@ -345,7 +388,7 @@ mod tests {
         assert!(valid_us_ssn("001-01-0001")); // minimum valid
         assert!(valid_us_ssn("899-99-9999")); // max area < 900
         assert!(valid_us_ssn("123 45 6789")); // spaces
-        assert!(valid_us_ssn("123456789"));   // compact
+        assert!(valid_us_ssn("123456789")); // compact
     }
 
     #[test]
@@ -365,8 +408,72 @@ mod tests {
 
     #[test]
     fn test_valid_us_ssn_wrong_length() {
-        assert!(!valid_us_ssn("12-34-5678"));  // too few digits
+        assert!(!valid_us_ssn("12-34-5678")); // too few digits
         assert!(!valid_us_ssn("1234-56-78901")); // too many digits
-        assert!(!valid_us_ssn(""));             // empty
+        assert!(!valid_us_ssn("")); // empty
+    }
+
+    // ── valid_aba_routing tests ──
+
+    #[test]
+    fn test_valid_aba_routing_known_good() {
+        // Chase Manhattan: 021000021 → 0*3+2*7+1*1+0*3+0*7+0*1+0*3+2*7+1*1 = 0+14+1+0+0+0+0+14+1 = 30
+        assert!(valid_aba_routing("021000021"));
+        // Bank of America: 026009593
+        assert!(valid_aba_routing("026009593"));
+        // Wells Fargo: 121000248
+        assert!(valid_aba_routing("121000248"));
+    }
+
+    #[test]
+    fn test_valid_aba_routing_rejects_bad_checksum() {
+        assert!(!valid_aba_routing("021000022")); // off by one
+        assert!(!valid_aba_routing("123456789")); // random
+    }
+
+    #[test]
+    fn test_valid_aba_routing_rejects_bad_prefix() {
+        assert!(!valid_aba_routing("002000021")); // prefix 00 invalid
+        assert!(!valid_aba_routing("132000021")); // prefix 13 invalid (gap 13-20)
+        assert!(!valid_aba_routing("992000021")); // prefix 99 invalid
+    }
+
+    #[test]
+    fn test_valid_aba_routing_rejects_wrong_length() {
+        assert!(!valid_aba_routing("02100002")); // 8 digits
+        assert!(!valid_aba_routing("0210000210")); // 10 digits
+        assert!(!valid_aba_routing(""));
+    }
+
+    // ── valid_us_itin tests ──
+
+    #[test]
+    fn test_valid_us_itin_good_numbers() {
+        assert!(valid_us_itin("912-70-1234")); // group 70
+        assert!(valid_us_itin("999-88-5678")); // group 88
+        assert!(valid_us_itin("900-50-0001")); // group 50
+        assert!(valid_us_itin("950-94-9999")); // group 94
+        assert!(valid_us_itin("912701234")); // compact
+    }
+
+    #[test]
+    fn test_valid_us_itin_rejects_non_nine_prefix() {
+        assert!(!valid_us_itin("123-70-1234")); // doesn't start with 9
+        assert!(!valid_us_itin("800-70-1234")); // starts with 8
+    }
+
+    #[test]
+    fn test_valid_us_itin_rejects_invalid_groups() {
+        assert!(!valid_us_itin("900-00-1234")); // group 00
+        assert!(!valid_us_itin("900-49-1234")); // group 49 (below 50)
+        assert!(!valid_us_itin("900-66-1234")); // group 66 (gap 66-69)
+        assert!(!valid_us_itin("900-89-1234")); // group 89 (gap 89)
+        assert!(!valid_us_itin("900-93-1234")); // group 93 (gap 93)
+    }
+
+    #[test]
+    fn test_valid_us_itin_wrong_length() {
+        assert!(!valid_us_itin("912-70-123")); // 8 digits
+        assert!(!valid_us_itin("912-70-12345")); // 10 digits
     }
 }

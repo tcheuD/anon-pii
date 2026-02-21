@@ -73,8 +73,7 @@ impl ProxyState {
         // Hold lock only for serialization, then drop before I/O
         let mapping_json = {
             let anonymizer = self.anonymizer.lock().await;
-            serde_json::to_string_pretty(&anonymizer.mapping)
-                .map_err(std::io::Error::other)?
+            serde_json::to_string_pretty(&anonymizer.mapping).map_err(std::io::Error::other)?
         };
 
         let path = self.session_dir.join("mapping.json");

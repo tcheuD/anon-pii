@@ -6,8 +6,8 @@ use unicode_normalization::UnicodeNormalization;
 use crate::mapping::Mapping;
 use crate::ner::{NerDetector, PERSON_BLOCKLIST};
 use crate::patterns::{
-    iban_mod97, luhn_check, valid_card_prefix, valid_mac, valid_us_ssn, CONTEXT_SCORE_BOOST,
-    CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS,
+    iban_mod97, luhn_check, valid_aba_routing, valid_card_prefix, valid_mac, valid_us_itin,
+    valid_us_ssn, CONTEXT_SCORE_BOOST, CONTEXT_WINDOW, CREW_CODE_BLOCKLIST, PATTERNS,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -593,6 +593,12 @@ impl Anonymizer {
                 if pat.entity_type == "US_SSN" && !valid_us_ssn(mat.as_str()) {
                     continue;
                 }
+                if pat.entity_type == "US_ITIN" && !valid_us_itin(mat.as_str()) {
+                    continue;
+                }
+                if pat.entity_type == "ABA_ROUTING" && !valid_aba_routing(mat.as_str()) {
+                    continue;
+                }
 
                 // Compute detection score with optional context boost
                 let detection_score =
@@ -664,6 +670,12 @@ impl Anonymizer {
                         continue;
                     }
                     if pat.entity_type == "US_SSN" && !valid_us_ssn(matched) {
+                        continue;
+                    }
+                    if pat.entity_type == "US_ITIN" && !valid_us_itin(matched) {
+                        continue;
+                    }
+                    if pat.entity_type == "ABA_ROUTING" && !valid_aba_routing(matched) {
                         continue;
                     }
 
@@ -885,6 +897,15 @@ impl Anonymizer {
                                     {
                                         continue;
                                     }
+                                    if pat.entity_type == "US_ITIN" && !valid_us_itin(mat.as_str())
+                                    {
+                                        continue;
+                                    }
+                                    if pat.entity_type == "ABA_ROUTING"
+                                        && !valid_aba_routing(mat.as_str())
+                                    {
+                                        continue;
+                                    }
                                     let score = pat.score;
                                     if score < self.threshold {
                                         continue;
@@ -913,7 +934,12 @@ impl Anonymizer {
                 Operator::Keep => continue,
                 Operator::Mask => apply_mask(&det.original, &self.mask_config),
             };
-            result = format!("{}{}{}", &result[..det.start], replacement, &result[det.end..]);
+            result = format!(
+                "{}{}{}",
+                &result[..det.start],
+                replacement,
+                &result[det.end..]
+            );
         }
 
         filtered.extend(url_inner_detections);
@@ -3081,10 +3107,7 @@ example-air.com"#;
         a.set_ner_detector(Box::new(mock));
         let (result, _dets) = a.anonymize_text(text);
         // Bare "Gael" should be caught
-        assert!(
-            !result.contains("Gael"),
-            "Bare 'Gael' should be anonymized"
-        );
+        assert!(!result.contains("Gael"), "Bare 'Gael' should be anonymized");
         // Surrounding multi-byte text must be intact
         assert!(
             result.contains("Héloïse"),
@@ -3468,7 +3491,8 @@ example-air.com"#;
     #[test]
     fn test_secret_key_stripe_underscore() {
         let mut a = Anonymizer::new(0.0);
-        let (result, dets) = a.anonymize_text("STRIPE_SECRET = \"sk_live_51N7xRgAv8bN2xT9mW5qJ7pL3kYz\"");
+        let (result, dets) =
+            a.anonymize_text("STRIPE_SECRET = \"sk_live_51N7xRgAv8bN2xT9mW5qJ7pL3kYz\"");
         assert!(
             dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
             "Stripe key with underscores should be detected.\nDetections: {:?}",
@@ -3480,7 +3504,8 @@ example-air.com"#;
     #[test]
     fn test_secret_key_stripe_dash() {
         let mut a = Anonymizer::new(0.0);
-        let (result, dets) = a.anonymize_text("key = sk-live-Rg4v8bN2xT9mW5qJ7pL3kYz6hD1fA0cE8iU2wX");
+        let (result, dets) =
+            a.anonymize_text("key = sk-live-Rg4v8bN2xT9mW5qJ7pL3kYz6hD1fA0cE8iU2wX");
         assert!(
             dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
             "Stripe key with dashes should be detected.\nDetections: {:?}",
@@ -3529,8 +3554,8 @@ example-air.com"#;
     #[test]
     fn test_secret_key_openai() {
         let mut a = Anonymizer::new(0.0);
-        let (result, dets) =
-            a.anonymize_text("OPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx");
+        let (result, dets) = a
+            .anonymize_text("OPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx");
         assert!(
             dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
             "OpenAI key should be detected.\nDetections: {:?}",
@@ -3568,8 +3593,9 @@ example-air.com"#;
         let mut a = Anonymizer::new(0.0);
         let (_, dets) = a.anonymize_text("prefix sk-live-abc");
         assert!(
-            !dets.iter().any(|d| d.entity_type == "SECRET_KEY"
-                && d.original.contains("sk-live-abc")),
+            !dets
+                .iter()
+                .any(|d| d.entity_type == "SECRET_KEY" && d.original.contains("sk-live-abc")),
             "Short key-like strings should not be detected as SECRET_KEY.\nDetections: {:?}",
             dets
         );
@@ -3580,7 +3606,8 @@ example-air.com"#;
     #[test]
     fn test_connection_string_postgresql() {
         let mut a = Anonymizer::new(0.0);
-        let input = r#"DATABASE_URL = "postgresql://admin:F1eet$ecret2024@db.internal:5432/fleet_prod""#;
+        let input =
+            r#"DATABASE_URL = "postgresql://admin:F1eet$ecret2024@db.internal:5432/fleet_prod""#;
         let (result, dets) = a.anonymize_text(input);
         assert!(
             dets.iter().any(|d| d.entity_type == "CONNECTION_STRING"),
@@ -3619,8 +3646,7 @@ example-air.com"#;
     #[test]
     fn test_connection_string_mysql() {
         let mut a = Anonymizer::new(0.0);
-        let (result, dets) =
-            a.anonymize_text("mysql://root:s3cret@localhost:3306/app_db");
+        let (result, dets) = a.anonymize_text("mysql://root:s3cret@localhost:3306/app_db");
         assert!(
             dets.iter().any(|d| d.entity_type == "CONNECTION_STRING"),
             "MySQL connection string should be detected.\nDetections: {:?}",
@@ -3829,8 +3855,7 @@ example-air.com"#;
     #[test]
     fn test_intl_phone_consistency_same_number_same_token() {
         let mut a = Anonymizer::new(0.0);
-        let (result, _) =
-            a.anonymize_text("call +44 20 7946 0958, again call +44 20 7946 0958");
+        let (result, _) = a.anonymize_text("call +44 20 7946 0958, again call +44 20 7946 0958");
         let tokens: Vec<_> = a
             .mapping
             .mappings
@@ -3934,8 +3959,7 @@ example-air.com"#;
     fn test_iban_with_spaces() {
         let mut a = Anonymizer::new(0.0);
         // Same German IBAN but with standard 4-char groups
-        let (result, dets) =
-            a.anonymize_text("payment DE89 3704 0044 0532 0130 00");
+        let (result, dets) = a.anonymize_text("payment DE89 3704 0044 0532 0130 00");
         assert!(
             dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
             "spaced IBAN not detected: {dets:?}"
@@ -4066,8 +4090,7 @@ example-air.com"#;
     #[test]
     fn test_mac_address_consistency() {
         let mut a = Anonymizer::new(0.0);
-        let (_result, _) =
-            a.anonymize_text("device 0A:1B:2C:3D:4E:5F and again 0A:1B:2C:3D:4E:5F");
+        let (_result, _) = a.anonymize_text("device 0A:1B:2C:3D:4E:5F and again 0A:1B:2C:3D:4E:5F");
         let tokens: Vec<_> = a
             .mapping
             .mappings
@@ -4081,8 +4104,7 @@ example-air.com"#;
     fn test_mac_address_not_confused_with_ipv6() {
         let mut a = Anonymizer::new(0.0);
         // Full IPv6 should be IP_ADDRESS, not MAC_ADDRESS
-        let (_, dets) =
-            a.anonymize_text("host 2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+        let (_, dets) = a.anonymize_text("host 2001:0db8:85a3:0000:0000:8a2e:0370:7334");
         let mac_dets: Vec<_> = dets
             .iter()
             .filter(|d| d.entity_type == "MAC_ADDRESS")
@@ -4109,8 +4131,7 @@ example-air.com"#;
     #[test]
     fn test_date_iso8601_with_milliseconds() {
         let mut a = Anonymizer::new(0.0);
-        let (result, dets) =
-            a.anonymize_text("logged at 2024-01-15T14:30:00.123Z");
+        let (result, dets) = a.anonymize_text("logged at 2024-01-15T14:30:00.123Z");
         assert!(
             dets.iter().any(|d| d.entity_type == "DATE_TIME"),
             "ISO date with ms not detected: {dets:?}"
@@ -4133,8 +4154,7 @@ example-air.com"#;
     fn test_date_iso8601_space_separator() {
         let mut a = Anonymizer::new(0.0);
         // Space instead of T between date and time (common in logs)
-        let (result, dets) =
-            a.anonymize_text("created 2024-01-15 14:30:00Z");
+        let (result, dets) = a.anonymize_text("created 2024-01-15 14:30:00Z");
         assert!(
             dets.iter().any(|d| d.entity_type == "DATE_TIME"),
             "ISO date with space separator not detected: {dets:?}"
@@ -4187,8 +4207,18 @@ example-air.com"#;
     #[test]
     fn test_date_written_french_all_months() {
         let months = [
-            "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
-            "août", "septembre", "octobre", "novembre", "décembre",
+            "janvier",
+            "février",
+            "mars",
+            "avril",
+            "mai",
+            "juin",
+            "juillet",
+            "août",
+            "septembre",
+            "octobre",
+            "novembre",
+            "décembre",
         ];
         for month in &months {
             let input = format!("le 15 {month} 2024");
@@ -4221,8 +4251,18 @@ example-air.com"#;
     #[test]
     fn test_date_written_english_all_months() {
         let months = [
-            "January", "February", "March", "April", "May", "June", "July",
-            "August", "September", "October", "November", "December",
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
         ];
         for month in &months {
             let input = format!("{month} 15, 2024");
@@ -4237,7 +4277,9 @@ example-air.com"#;
 
     #[test]
     fn test_date_written_english_abbreviated() {
-        let abbrevs = ["Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        let abbrevs = [
+            "Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
         for abbr in &abbrevs {
             let input = format!("{abbr} 15, 2024");
             let mut a = Anonymizer::new(0.0);
@@ -4319,7 +4361,10 @@ example-air.com"#;
         let input = "created at 2024-06-15T09:30:00Z";
         let (anon, _) = a.anonymize_text(input);
         let restored = a.mapping.restore(&anon);
-        assert_eq!(restored, input, "ISO date roundtrip should restore original");
+        assert_eq!(
+            restored, input,
+            "ISO date roundtrip should restore original"
+        );
     }
 
     // ── IPv6 battle tests ──
@@ -4351,8 +4396,7 @@ example-air.com"#;
     #[test]
     fn test_ipv6_uppercase() {
         let mut a = Anonymizer::new(0.0);
-        let (result, dets) =
-            a.anonymize_text("host 2001:0DB8:85A3:0000:0000:8A2E:0370:7334");
+        let (result, dets) = a.anonymize_text("host 2001:0DB8:85A3:0000:0000:8A2E:0370:7334");
         assert!(
             dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
             "uppercase IPv6 not detected: {dets:?}"
@@ -4386,8 +4430,7 @@ example-air.com"#;
     fn test_ipv6_in_url_bracket() {
         let mut a = Anonymizer::new(0.0);
         // IPv6 in URL brackets — URL should be detected
-        let (result, dets) =
-            a.anonymize_text("visit http://[2001:db8::1]:8080/path");
+        let (result, dets) = a.anonymize_text("visit http://[2001:db8::1]:8080/path");
         assert!(
             dets.iter().any(|d| d.entity_type == "URL"),
             "URL with IPv6 not detected: {dets:?}"
@@ -4398,8 +4441,7 @@ example-air.com"#;
     #[test]
     fn test_ipv6_and_ipv4_together() {
         let mut a = Anonymizer::new(0.0);
-        let (result, dets) =
-            a.anonymize_text("primary 192.168.1.1 secondary 2001:db8::1");
+        let (result, dets) = a.anonymize_text("primary 192.168.1.1 secondary 2001:db8::1");
         let ip_dets: Vec<_> = dets
             .iter()
             .filter(|d| d.entity_type == "IP_ADDRESS")
@@ -4611,7 +4653,10 @@ example-air.com"#;
             })
             .collect();
         assert_eq!(tokens.len(), 2, "expected 2 tokens in: {result}");
-        assert_eq!(tokens[0], tokens[1], "same SSN should get same token: {result}");
+        assert_eq!(
+            tokens[0], tokens[1],
+            "same SSN should get same token: {result}"
+        );
     }
 
     #[test]
@@ -4847,13 +4892,28 @@ example-air.com"#;
         let (result, dets) = a.anonymize_text(input);
         let types: Vec<&str> = dets.iter().map(|d| &*d.entity_type).collect();
         assert!(types.contains(&"DATE_TIME"), "DATE_TIME missing: {types:?}");
-        assert!(types.contains(&"IP_ADDRESS"), "IP_ADDRESS missing: {types:?}");
-        assert!(types.contains(&"MAC_ADDRESS"), "MAC_ADDRESS missing: {types:?}");
-        assert!(types.contains(&"PHONE_NUMBER"), "PHONE_NUMBER missing: {types:?}");
+        assert!(
+            types.contains(&"IP_ADDRESS"),
+            "IP_ADDRESS missing: {types:?}"
+        );
+        assert!(
+            types.contains(&"MAC_ADDRESS"),
+            "MAC_ADDRESS missing: {types:?}"
+        );
+        assert!(
+            types.contains(&"PHONE_NUMBER"),
+            "PHONE_NUMBER missing: {types:?}"
+        );
         assert!(types.contains(&"IBAN_CODE"), "IBAN_CODE missing: {types:?}");
         assert!(types.contains(&"US_SSN"), "US_SSN missing: {types:?}");
-        assert!(types.contains(&"PHONE_EXTENSION"), "PHONE_EXTENSION missing: {types:?}");
-        assert!(types.contains(&"MEDICAL_LICENSE"), "MEDICAL_LICENSE missing: {types:?}");
+        assert!(
+            types.contains(&"PHONE_EXTENSION"),
+            "PHONE_EXTENSION missing: {types:?}"
+        );
+        assert!(
+            types.contains(&"MEDICAL_LICENSE"),
+            "MEDICAL_LICENSE missing: {types:?}"
+        );
         // Verify all PII is actually replaced in output
         assert!(!result.contains("192.168.1.1"));
         assert!(!result.contains("0A:1B:2C:3D:4E:5F"));
@@ -5030,27 +5090,252 @@ example-air.com"#;
         assert!(!result.contains("john@example.com"));
         assert!(!result.contains("192.168.1.1"));
         assert!(result.contains("****************")); // 16-char email mask
-        assert!(result.contains("***********"));       // 11-char IP mask
+        assert!(result.contains("***********")); // 11-char IP mask
         assert_eq!(dets.len(), 2);
     }
 
     #[test]
     fn test_apply_mask_fixed_count_exceeds_length() {
-        let masked = apply_mask("abc", &MaskConfig {
-            mask_char: '*',
-            fixed_count: Some(10),
-            from_end: false,
-        });
+        let masked = apply_mask(
+            "abc",
+            &MaskConfig {
+                mask_char: '*',
+                fixed_count: Some(10),
+                from_end: false,
+            },
+        );
         assert_eq!(masked, "***");
     }
 
     #[test]
     fn test_apply_mask_zero_count() {
-        let masked = apply_mask("hello", &MaskConfig {
-            mask_char: '*',
-            fixed_count: Some(0),
-            from_end: false,
-        });
+        let masked = apply_mask(
+            "hello",
+            &MaskConfig {
+                mask_char: '*',
+                fixed_count: Some(0),
+                from_end: false,
+            },
+        );
         assert_eq!(masked, "hello");
+    }
+
+    // ── US_BANK_NUMBER tests ──
+
+    #[test]
+    fn test_us_bank_number_detected_with_context() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "Account number: 12345678901234";
+        let (result, dets) = anon.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_BANK_NUMBER"),
+            "US_BANK_NUMBER not detected in: {input}"
+        );
+        assert!(result.contains("[US_BANK_NUMBER_"));
+    }
+
+    #[test]
+    fn test_us_bank_number_not_detected_without_context() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "Order ref 12345678901234 confirmed";
+        let (_, dets) = anon.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_BANK_NUMBER"),
+            "US_BANK_NUMBER should not match without context"
+        );
+    }
+
+    // ── US_DRIVER_LICENSE tests ──
+
+    #[test]
+    fn test_us_driver_license_alpha_short() {
+        let mut anon = Anonymizer::new(0.0);
+        // Use "DMV" context — specific to driver license, no overlap with MEDICAL_LICENSE
+        let input = "DMV D1234567";
+        let (result, dets) = anon.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_DRIVER_LICENSE"),
+            "US_DRIVER_LICENSE not detected in: {input} — dets: {dets:?}"
+        );
+        assert!(result.contains("[US_DRIVER_LICENSE_"));
+    }
+
+    #[test]
+    fn test_us_driver_license_alpha_long() {
+        let mut anon = Anonymizer::new(0.0);
+        // 1 letter + 12 digits (IL/FL/MD/MI/MN format)
+        let input = "DMV D123456789012";
+        let (result, dets) = anon.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_DRIVER_LICENSE"),
+            "US_DRIVER_LICENSE (long) not detected in: {input} — dets: {dets:?}"
+        );
+        assert!(result.contains("[US_DRIVER_LICENSE_"));
+    }
+
+    #[test]
+    fn test_us_driver_license_alpha_pair() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "DL: WA1234567";
+        let (result, dets) = anon.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_DRIVER_LICENSE"),
+            "US_DRIVER_LICENSE (pair) not detected in: {input} — dets: {dets:?}"
+        );
+        assert!(result.contains("[US_DRIVER_LICENSE_"));
+    }
+
+    #[test]
+    fn test_us_driver_license_not_detected_without_context() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "Reference code: D1234567 in database";
+        let (_, dets) = anon.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_DRIVER_LICENSE"),
+            "US_DRIVER_LICENSE should not match without context"
+        );
+    }
+
+    // ── US_ITIN tests ──
+
+    #[test]
+    fn test_us_itin_detected_with_context() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "ITIN: 912-70-1234";
+        let (result, dets) = anon.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_ITIN"),
+            "US_ITIN not detected in: {input}"
+        );
+        assert!(result.contains("[US_ITIN_"));
+    }
+
+    #[test]
+    fn test_us_itin_rejects_invalid_group() {
+        let mut anon = Anonymizer::new(0.0);
+        // Group 66 is invalid for ITIN
+        let input = "ITIN: 912-66-1234";
+        let (_, dets) = anon.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_ITIN"),
+            "US_ITIN should reject invalid group 66"
+        );
+    }
+
+    #[test]
+    fn test_us_itin_not_confused_with_ssn() {
+        let mut anon = Anonymizer::new(0.0);
+        // SSN context but 9xx area → SSN validator rejects, ITIN validator accepts
+        let input = "Tax ITIN: 999-88-1234";
+        let (_, dets) = anon.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_ITIN"),
+            "US_ITIN should match 9xx numbers with ITIN context"
+        );
+        // SSN should not match 9xx area
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_SSN"),
+            "US_SSN should reject 9xx area"
+        );
+    }
+
+    // ── US_PASSPORT tests ──
+
+    #[test]
+    fn test_us_passport_detected_with_context() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "Passport number: 123456789";
+        let (result, dets) = anon.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_PASSPORT"),
+            "US_PASSPORT not detected in: {input}"
+        );
+        assert!(result.contains("[US_PASSPORT_"));
+    }
+
+    #[test]
+    fn test_us_passport_not_detected_without_context() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "Serial: 123456789 confirmed";
+        let (_, dets) = anon.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_PASSPORT"),
+            "US_PASSPORT should not match without context"
+        );
+    }
+
+    // ── US_MBI tests ──
+
+    #[test]
+    fn test_us_mbi_detected_with_context() {
+        let mut anon = Anonymizer::new(0.0);
+        // Valid MBI: 1EG4TE500K3
+        let input = "Medicare MBI: 1EG4TE500K3";
+        let (result, dets) = anon.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "US_MBI"),
+            "US_MBI not detected in: {input}"
+        );
+        assert!(result.contains("[US_MBI_"));
+    }
+
+    #[test]
+    fn test_us_mbi_rejects_excluded_letters() {
+        let mut anon = Anonymizer::new(0.0);
+        // 'S' in position 2 is excluded
+        let input = "Medicare MBI: 1SG4TE500K3";
+        let (_, dets) = anon.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_MBI"),
+            "US_MBI should reject excluded letter S in position 2"
+        );
+    }
+
+    #[test]
+    fn test_us_mbi_not_detected_without_context() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "Code: 1EG4TE500K3 reference";
+        let (_, dets) = anon.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "US_MBI"),
+            "US_MBI should not match without context"
+        );
+    }
+
+    // ── ABA_ROUTING tests ──
+
+    #[test]
+    fn test_aba_routing_detected_with_context() {
+        let mut anon = Anonymizer::new(0.0);
+        // Chase: 021000021 (valid checksum)
+        let input = "Routing number: 021000021";
+        let (result, dets) = anon.anonymize_text(input);
+        assert!(
+            dets.iter().any(|d| d.entity_type == "ABA_ROUTING"),
+            "ABA_ROUTING not detected in: {input}"
+        );
+        assert!(result.contains("[ABA_ROUTING_"));
+    }
+
+    #[test]
+    fn test_aba_routing_rejects_bad_checksum() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "Routing number: 021000022";
+        let (_, dets) = anon.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "ABA_ROUTING"),
+            "ABA_ROUTING should reject bad checksum"
+        );
+    }
+
+    #[test]
+    fn test_aba_routing_not_detected_without_context() {
+        let mut anon = Anonymizer::new(0.0);
+        let input = "Reference: 021000021 noted";
+        let (_, dets) = anon.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "ABA_ROUTING"),
+            "ABA_ROUTING should not match without context"
+        );
     }
 }

@@ -17,8 +17,11 @@ mod secrets;
 mod us;
 pub mod validators;
 
-pub use validators::{iban_mod97, luhn_check, valid_card_prefix, valid_mac, valid_us_ssn};
 pub use aviation::CREW_CODE_BLOCKLIST;
+pub use validators::{
+    iban_mod97, luhn_check, valid_aba_routing, valid_card_prefix, valid_mac, valid_us_itin,
+    valid_us_ssn,
+};
 
 /// A PII pattern definition with regex, entity type, score, and context configuration.
 #[derive(Clone, Copy)]
@@ -169,10 +172,10 @@ mod tests {
 
     #[test]
     fn test_patterns_count() {
-        // Current count: 50 patterns. Update this if patterns are added/removed.
+        // Current count: 59 patterns. Update this if patterns are added/removed.
         assert_eq!(
             PATTERNS.len(),
-            50,
+            59,
             "PATTERNS count changed - update this test if intentional"
         );
     }
@@ -181,10 +184,10 @@ mod tests {
     fn test_entity_types_count() {
         use std::collections::HashSet;
         let entity_types: HashSet<&str> = PATTERNS.iter().map(|p| p.entity_type).collect();
-        // Current count: 26 unique entity types
+        // Current count: 32 unique entity types
         assert_eq!(
             entity_types.len(),
-            26,
+            32,
             "Entity type count changed - update this test if intentional"
         );
     }
@@ -193,6 +196,7 @@ mod tests {
     fn test_all_expected_entity_types_present() {
         use std::collections::HashSet;
         let expected = [
+            "ABA_ROUTING",
             "AIRCRAFT_REGISTRATION",
             "AUTH_TOKEN",
             "CONNECTION_STRING",
@@ -217,6 +221,11 @@ mod tests {
             "PHONE_NUMBER",
             "SECRET_KEY",
             "URL",
+            "US_BANK_NUMBER",
+            "US_DRIVER_LICENSE",
+            "US_ITIN",
+            "US_MBI",
+            "US_PASSPORT",
             "US_SSN",
             "UUID",
         ];
@@ -283,6 +292,8 @@ mod tests {
         let _ = iban_mod97("DE89370400440532013000");
         let _ = luhn_check("4111111111111111");
         let _ = valid_card_prefix("4111111111111111");
+        let _ = valid_aba_routing("021000021");
+        let _ = valid_us_itin("912-70-1234");
     }
 
     #[test]
