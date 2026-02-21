@@ -31,6 +31,8 @@ pub enum Operator {
     Hash,
     /// AES-CBC encrypt PII (reversible without mapping file)
     Encrypt,
+    /// Replace PII with a custom format string (e.g. '<{entity_type}>' or 'REDACTED')
+    Custom,
 }
 
 type Aes128CbcEnc = cbc::Encryptor<Aes128>;
@@ -125,6 +127,10 @@ fn apply_encrypt(value: &str, key: &[u8]) -> String {
         hex.push_str(&format!("{:02x}", b));
     }
     format!("ENC[{hex}]")
+}
+
+fn apply_custom_replacement(entity_type: &str, format_str: &str) -> String {
+    format_str.replace("{entity_type}", entity_type)
 }
 
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
@@ -447,6 +453,7 @@ pub struct Anonymizer {
     pub mask_config: MaskConfig,
     pub hash_algo: HashAlgo,
     pub encrypt_key: Option<Vec<u8>>,
+    pub replace_with: Option<String>,
     ner_detector: Option<Box<dyn NerDetector>>,
 }
 
@@ -492,6 +499,7 @@ impl Anonymizer {
             mask_config: MaskConfig::default(),
             hash_algo: HashAlgo::default(),
             encrypt_key: None,
+            replace_with: None,
             ner_detector: None,
         }
     }
@@ -1276,6 +1284,10 @@ impl Anonymizer {
                 Operator::Encrypt => apply_encrypt(
                     &det.original,
                     self.encrypt_key.as_ref().expect("encrypt_key required"),
+                ),
+                Operator::Custom => apply_custom_replacement(
+                    det.entity_type,
+                    self.replace_with.as_deref().expect("replace_with required"),
                 ),
             };
             result = format!(
@@ -7900,5 +7912,78 @@ example-air.com"#;
         let (result, _) = a.anonymize_text("Thai national ID: 3100912345997");
         assert!(!result.contains("3100912345997"));
         assert!(result.contains("[TH_TNIN_"));
+    }
+
+    // ── Custom operator (--replace-with) tests ──────────────────────────
+
+    #[test]
+    fn test_operator_custom_entity_type_placeholder() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Custom;
+        a.replace_with = Some("<{entity_type}>".to_string());
+        let (result, dets) = a.anonymize_text("contact john@example.com now");
+        assert_eq!(result, "contact <EMAIL_ADDRESS> now");
+        assert!(!result.contains("john@example.com"));
+        assert_eq!(dets.len(), 1);
+    }
+
+    #[test]
+    fn test_operator_custom_static_string() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Custom;
+        a.replace_with = Some("REDACTED".to_string());
+        let (result, _) = a.anonymize_text("contact john@example.com now");
+        assert_eq!(result, "contact REDACTED now");
+    }
+
+    #[test]
+    fn test_operator_custom_multiple_entities() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Custom;
+        a.replace_with = Some("<{entity_type}>".to_string());
+        let (result, dets) = a.anonymize_text("email: john@example.com, ip: 192.168.1.1");
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("192.168.1.1"));
+        assert!(result.contains("<EMAIL_ADDRESS>"));
+        assert!(result.contains("<IP_ADDRESS>"));
+        assert_eq!(dets.len(), 2);
+    }
+
+    #[test]
+    fn test_operator_custom_no_mapping_entries() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Custom;
+        a.replace_with = Some("XXX".to_string());
+        let _ = a.anonymize_text("john@example.com");
+        assert!(a.mapping.mappings.is_empty());
+    }
+
+    #[test]
+    fn test_operator_custom_json() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Custom;
+        a.replace_with = Some("<{entity_type}>".to_string());
+        let json: Value = serde_json::from_str(r#"{"email": "john@example.com"}"#).unwrap();
+        let (result, dets) = a.anonymize_json_value(&json);
+        assert_eq!(result["email"], "<EMAIL_ADDRESS>");
+        assert_eq!(dets.len(), 1);
+    }
+
+    #[test]
+    fn test_operator_custom_empty_string() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Custom;
+        a.replace_with = Some(String::new());
+        let (result, _) = a.anonymize_text("contact john@example.com now");
+        assert_eq!(result, "contact  now");
+    }
+
+    #[test]
+    fn test_operator_custom_literal_braces() {
+        let mut a = Anonymizer::new(0.0);
+        a.operator = Operator::Custom;
+        a.replace_with = Some("[{entity_type}]".to_string());
+        let (result, _) = a.anonymize_text("contact john@example.com now");
+        assert_eq!(result, "contact [EMAIL_ADDRESS] now");
     }
 }

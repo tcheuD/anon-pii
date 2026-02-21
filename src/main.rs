@@ -92,6 +92,11 @@ struct Cli {
     #[arg(long)]
     encrypt_key: Option<String>,
 
+    /// Custom replacement format string (used with --operator custom)
+    /// Use {entity_type} as placeholder, e.g. '<{entity_type}>' or 'REDACTED'
+    #[arg(long)]
+    replace_with: Option<String>,
+
     /// Language for detection
     #[arg(short, long, default_value = "en")]
     language: String,
@@ -815,6 +820,15 @@ fn main() -> io::Result<()> {
                 let key = parse_encrypt_key(hex)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
                 anonymizer.encrypt_key = Some(key);
+            }
+            if cli.operator == Operator::Custom {
+                let fmt = cli.replace_with.ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "--replace-with is required when using --operator custom",
+                    )
+                })?;
+                anonymizer.replace_with = Some(fmt);
             }
 
             // Wire up NER detector if requested (ML + heuristic combined)
