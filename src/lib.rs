@@ -1,3 +1,5 @@
+#[cfg(feature = "proxy")]
+pub mod api;
 pub mod detection;
 pub mod format;
 pub mod mapping;

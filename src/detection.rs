@@ -64,7 +64,7 @@ impl Default for MaskConfig {
     }
 }
 
-fn apply_mask(value: &str, config: &MaskConfig) -> String {
+pub fn apply_mask(value: &str, config: &MaskConfig) -> String {
     let char_count = value.chars().count();
     let mask_len = config.fixed_count.unwrap_or(char_count);
     if config.from_end {
@@ -86,7 +86,7 @@ fn apply_mask(value: &str, config: &MaskConfig) -> String {
     }
 }
 
-fn apply_hash(value: &str, algo: HashAlgo) -> String {
+pub fn apply_hash(value: &str, algo: HashAlgo) -> String {
     use sha2::Digest;
 
     match algo {
@@ -105,7 +105,7 @@ fn apply_hash(value: &str, algo: HashAlgo) -> String {
     }
 }
 
-fn apply_encrypt(value: &str, key: &[u8]) -> String {
+pub fn apply_encrypt(value: &str, key: &[u8]) -> String {
     let mut iv_bytes = [0u8; 16];
     getrandom::fill(&mut iv_bytes).expect("getrandom failed");
 
@@ -129,7 +129,7 @@ fn apply_encrypt(value: &str, key: &[u8]) -> String {
     format!("ENC[{hex}]")
 }
 
-fn apply_custom_replacement(entity_type: &str, format_str: &str) -> String {
+pub fn apply_custom_replacement(entity_type: &str, format_str: &str) -> String {
     format_str.replace("{entity_type}", entity_type)
 }
 
@@ -506,6 +506,17 @@ impl Anonymizer {
 
     pub fn set_ner_detector(&mut self, detector: Box<dyn NerDetector>) {
         self.ner_detector = Some(detector);
+    }
+
+    /// Run the full detection pipeline (normalization, pattern matching, validators,
+    /// NER, overlap resolution) without performing any replacement or writing to the
+    /// mapping. Returns raw detections suitable for the Presidio `/analyze` endpoint.
+    pub fn analyze(&mut self, text: &str) -> Vec<Detection> {
+        let saved = self.operator;
+        self.operator = Operator::Keep;
+        let (_, detections) = self.anonymize_text(text);
+        self.operator = saved;
+        detections
     }
 
     fn has_context(&self, text: &str, start: usize, end: usize, keywords: &[&str]) -> bool {

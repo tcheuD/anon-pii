@@ -141,6 +141,13 @@ enum Commands {
         #[arg(long)]
         model_dir: Option<PathBuf>,
     },
+    /// Start Presidio-compatible REST API server
+    #[cfg(feature = "proxy")]
+    Api {
+        /// Port to listen on
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+    },
     /// Start web UI for interactive anonymization
     #[cfg(feature = "proxy")]
     Ui {
@@ -703,6 +710,11 @@ fn main() -> io::Result<()> {
             );
             eprintln!("  {}", first_path.display());
             eprintln!("  {}", last_path.display());
+        }
+        #[cfg(feature = "proxy")]
+        Some(Commands::Api { port }) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(anon::api::run(port))?;
         }
         #[cfg(feature = "proxy")]
         Some(Commands::Ui { port }) => {
