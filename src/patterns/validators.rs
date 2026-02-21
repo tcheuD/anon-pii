@@ -254,6 +254,62 @@ pub fn valid_uk_nhs(s: &str) -> bool {
     }
 }
 
+/// Shared mod-23 letter table for Spanish NIF/NIE validation.
+const ES_NIF_LETTERS: &[u8; 23] = b"TRWAGMYFPDXBNJZSQVHLCKE";
+
+/// ES NIF validation: `8_digits % 23` must match the control letter.
+pub fn valid_es_nif(s: &str) -> bool {
+    let upper = s.to_ascii_uppercase();
+    let digits: String = upper.chars().filter(|c| c.is_ascii_digit()).collect();
+    let letter: Option<char> = upper.chars().rfind(|c| c.is_ascii_alphabetic());
+    if digits.len() != 8 {
+        return false;
+    }
+    let Some(letter) = letter else {
+        return false;
+    };
+    let num: u32 = match digits.parse() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let expected = ES_NIF_LETTERS[(num % 23) as usize] as char;
+    letter == expected
+}
+
+/// ES NIE validation: replace prefix X→0, Y→1, Z→2, then same mod-23 check.
+pub fn valid_es_nie(s: &str) -> bool {
+    let upper = s.to_ascii_uppercase();
+    let chars: Vec<char> = upper
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if chars.is_empty() {
+        return false;
+    }
+    let prefix_digit = match chars[0] {
+        'X' => '0',
+        'Y' => '1',
+        'Z' => '2',
+        _ => return false,
+    };
+    let digits: String = std::iter::once(prefix_digit)
+        .chain(chars[1..].iter().filter(|c| c.is_ascii_digit()).copied())
+        .collect();
+    let letter: Option<char> = chars.iter().rfind(|c| c.is_ascii_alphabetic()).copied();
+    if digits.len() != 8 {
+        return false;
+    }
+    let Some(letter) = letter else {
+        return false;
+    };
+    let num: u32 = match digits.parse() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let expected = ES_NIF_LETTERS[(num % 23) as usize] as char;
+    letter == expected
+}
+
 /// UK NINO prefix blocklist validation.
 /// Rejects invalid prefix pairs: BG, GB, NK, KN, NT, TN, ZZ.
 pub fn valid_uk_nino(s: &str) -> bool {
@@ -589,5 +645,79 @@ mod tests {
     #[test]
     fn test_valid_uk_nino_no_alpha() {
         assert!(!valid_uk_nino("12345678")); // no prefix letters at all
+    }
+
+    // ── valid_es_nif tests ──
+
+    #[test]
+    fn test_valid_es_nif_known_good() {
+        // 12345678 % 23 = 14 → 'Z'
+        assert!(valid_es_nif("12345678Z"));
+        // 00000000 % 23 = 0 → 'T'
+        assert!(valid_es_nif("00000000T"));
+        // 00000001 % 23 = 1 → 'R'
+        assert!(valid_es_nif("00000001R"));
+        // With separator
+        assert!(valid_es_nif("12345678-Z"));
+    }
+
+    #[test]
+    fn test_valid_es_nif_rejects_bad_letter() {
+        assert!(!valid_es_nif("12345678A")); // expected Z
+        assert!(!valid_es_nif("00000000R")); // expected T
+    }
+
+    #[test]
+    fn test_valid_es_nif_wrong_length() {
+        assert!(!valid_es_nif("1234567Z")); // 7 digits
+        assert!(!valid_es_nif("123456789Z")); // 9 digits
+        assert!(!valid_es_nif("")); // empty
+    }
+
+    #[test]
+    fn test_valid_es_nif_case_insensitive() {
+        assert!(valid_es_nif("12345678z")); // lowercase
+    }
+
+    // ── valid_es_nie tests ──
+
+    #[test]
+    fn test_valid_es_nie_known_good() {
+        // X1234567: X→0, 01234567 % 23 = 1234567 % 23 = 19 → 'L'
+        assert!(valid_es_nie("X1234567L"));
+        // Y1234567: Y→1, 11234567 % 23 = 10 → 'X'
+        assert!(valid_es_nie("Y1234567X"));
+        // Z1234567: Z→2, 21234567 % 23 = 1 → 'R'
+        assert!(valid_es_nie("Z1234567R"));
+    }
+
+    #[test]
+    fn test_valid_es_nie_with_separators() {
+        assert!(valid_es_nie("X-1234567-L"));
+        assert!(valid_es_nie("X 1234567 L"));
+    }
+
+    #[test]
+    fn test_valid_es_nie_rejects_bad_letter() {
+        assert!(!valid_es_nie("X1234567A")); // expected L
+        assert!(!valid_es_nie("Y1234567A")); // expected X
+    }
+
+    #[test]
+    fn test_valid_es_nie_rejects_bad_prefix() {
+        assert!(!valid_es_nie("A1234567L")); // must be X, Y, or Z
+        assert!(!valid_es_nie("W1234567L"));
+    }
+
+    #[test]
+    fn test_valid_es_nie_wrong_length() {
+        assert!(!valid_es_nie("X123456L")); // 6 digits
+        assert!(!valid_es_nie("X12345678L")); // 8 digits
+        assert!(!valid_es_nie("")); // empty
+    }
+
+    #[test]
+    fn test_valid_es_nie_case_insensitive() {
+        assert!(valid_es_nie("x1234567l")); // lowercase
     }
 }

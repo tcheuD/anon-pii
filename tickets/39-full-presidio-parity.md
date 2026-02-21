@@ -32,28 +32,28 @@ Presidio ships ~50 built-in entity types. Below is the exhaustive 1:1 map.
 
 | Presidio Entity | Rust Status | Validation Needed | Complexity |
 |----------------|-------------|-------------------|------------|
-| `US_SSN` | **Missing** | Delimiter consistency, zero-group rejection, invalid prefix blocklist (000, 666, 9xx) | Low |
-| `US_BANK_NUMBER` | **Missing** | 8-17 digit pattern, context-gated | Low |
-| `US_DRIVER_LICENSE` | **Missing** | State-specific patterns (50 states). Presidio uses ~15 regex groups. | Medium |
-| `US_ITIN` | **Missing** | 9 digits starting with 9, format `9XX-XX-XXXX` | Low |
-| `US_PASSPORT` | **Missing** | 9-digit pattern, context-gated | Low |
-| `US_MBI` | **Missing** | 11-char Medicare Beneficiary ID, positional validation (excludes S,L,O,I,B,Z) | Low |
-| `ABA_ROUTING` | **Missing** | 9-digit routing number, weighted checksum `[3,7,1,3,7,1,3,7,1]` mod-10 | Low |
-| `MEDICAL_LICENSE` | **Missing** | (Same as global — listed once) | Low |
+| `US_SSN` | **Done** | Delimiter consistency, zero-group rejection, invalid prefix blocklist (000, 666, 9xx) | Low |
+| `US_BANK_NUMBER` | **Done** | 8-17 digit pattern, context-gated | Low |
+| `US_DRIVER_LICENSE` | **Done** | ~~State-specific patterns (50 states). Presidio uses ~15 regex groups.~~ (FIXED) 3 regex groups: letter+5-9 digits, letter+10-12 digits, 2 letters+5-7 digits. All context-gated. | Medium |
+| `US_ITIN` | **Done** | ~~9 digits starting with 9, format `9XX-XX-XXXX`~~ (FIXED) Pattern + `valid_us_itin()` validator (group range check). | Low |
+| `US_PASSPORT` | **Done** | 9-digit pattern, context-gated | Low |
+| `US_MBI` | **Done** | ~~11-char Medicare Beneficiary ID, positional validation (excludes S,L,O,I,B,Z)~~ (FIXED) Positional regex with character class exclusions. | Low |
+| `ABA_ROUTING` | **Done** | ~~9-digit routing number, weighted checksum `[3,7,1,3,7,1,3,7,1]` mod-10~~ (FIXED) `valid_aba_routing()` with prefix + weighted checksum validation. | Low |
+| `MEDICAL_LICENSE` | **Done** | (Same as global — listed once) | Low |
 
 ### 1C. United Kingdom (2 entities)
 
 | Presidio Entity | Rust Status | Validation Needed | Complexity |
 |----------------|-------------|-------------------|------------|
-| `UK_NHS` | **Missing** | 10-digit number, mod-11 checksum | Low |
-| `UK_NINO` | **Missing** | National Insurance Number, prefix blocklist (BG, GB, NK, KN, NT, TN, ZZ) | Low |
+| `UK_NHS` | **Done** | ~~10-digit number, mod-11 checksum~~ (FIXED) 2 patterns (spaced + compact), mod-11 validator, context-gated | Low |
+| `UK_NINO` | **Done** | ~~National Insurance Number, prefix blocklist (BG, GB, NK, KN, NT, TN, ZZ)~~ (FIXED) Regex with char class prefix filtering + blocklist validator, context-gated | Low |
 
 ### 1D. Spain (2 entities)
 
 | Presidio Entity | Rust Status | Validation Needed | Complexity |
 |----------------|-------------|-------------------|------------|
-| `ES_NIF` | **Missing** | Personal tax ID, pattern + checksum | Low |
-| `ES_NIE` | **Missing** | Foreigner ID card, pattern + checksum | Low |
+| `ES_NIF` | **Done** | ~~Personal tax ID, pattern + checksum~~ (FIXED) Pattern + mod-23 validator, context-gated | Low |
+| `ES_NIE` | **Done** | ~~Foreigner ID card, pattern + checksum~~ (FIXED) Pattern + mod-23 validator (X/Y/Z prefix), context-gated | Low |
 
 ### 1E. Italy (5 entities)
 
@@ -155,7 +155,7 @@ Presidio validates many entities with checksums beyond regex. Current Rust valid
 | **IP parsing** (stdlib validation) | Yes (`ipaddress.ip_address()`) | **Done** — regex validates octets 0-255 for IPv4, IPv6 regex covers full/collapsed/link-local/loopback/mapped forms |
 | **Phone parsing** (`python-phonenumbers`) | Yes | **Partial** — Regex-based with context gating. No stdlib-level validation but covers E.164 format with separators/area codes. |
 | **Verhoeff** (IN_AADHAAR) | Yes | **Missing** |
-| **mod-11** (UK_NHS, AU_TFN) | Yes | **Missing** |
+| **mod-11** (UK_NHS, AU_TFN) | Yes | **Partial** — `valid_uk_nhs()` implemented for UK_NHS, AU_TFN still missing |
 | **Weighted checksums** (ABA, AU_ABN, KR_BRN, PL_PESEL) | Yes | **Missing** |
 | **IT fiscal code** (odd/even weighted, mod-26) | Yes | **Missing** |
 | **FI identity code** (date + mod-31) | Yes | **Missing** |
@@ -303,9 +303,9 @@ Implement all country recognizers. Group by country, each is a self-contained PR
 
 | # | Task | Entities Added | Complexity |
 |---|------|---------------|------------|
-| 2.1 | US entities (7 remaining) | `US_BANK_NUMBER`, `US_DRIVER_LICENSE`, `US_ITIN`, `US_PASSPORT`, `US_MBI`, `ABA_ROUTING`, `MEDICAL_LICENSE` | Medium (US_DRIVER_LICENSE has 50 state patterns) |
-| 2.2 | UK entities | `UK_NHS`, `UK_NINO` | Low |
-| 2.3 | Spain entities | `ES_NIF`, `ES_NIE` | Low |
+| ~~2.1~~ | ~~US entities (7 remaining)~~ (FIXED) | `US_BANK_NUMBER`, `US_DRIVER_LICENSE`, `US_ITIN`, `US_PASSPORT`, `US_MBI`, `ABA_ROUTING`, `MEDICAL_LICENSE` | Medium |
+| ~~2.2~~ | ~~UK entities~~ (FIXED) | `UK_NHS`, `UK_NINO` | Low |
+| ~~2.3~~ | ~~Spain entities~~ (FIXED) | `ES_NIF`, `ES_NIE` | Low |
 | 2.4 | Italy entities | `IT_FISCAL_CODE`, `IT_DRIVER_LICENSE`, `IT_VAT_CODE`, `IT_PASSPORT`, `IT_IDENTITY_CARD` | Medium (fiscal code checksum) |
 | 2.5 | India entities | `IN_AADHAAR`, `IN_PAN`, `IN_VEHICLE_REGISTRATION`, `IN_PASSPORT`, `IN_VOTER`, `IN_GSTIN` | Medium (Verhoeff algorithm) |
 | 2.6 | Australia entities | `AU_ABN`, `AU_ACN`, `AU_TFN`, `AU_MEDICARE` | Low |
