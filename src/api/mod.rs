@@ -26,7 +26,7 @@ async fn validate_host(req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
-const OPENAPI_SPEC: &str = include_str!("../../docs/openapi.json");
+const OPENAPI_SPEC: &str = include_str!("../../docs/openapi.yaml");
 
 fn router() -> Router {
     Router::new()
@@ -34,13 +34,13 @@ fn router() -> Router {
         .route("/anonymize", post(handlers::anonymize))
         .route("/supportedentities", get(handlers::supported_entities))
         .route("/health", get(handlers::health))
-        .route("/openapi.json", get(openapi_spec))
+        .route("/openapi.yaml", get(openapi_spec))
         .layer(middleware::from_fn(validate_host))
 }
 
 async fn openapi_spec() -> impl IntoResponse {
     (
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        [(axum::http::header::CONTENT_TYPE, "application/yaml")],
         OPENAPI_SPEC,
     )
 }
@@ -74,7 +74,7 @@ mod tests {
             .route("/anonymize", post(handlers::anonymize))
             .route("/supportedentities", get(handlers::supported_entities))
             .route("/health", get(handlers::health))
-            .route("/openapi.json", get(openapi_spec))
+            .route("/openapi.yaml", get(openapi_spec))
     }
 
     #[tokio::test]
@@ -840,22 +840,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_openapi_spec_returns_valid_json() {
+    async fn test_openapi_spec_returns_yaml() {
         let resp = app()
             .oneshot(
                 HttpRequest::builder()
-                    .uri("/openapi.json")
+                    .uri("/openapi.yaml")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(ct, "application/yaml");
         let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
             .await
             .unwrap();
-        let spec: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(spec["openapi"], "3.0.3");
-        assert_eq!(spec["paths"].as_object().unwrap().len(), 5);
+        let body = std::str::from_utf8(&bytes).unwrap();
+        assert!(body.starts_with("openapi: 3.0.3"));
+        assert!(body.contains("/analyze:"));
+        assert!(body.contains("/anonymize:"));
     }
 }
