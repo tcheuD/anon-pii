@@ -11,6 +11,12 @@ cargo install --path .
 # With heuristic name detection (zero deps, +0 binary size)
 cargo install --path . --features ner-lite
 
+# With reverse proxy + web UI + REST API
+cargo install --path . --features proxy
+
+# Recommended full build (heuristic NER + proxy, no ML deps)
+cargo install --path . --features ner-lite,proxy
+
 # With ML name detection (requires ONNX Runtime)
 brew install onnxruntime
 export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
@@ -43,12 +49,23 @@ echo 'Error for user john@example.com on F-GRHK' | anon
 echo '{"email": "john@example.com", "count": 42}' | anon
 # Output: {"count": 42, "email": "[EMAIL_ADDRESS_1]"}
 
+# Redact instead of tokenize
+echo 'User john@example.com logged in' | anon --operator redact
+# Output: User [REDACTED] logged in
+
+# Mask with partial visibility
+echo 'Card: 4111111111111111' | anon --operator mask --mask-from-end
+# Output: Card: ************1111
+
 # Roundtrip: anonymize, share, restore
 cat debug.json | anon > safe.json
 cat response.json | anon restore
 
 # Pipe through Claude
 cat debug.json | anon | claude -p "explain this error" | anon restore
+
+# Share-ready Markdown snippet (safe to paste into issues / AI tools)
+cat debug.json | anon --share --copy
 ```
 
 Mapping is auto-saved to `~/.anon/mapping.json` — no need to pass `-m` manually.
@@ -119,6 +136,18 @@ sequenceDiagram
 | `--verbose` | `-v` | | Show detected entities table on stderr |
 | `--format` | `-f` | `auto` | Force input format: `auto`, `json`, `text`, `sql`, `csv` |
 | `--threshold` | | `0.5` | Minimum confidence score (0.0-1.0) |
+| `--operator` | | `token` | Anonymization operator: `token`, `redact`, `mask`, `hash`, `encrypt`, `keep`, `custom` |
+| `--mask-char` | | `*` | Masking character (used with `--operator mask`) |
+| `--mask-count` | | match length | Fixed mask length (used with `--operator mask`) |
+| `--mask-from-end` | | | Mask from end instead of start |
+| `--hash-algo` | | `sha256` | Hash algorithm: `sha256`, `md5` (used with `--operator hash`) |
+| `--encrypt-key` | | | AES key, hex-encoded: 32/48/64 chars (used with `--operator encrypt`) |
+| `--replace-with` | | | Custom replacement format, e.g. `<{entity_type}>` (used with `--operator custom`) |
+| `--context-boost` | | `0.15` | Context keyword score boost factor (0.0-1.0) |
+| `--min-score-with-context` | | `0.0` | Minimum score for context-boosted detections |
+| `--language` | `-l` | `en` | Language for detection |
+| `--share` | | | Output a share-ready Markdown snippet |
+| `--copy` | | | Copy output to clipboard (requires `--share`) |
 | `--ner` | | | Enable NER-based PERSON detection (requires `ner` or `ner-lite` feature) |
 
 ### Restore
@@ -129,16 +158,22 @@ sequenceDiagram
 | `--input` | `-i` | | Input file flag (overrides positional) |
 | `--mapping` | `-m` | `~/.anon/mapping.json` | Mapping file for restoration |
 | `--output` | `-o` | | Output file (stdout if omitted) |
+| `--decrypt-key` | | | AES decryption key, hex-encoded (decrypts `ENC[...]` tokens) |
 
-### List Entities
+### Commands
 
 ```bash
-anon list-entities
+anon list-entities        # List all supported entity types
+anon update-names <CSV>   # Import custom name lists from CSV for heuristic NER
+anon download-model       # Download NER ML model (requires `ner` feature)
+anon api                  # Presidio-compatible REST API on :8080, Swagger at /docs (requires `proxy` feature)
+anon ui                   # Interactive web UI on :9200 (requires `proxy` feature)
+anon proxy                # Anonymizing reverse proxy on :9100 (requires `proxy` feature)
 ```
 
 ## Detected entities
 
-61 entity types across 13 countries: emails, URLs, IPs, UUIDs, credit cards, IBANs, phones, dates, crypto addresses, MAC addresses, secrets/tokens, and person names (with `--ner`). Country-specific patterns include SSNs, passports, driver's licenses, tax IDs, and national IDs for US, UK, FR, ES, IT, IN, AU, KR, SG, PL, and SI — each with checksum validation where applicable. Detection works through URL-encoded and Unicode-escaped text.
+63 entity types across 97 patterns covering 13 countries: emails, URLs, IPs, UUIDs, credit cards, IBANs, phones, dates, crypto addresses, MAC addresses, secrets/tokens, and person names (with `--ner`). Country-specific patterns include SSNs, passports, driver's licenses, tax IDs, and national IDs for US, UK, FR, ES, IT, IN, AU, KR, SG, PL, SI, FI, and TH — each with checksum validation where applicable. Detection works through URL-encoded and Unicode-escaped text.
 
 See [docs/entities.md](docs/entities.md) for the full reference with confidence scores and context keywords.
 
@@ -146,9 +181,11 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 
 | Guide | Description |
 |-------|-------------|
-| [Entity types](docs/entities.md) | All 61 entity types, scores, context-aware detection |
+| [Entity types](docs/entities.md) | All 63 entity types, scores, context-aware detection |
 | [Proxy mode](docs/proxy.md) | Anonymizing reverse proxy for the Anthropic API |
 | [NER setup](docs/ner.md) | Person name detection — heuristic and ML backends |
+| [REST API spec](docs/openapi.yaml) | OpenAPI 3.0 specification (Swagger) |
+| [Threat model](docs/threat-model.md) | Security threat model and mitigations |
 | [YouTrack integration](docs/youtrack.md) | `scripts/yt` — fetch issues with human review |
 
 ## Development
@@ -157,7 +194,10 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 # Run tests (default — regex-only, no NER)
 cargo test
 
-# Run tests including NER heuristic tests
+# Run tests including NER heuristic + proxy tests (matches CI)
+cargo test --features ner-lite,proxy
+
+# Run tests including NER heuristic tests only
 cargo test --features ner-lite
 
 # Build release binary
@@ -168,7 +208,7 @@ cargo build --release --features ner-lite
 cargo build --release --features ner
 ```
 
-`cargo test` without feature flags runs all tests except NER-specific ones. This is the standard check after any change.
+`cargo test` without feature flags runs all tests except NER-specific and proxy-specific ones. This is the standard check after any change.
 
 ### Benchmark
 
