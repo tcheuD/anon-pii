@@ -173,6 +173,29 @@ enum Commands {
         #[arg(long)]
         replace: bool,
     },
+    /// Anonymize PII in images via OCR and redaction
+    #[cfg(feature = "image")]
+    Image {
+        /// Input image file
+        #[arg(value_name = "PATH")]
+        input: PathBuf,
+
+        /// Output image file
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Minimum confidence score (0.0-1.0)
+        #[arg(long, default_value = "0.5")]
+        threshold: f64,
+
+        /// Fill color for redacted regions
+        #[arg(long, default_value = "black")]
+        fill_color: String,
+
+        /// Padding around detected PII regions (pixels)
+        #[arg(long, default_value = "2")]
+        padding: u32,
+    },
     /// Start anonymizing proxy server
     #[cfg(feature = "proxy")]
     Proxy {
@@ -745,6 +768,18 @@ fn main() -> io::Result<()> {
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(proxy::run(state, port))?;
+        }
+        #[cfg(feature = "image")]
+        Some(Commands::Image {
+            input,
+            output,
+            threshold,
+            fill_color,
+            padding,
+        }) => {
+            let _ = (input, output, threshold, fill_color, padding);
+            eprintln!("Error: image anonymization not yet implemented");
+            std::process::exit(1);
         }
         Some(Commands::ListEntities) => {
             eprintln!("{}", "Supported entity types:".bold());

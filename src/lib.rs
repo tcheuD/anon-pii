@@ -2,6 +2,8 @@
 pub mod api;
 pub mod detection;
 pub mod format;
+#[cfg(feature = "image")]
+pub mod image_redact;
 pub mod mapping;
 pub mod ner;
 pub mod patterns;
