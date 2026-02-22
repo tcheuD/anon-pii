@@ -31,14 +31,22 @@ pub fn map_detections(
 
             let min_x = overlapping.iter().map(|w| w.x).min().unwrap();
             let min_y = overlapping.iter().map(|w| w.y).min().unwrap();
-            let max_x = overlapping.iter().map(|w| w.x + w.width).max().unwrap();
-            let max_y = overlapping.iter().map(|w| w.y + w.height).max().unwrap();
+            let max_x = overlapping
+                .iter()
+                .map(|w| w.x.saturating_add(w.width))
+                .max()
+                .unwrap();
+            let max_y = overlapping
+                .iter()
+                .map(|w| w.y.saturating_add(w.height))
+                .max()
+                .unwrap();
 
             Some(RedactionRegion {
                 x: min_x.saturating_sub(padding),
                 y: min_y.saturating_sub(padding),
-                width: (max_x - min_x) + 2 * padding,
-                height: (max_y - min_y) + 2 * padding,
+                width: (max_x - min_x).saturating_add(padding.saturating_mul(2)),
+                height: (max_y - min_y).saturating_add(padding.saturating_mul(2)),
                 entity_type: det.entity_type,
             })
         })

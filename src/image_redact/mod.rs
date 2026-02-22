@@ -38,6 +38,7 @@ impl Default for ImageConfig {
 }
 
 pub mod ocr;
+pub mod redact;
 pub mod region;
 
 #[cfg(test)]

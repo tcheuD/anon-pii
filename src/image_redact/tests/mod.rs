@@ -1,6 +1,7 @@
 use super::*;
 
 mod ocr;
+mod redact;
 mod region;
 
 #[test]
