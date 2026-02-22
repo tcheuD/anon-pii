@@ -41,3 +41,7 @@ uv.lock
 
 /target
 .claude/settings.local.json
+
+# Generated reports (contain local paths)
+ai-readability-audit.md
+security_best_practices_report.md

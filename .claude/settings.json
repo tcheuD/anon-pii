@@ -22,5 +22,30 @@
       "WebFetch(domain:microsoft.github.io)",
       "WebFetch(domain:raw.githubusercontent.com)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if printf '%s' \"$TOOL_INPUT\" | grep -q '\\.rs\"'; then cargo fmt --all --quiet 2>/dev/null; fi; exit 0",
+            "statusMessage": "Formatting Rust code"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if printf '%s' \"$TOOL_INPUT\" | grep -qE 'mapping\\.json|\\.env'; then echo 'BLOCK: This file contains secrets or runtime state — do not edit directly.' >&2; exit 2; fi"
+          }
+        ]
+      }
+    ]
   }
 }

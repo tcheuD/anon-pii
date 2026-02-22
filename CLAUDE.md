@@ -180,3 +180,7 @@ CI skips on docs-only changes (`**.md`, `docs/**`).
 - `examples/benchmark.rs` — 100k-line throughput benchmark
 - `scripts/` — `build_names.py` (generate French name lists), `yt` (YouTrack fetcher)
 - `tickets/` — Feature/bug ticket descriptions
+
+## Proactive TIL
+
+When you discover a non-obvious technical insight during work (surprising behavior, clever algorithm, debugging revelation, interesting design trade-off), **proactively invoke the `/til` skill** to append it to `TIL.md`. Don't wait for the user to ask — if the insight is specific, surprising, and reusable, save it immediately.
