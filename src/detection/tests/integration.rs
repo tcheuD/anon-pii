@@ -1,3 +1,4 @@
+use super::super::normalize::{decode_percent_encoding, decode_unicode_escapes};
 use super::super::*;
 use serde_json::Value;
 

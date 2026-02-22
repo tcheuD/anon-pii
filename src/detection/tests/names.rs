@@ -222,8 +222,7 @@ fn test_ner_lite_person_in_complex_log() {
     use crate::ner::heuristic::HeuristicNerDetector;
     let mut a = Anonymizer::new(0.0);
     a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
-    let input =
-        "2024-03-15 [INFO] Passager Philippe Martin a embarqué, email: phil@example.com";
+    let input = "2024-03-15 [INFO] Passager Philippe Martin a embarqué, email: phil@example.com";
     let (result, dets) = a.anonymize_text(input);
     assert!(
         dets.iter().any(|d| d.entity_type == "PERSON"),
@@ -254,7 +253,9 @@ Body: User: Alice | CC: 4111
     let (result, dets) = a.anonymize_text(input);
     assert!(
         dets.iter().any(|d| d.entity_type == "PERSON"),
-        "Alice should be detected as PERSON with 'User:' context.\nDetections: {:?}\nResult: {}", dets, result
+        "Alice should be detected as PERSON with 'User:' context.\nDetections: {:?}\nResult: {}",
+        dets,
+        result
     );
 }
 

@@ -1,5 +1,4 @@
 use super::super::*;
-use serde_json::Value;
 
 // -- US_SSN tests --
 

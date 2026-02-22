@@ -131,8 +131,10 @@ fn test_column_header_many_rows_below_header() {
     let input = lines.join("\n");
     let (result, dets) = a.anonymize_text(&input);
     assert!(
-        dets.iter().any(|d| d.entity_type == "CREW_CODE" && d.original == "JDU"),
+        dets.iter()
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "JDU"),
         "JDU should be detected with 'Crew' header 17 lines above.\nDetections: {:?}\nResult: {}",
-        dets, result
+        dets,
+        result
     );
 }

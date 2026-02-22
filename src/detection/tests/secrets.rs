@@ -18,8 +18,7 @@ fn test_secret_key_stripe_underscore() {
 #[test]
 fn test_secret_key_stripe_dash() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) =
-        a.anonymize_text("key = sk-live-Rg4v8bN2xT9mW5qJ7pL3kYz6hD1fA0cE8iU2wX");
+    let (result, dets) = a.anonymize_text("key = sk-live-Rg4v8bN2xT9mW5qJ7pL3kYz6hD1fA0cE8iU2wX");
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "Stripe key with dashes should be detected.\nDetections: {:?}",
@@ -68,8 +67,8 @@ fn test_secret_key_slack() {
 #[test]
 fn test_secret_key_openai() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) = a
-        .anonymize_text("OPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx");
+    let (result, dets) =
+        a.anonymize_text("OPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx");
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "OpenAI key should be detected.\nDetections: {:?}",

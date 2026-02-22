@@ -6,8 +6,7 @@ use super::super::*;
 fn test_multiline_credit_card_detected() {
     let mut a = Anonymizer::new(0.0);
     // 4111111111111111 is valid Visa (passes Luhn), split across newline
-    let input =
-        "Body: User: Alice | CC: 4111\n1111 1111 1111 (Credit card split across newline)";
+    let input = "Body: User: Alice | CC: 4111\n1111 1111 1111 (Credit card split across newline)";
     let (result, dets) = a.anonymize_text(input);
     assert!(
         dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
@@ -34,8 +33,7 @@ fn test_multiline_iban_detected() {
 fn test_multiline_credit_card_trailing_space() {
     let mut a = Anonymizer::new(0.0);
     // Trailing space before newline — real-world log wrapping
-    let input =
-        "Body: User: Alice | CC: 4111 \n1111 1111 1111 (Valid Visa split across newline)";
+    let input = "Body: User: Alice | CC: 4111 \n1111 1111 1111 (Valid Visa split across newline)";
     let (result, dets) = a.anonymize_text(input);
     assert!(
         dets.iter().any(|d| d.entity_type == "CREDIT_CARD"),
