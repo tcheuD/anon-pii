@@ -37,5 +37,7 @@ impl Default for ImageConfig {
     }
 }
 
+pub mod ocr;
+
 #[cfg(test)]
 mod tests;

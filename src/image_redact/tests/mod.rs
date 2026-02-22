@@ -1,5 +1,7 @@
 use super::*;
 
+mod ocr;
+
 #[test]
 fn image_config_default_values() {
     let config = ImageConfig::default();
