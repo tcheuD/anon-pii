@@ -1,6 +1,7 @@
 use super::*;
 
 mod ocr;
+mod region;
 
 #[test]
 fn image_config_default_values() {
