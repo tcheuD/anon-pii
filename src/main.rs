@@ -777,9 +777,54 @@ fn main() -> io::Result<()> {
             fill_color,
             padding,
         }) => {
-            let _ = (input, output, threshold, fill_color, padding);
-            eprintln!("Error: image anonymization not yet implemented");
-            std::process::exit(1);
+            // 1. OCR: extract words with bounding boxes
+            let words = match anon::image_redact::ocr::extract_words(&input, "eng") {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            if words.is_empty() {
+                eprintln!("No text detected in image, copying as-is");
+                if let Err(e) =
+                    anon::image_redact::redact::redact_image(&input, &output, &[], &fill_color)
+                {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+
+            // 2. Reconstruct reading-order text with byte spans
+            let reconstructed = anon::image_redact::ocr::reconstruct_text(&words);
+
+            // 3. Run PII detection on extracted text
+            let mut anonymizer = Anonymizer::new(threshold);
+            let detections = anonymizer.analyze(&reconstructed.text);
+
+            // 4. Map text detections to pixel regions
+            let regions = anon::image_redact::region::map_detections(
+                &words,
+                &reconstructed,
+                &detections,
+                padding,
+            );
+
+            // 5. Render redaction
+            if let Err(e) =
+                anon::image_redact::redact::redact_image(&input, &output, &regions, &fill_color)
+            {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+
+            eprintln!(
+                "Redacted {} region(s) → {}",
+                regions.len(),
+                output.display()
+            );
         }
         Some(Commands::ListEntities) => {
             eprintln!("{}", "Supported entity types:".bold());

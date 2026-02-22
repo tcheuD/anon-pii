@@ -22,6 +22,10 @@ brew install onnxruntime
 export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
 cargo install --path . --features ner
 anon download-model  # one-time, cached at ~/.anon/models/
+
+# With image redaction (requires Tesseract)
+brew install tesseract  # macOS
+cargo install --path . --features image
 ```
 
 To make `ORT_DYLIB_PATH` persist across terminal sessions, add it to your shell profile:
@@ -66,6 +70,9 @@ cat debug.json | anon | claude -p "explain this error" | anon restore
 
 # Share-ready Markdown snippet (safe to paste into issues / AI tools)
 cat debug.json | anon --share --copy
+
+# Redact PII in images (OCR + fill)
+anon image screenshot.png -o redacted.png
 ```
 
 Mapping is auto-saved to `~/.anon/mapping.json` — no need to pass `-m` manually.
@@ -169,6 +176,7 @@ anon download-model       # Download NER ML model (requires `ner` feature)
 anon api                  # Presidio-compatible REST API on :8080, Swagger at /docs (requires `proxy` feature)
 anon ui                   # Interactive web UI on :9200 (requires `proxy` feature)
 anon proxy                # Anonymizing reverse proxy on :9100 (requires `proxy` feature)
+anon image <path> -o <out>  # OCR-based image PII redaction (requires `image` feature)
 ```
 
 ## Detected entities
@@ -187,6 +195,7 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 | [REST API spec](docs/openapi.yaml) | OpenAPI 3.0 specification (Swagger) |
 | [Threat model](docs/threat-model.md) | Security threat model and mitigations |
 | [YouTrack integration](docs/youtrack.md) | `scripts/yt` — fetch issues with human review |
+| [Image redaction](docs/image-redaction.md) | OCR-based image PII redaction |
 
 ## Development
 
@@ -199,6 +208,10 @@ cargo test --features ner-lite,proxy
 
 # Run tests including NER heuristic tests only
 cargo test --features ner-lite
+
+# Run tests including image tests (requires Tesseract)
+cargo test --features image
+cargo test --features image -- --ignored  # end-to-end OCR tests
 
 # Build release binary
 cargo build --release

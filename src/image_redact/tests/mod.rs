@@ -1,5 +1,6 @@
 use super::*;
 
+mod integration;
 mod ocr;
 mod redact;
 mod region;
