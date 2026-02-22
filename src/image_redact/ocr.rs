@@ -47,8 +47,14 @@ pub fn extract_words(path: &Path, lang: &str) -> Result<Vec<OcrWord>, OcrError> 
         ));
     }
 
+    // Canonicalize the path so Leptonica can open it even when parent directories
+    // are symlinks (e.g. macOS /tmp → /private/tmp).
+    let canonical = path.canonicalize().map_err(|e| {
+        OcrError::ImageLoad(format!("cannot resolve path {}: {e}", path.display()))
+    })?;
+
     let mut lt = LepTess::new(None, lang).map_err(|e| OcrError::Init(e.to_string()))?;
-    lt.set_image(path)
+    lt.set_image(&canonical)
         .map_err(|e| OcrError::ImageLoad(e.to_string()))?;
 
     let boxes = match lt.get_component_boxes(TessPageIteratorLevel_RIL_WORD, true) {
