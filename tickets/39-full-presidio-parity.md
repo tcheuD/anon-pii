@@ -176,9 +176,9 @@ Presidio has 8 anonymization operators. Rust currently has 1 (token replacement)
 | `hash` | SHA-256/512/MD5 hash of PII | ~~**Missing**~~ (FIXED) `--operator hash --hash-algo sha256\|sha512\|md5` | Low |
 | `mask` | Replace with repeated char (`****`) | **Missing** | Low |
 | `encrypt` | AES-CBC encryption (reversible) | ~~**Missing**~~ (FIXED) `--operator encrypt --encrypt-key <hex>` AES-128/192/256-CBC with PKCS7, random IV prepended, hex output | Medium (use `aes`/`cbc` crates) |
-| `decrypt` | Reverse AES-CBC | **Missing** | Medium |
+| `decrypt` | Reverse AES-CBC | ~~**Missing**~~ (FIXED) `anon restore --decrypt-key <hex>` decrypts `ENC[...]` tokens | Medium |
 | `keep` | No-op (preserve original) | **Missing** | Trivial |
-| `custom` | User-provided lambda | **Missing** | Medium (CLI: format string; library: closure) |
+| `custom` | User-provided lambda | ~~**Missing**~~ (FIXED) `--operator custom --replace-with '<{entity_type}>'` | Medium (CLI: format string; library: closure) |
 
 **Implementation plan:** Add an `--operator` CLI flag with values: `token` (default, current behavior), `redact`, `hash`, `mask`, `encrypt`, `keep`. The `custom` operator can be a `--replace-with` format string (e.g. `--replace-with '<{entity_type}>'`).
 
@@ -193,9 +193,9 @@ For `encrypt`/`decrypt`: the restore command already handles deanonymization via
 | Feature | Presidio | Rust Status |
 |---------|----------|-------------|
 | Keyword context matching | Yes | **Done** (dual mode: gate + boost) |
-| Score boost magnitude | configurable (default 0.35) | **Done** (fixed 0.15) |
-| Configurable boost factor | Yes (`context_similarity_factor`) | **Missing** — hardcoded at 0.15 |
-| Minimum score with context | Yes (`min_score_with_context_similarity=0.4`) | **Missing** |
+| Score boost magnitude | configurable (default 0.35) | **Done** (default 0.15, configurable via `--context-boost`) |
+| Configurable boost factor | Yes (`context_similarity_factor`) | ~~**Missing**~~ (FIXED) `--context-boost <FLOAT>` (default 0.15) |
+| Minimum score with context | Yes (`min_score_with_context_similarity=0.4`) | ~~**Missing**~~ (FIXED) `--min-score-with-context <FLOAT>` (default 0.0 = disabled) |
 | Lemma-based matching | Yes (spaCy lemmatizer) | **Missing** — exact string match only |
 | Outer context (column names/metadata) | Yes | **Partial** — column-header detection exists in `detection.rs` but not as general outer context API |
 | Configurable context window | Yes | **Done** (80 chars, via `CONTEXT_WINDOW` constant) |
@@ -325,8 +325,8 @@ Implement all country recognizers. Group by country, each is a self-contained PR
 | 3.2 | Add `mask` operator with `--mask-char`, `--mask-count` | Low |
 | ~~3.3~~ | ~~Add `hash` operator with `--hash-algo` (sha256/sha512/md5)~~ (FIXED) | Low |
 | ~~3.4~~ | ~~Add `encrypt` operator (AES-CBC) with `--encrypt-key`~~ (FIXED) | Medium |
-| 3.5 | Add `decrypt` to restore command | Medium |
-| 3.6 | Add `--replace-with` format string for custom replacement | Low |
+| ~~3.5~~ | ~~Add `decrypt` to restore command~~ (FIXED) | Medium |
+| ~~3.6~~ | ~~Add `--replace-with` format string for custom replacement~~ (FIXED) `--operator custom --replace-with '<{entity_type}>'` with `{entity_type}` placeholder substitution | Low |
 
 **Result after Phase 3:** Full operator parity.
 
@@ -335,7 +335,7 @@ Implement all country recognizers. Group by country, each is a self-contained PR
 | # | Task | Complexity |
 |---|------|------------|
 | 4.1 | REST API endpoints (`/analyze`, `/anonymize`, `/supportedentities`) | Medium |
-| 4.2 | Configurable context boost via CLI | Low |
+| ~~4.2~~ | ~~Configurable context boost via CLI~~ (FIXED) `--context-boost` + `--min-score-with-context` | Low |
 | 4.3 | Image redaction subcommand (OCR + redact) | High |
 | 4.4 | PDF text extraction + redaction | High |
 | 4.5 | YAML recognizer configuration (no-code custom patterns) | Medium |
@@ -406,7 +406,8 @@ fn iban_country_format(iban: &str) -> bool;     // Per-country IBAN length + str
 --hash-algo <ALGO>      # sha256 (default) | sha512 | md5
 --encrypt-key <KEY>     # AES key (128/192/256-bit, hex-encoded)
 --replace-with <FMT>    # format string, e.g. '<{entity_type}>' or 'REDACTED'
---context-boost <F>     # context score boost factor (default: 0.15)
+--context-boost <F>     # context score boost factor (default: 0.15) ✅
+--min-score-with-context <F>  # minimum score for boosted detections (default: 0.0 = disabled) ✅
 ```
 
 ---

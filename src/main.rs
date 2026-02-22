@@ -97,6 +97,14 @@ struct Cli {
     #[arg(long)]
     replace_with: Option<String>,
 
+    /// Context score boost factor when keywords are found nearby (0.0-1.0)
+    #[arg(long, default_value = "0.15")]
+    context_boost: f64,
+
+    /// Minimum score for context-boosted detections (0.0 = disabled)
+    #[arg(long, default_value = "0.0")]
+    min_score_with_context: f64,
+
     /// Language for detection
     #[arg(short, long, default_value = "en")]
     language: String,
@@ -815,6 +823,8 @@ fn main() -> io::Result<()> {
             }
 
             let mut anonymizer = Anonymizer::new(cli.threshold);
+            anonymizer.context_boost = cli.context_boost.clamp(0.0, 1.0);
+            anonymizer.min_score_with_context = cli.min_score_with_context.clamp(0.0, 1.0);
             anonymizer.operator = cli.operator;
             anonymizer.mask_config = MaskConfig {
                 mask_char: cli.mask_char,

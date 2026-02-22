@@ -454,6 +454,8 @@ pub struct Anonymizer {
     pub hash_algo: HashAlgo,
     pub encrypt_key: Option<Vec<u8>>,
     pub replace_with: Option<String>,
+    pub context_boost: f64,
+    pub min_score_with_context: f64,
     ner_detector: Option<Box<dyn NerDetector>>,
 }
 
@@ -500,6 +502,8 @@ impl Anonymizer {
             hash_algo: HashAlgo::default(),
             encrypt_key: None,
             replace_with: None,
+            context_boost: CONTEXT_SCORE_BOOST,
+            min_score_with_context: 0.0,
             ner_detector: None,
         }
     }
@@ -693,7 +697,7 @@ impl Anonymizer {
         for pat in &self.patterns {
             // Early threshold check: consider maximum possible score (with boost)
             let max_score = if !pat.context_keywords.is_empty() && !pat.context_required {
-                (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
+                (pat.score + self.context_boost).min(1.0)
             } else {
                 pat.score
             };
@@ -818,15 +822,23 @@ impl Anonymizer {
                 }
 
                 // Compute detection score with optional context boost
-                let detection_score =
-                    if !pat.context_required && !pat.context_keywords.is_empty() && has_ctx {
-                        (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
-                    } else {
-                        pat.score
-                    };
+                let boosted = !pat.context_required && !pat.context_keywords.is_empty() && has_ctx;
+                let detection_score = if boosted {
+                    (pat.score + self.context_boost).min(1.0)
+                } else {
+                    pat.score
+                };
 
                 // Per-detection threshold check (for boost patterns without context)
                 if detection_score < self.threshold {
+                    continue;
+                }
+
+                // Min-score-with-context filter: reject boosted matches below floor
+                if boosted
+                    && self.min_score_with_context > 0.0
+                    && detection_score < self.min_score_with_context
+                {
                     continue;
                 }
 
@@ -849,7 +861,7 @@ impl Anonymizer {
                     continue;
                 }
                 let max_score = if !pat.context_keywords.is_empty() && !pat.context_required {
-                    (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
+                    (pat.score + self.context_boost).min(1.0)
                 } else {
                     pat.score
                 };
@@ -966,13 +978,20 @@ impl Anonymizer {
                     if pat.context_required && !pat.context_keywords.is_empty() && !has_ctx {
                         continue;
                     }
-                    let detection_score =
-                        if !pat.context_required && !pat.context_keywords.is_empty() && has_ctx {
-                            (pat.score + CONTEXT_SCORE_BOOST).min(1.0)
-                        } else {
-                            pat.score
-                        };
+                    let boosted =
+                        !pat.context_required && !pat.context_keywords.is_empty() && has_ctx;
+                    let detection_score = if boosted {
+                        (pat.score + self.context_boost).min(1.0)
+                    } else {
+                        pat.score
+                    };
                     if detection_score < self.threshold {
+                        continue;
+                    }
+                    if boosted
+                        && self.min_score_with_context > 0.0
+                        && detection_score < self.min_score_with_context
+                    {
                         continue;
                     }
 
@@ -7996,5 +8015,207 @@ example-air.com"#;
         a.replace_with = Some("[{entity_type}]".to_string());
         let (result, _) = a.anonymize_text("contact john@example.com now");
         assert_eq!(result, "contact [EMAIL_ADDRESS] now");
+    }
+
+    // ── context_boost + min_score_with_context tests ────────────────────
+
+    #[test]
+    fn test_custom_context_boost_changes_score() {
+        // IT_FISCAL_CODE: base score 0.85, context_required: false
+        // With boost 0.05 → min(0.85 + 0.05, 1.0) = 0.90
+        // With boost 0.10 → min(0.85 + 0.10, 1.0) = 0.95
+        let mut a_small = Anonymizer::new(0.0);
+        a_small.context_boost = 0.05;
+        let mut a_larger = Anonymizer::new(0.0);
+        a_larger.context_boost = 0.10;
+
+        let input = "codice fiscale: AAABBB00A00A000J";
+        let (_, dets_small) = a_small.anonymize_text(input);
+        let (_, dets_larger) = a_larger.anonymize_text(input);
+
+        let score_small = dets_small
+            .iter()
+            .find(|d| d.entity_type == "IT_FISCAL_CODE")
+            .unwrap()
+            .score;
+        let score_larger = dets_larger
+            .iter()
+            .find(|d| d.entity_type == "IT_FISCAL_CODE")
+            .unwrap()
+            .score;
+
+        assert!(
+            (score_small - 0.90).abs() < f64::EPSILON,
+            "Boost 0.05 on base 0.85 should yield 0.90, got {score_small}"
+        );
+        assert!(
+            (score_larger - 0.95).abs() < f64::EPSILON,
+            "Boost 0.10 on base 0.85 should yield 0.95, got {score_larger}"
+        );
+    }
+
+    #[test]
+    fn test_context_boost_zero_disables_boost() {
+        let mut a = Anonymizer::new(0.0);
+        a.context_boost = 0.0;
+
+        let input_ctx = "codice fiscale: AAABBB00A00A000J";
+        let input_no_ctx = "data: AAABBB00A00A000J";
+        let (_, dets_ctx) = a.anonymize_text(input_ctx);
+        let (_, dets_no_ctx) = a.anonymize_text(input_no_ctx);
+
+        let score_ctx = dets_ctx
+            .iter()
+            .find(|d| d.entity_type == "IT_FISCAL_CODE")
+            .unwrap()
+            .score;
+        let score_no_ctx = dets_no_ctx
+            .iter()
+            .find(|d| d.entity_type == "IT_FISCAL_CODE")
+            .unwrap()
+            .score;
+
+        assert!(
+            (score_ctx - score_no_ctx).abs() < f64::EPSILON,
+            "With context_boost=0.0, scores should be equal: {score_ctx} vs {score_no_ctx}"
+        );
+    }
+
+    #[test]
+    fn test_min_score_with_context_filters_low_matches() {
+        // IT_FISCAL_CODE: base score 0.85, with boost 0.05 → 0.90
+        // Set min_score_with_context = 0.95 → should be filtered out
+        let mut a = Anonymizer::new(0.0);
+        a.context_boost = 0.05;
+        a.min_score_with_context = 0.95;
+
+        let input = "codice fiscale: AAABBB00A00A000J";
+        let (_, dets) = a.anonymize_text(input);
+
+        let found = dets.iter().any(|d| d.entity_type == "IT_FISCAL_CODE");
+        assert!(
+            !found,
+            "IT_FISCAL_CODE with boosted score 0.90 should be filtered by min_score_with_context=0.95"
+        );
+    }
+
+    #[test]
+    fn test_min_score_with_context_allows_high_matches() {
+        // IT_FISCAL_CODE: base score 0.85, with boost 0.10 → 0.95
+        // Set min_score_with_context = 0.95 → should pass (equal)
+        let mut a = Anonymizer::new(0.0);
+        a.context_boost = 0.10;
+        a.min_score_with_context = 0.95;
+
+        let input = "codice fiscale: AAABBB00A00A000J";
+        let (_, dets) = a.anonymize_text(input);
+
+        let found = dets.iter().any(|d| d.entity_type == "IT_FISCAL_CODE");
+        assert!(
+            found,
+            "IT_FISCAL_CODE with boosted score 0.95 should pass min_score_with_context=0.95"
+        );
+    }
+
+    #[test]
+    fn test_min_score_with_context_does_not_affect_non_boosted() {
+        // EMAIL_ADDRESS has no context keywords (score = 1.0, no boost involved)
+        // min_score_with_context should not affect it
+        let mut a = Anonymizer::new(0.0);
+        a.min_score_with_context = 0.99;
+
+        let input = "contact john@example.com please";
+        let (_, dets) = a.anonymize_text(input);
+
+        let found = dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS");
+        assert!(
+            found,
+            "EMAIL_ADDRESS should not be affected by min_score_with_context"
+        );
+    }
+
+    #[test]
+    fn test_default_context_boost_unchanged() {
+        // Verify default Anonymizer produces the same behavior as before
+        let a = Anonymizer::new(0.5);
+        assert!(
+            (a.context_boost - 0.15).abs() < f64::EPSILON,
+            "Default context_boost should be 0.15"
+        );
+        assert!(
+            a.min_score_with_context.abs() < f64::EPSILON,
+            "Default min_score_with_context should be 0.0 (disabled)"
+        );
+    }
+
+    #[test]
+    fn test_context_boost_json_path() {
+        // Verify context_boost works through anonymize_json_value (delegates to anonymize_text)
+        let mut a = Anonymizer::new(0.0);
+        a.context_boost = 0.05;
+
+        let json: serde_json::Value =
+            serde_json::from_str(r#"{"cf": "codice fiscale: AAABBB00A00A000J"}"#).unwrap();
+        let (_, dets) = a.anonymize_json_value(&json);
+
+        let score = dets
+            .iter()
+            .find(|d| d.entity_type == "IT_FISCAL_CODE")
+            .unwrap()
+            .score;
+        assert!(
+            (score - 0.90).abs() < f64::EPSILON,
+            "JSON path should use custom context_boost: expected 0.90, got {score}"
+        );
+    }
+
+    #[test]
+    fn test_context_boost_does_not_affect_gated_patterns() {
+        // context_required: true patterns use gating, not boosting.
+        // Changing context_boost should not affect their scores.
+        let mut a_default = Anonymizer::new(0.0);
+        let mut a_custom = Anonymizer::new(0.0);
+        a_custom.context_boost = 0.50;
+
+        // CREDIT_CARD is context_required: true — score is fixed at base, not boosted
+        let input = "credit card: 4532015112830366";
+        let (_, dets_default) = a_default.anonymize_text(input);
+        let (_, dets_custom) = a_custom.anonymize_text(input);
+
+        let score_default = dets_default
+            .iter()
+            .find(|d| d.entity_type == "CREDIT_CARD")
+            .unwrap()
+            .score;
+        let score_custom = dets_custom
+            .iter()
+            .find(|d| d.entity_type == "CREDIT_CARD")
+            .unwrap()
+            .score;
+
+        assert!(
+            (score_default - score_custom).abs() < f64::EPSILON,
+            "Gated patterns should not be affected by context_boost: {score_default} vs {score_custom}"
+        );
+    }
+
+    #[test]
+    fn test_context_boost_capped_at_one() {
+        // Even with a large boost, score should never exceed 1.0
+        let mut a = Anonymizer::new(0.0);
+        a.context_boost = 0.99;
+
+        let input = "codice fiscale: AAABBB00A00A000J";
+        let (_, dets) = a.anonymize_text(input);
+
+        let score = dets
+            .iter()
+            .find(|d| d.entity_type == "IT_FISCAL_CODE")
+            .unwrap()
+            .score;
+        assert!(
+            (score - 1.0).abs() < f64::EPSILON,
+            "Score should be capped at 1.0, got {score}"
+        );
     }
 }
