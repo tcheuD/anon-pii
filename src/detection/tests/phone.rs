@@ -342,3 +342,89 @@ fn test_phone_extension_six_digit_rejected() {
         "6-digit extension should not match: {dets:?}"
     );
 }
+
+// ── Ticket #40: phone coverage gaps ──
+
+#[test]
+fn test_intl_phone_plus1_hyphenated() {
+    let mut a = Anonymizer::new(0.0);
+    let (result, dets) = a.anonymize_text("phone: +1-202-555-0173");
+    assert!(
+        dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+        "+1-xxx-xxx-xxxx should be detected as PHONE_NUMBER: {dets:?}"
+    );
+    assert!(result.contains("[PHONE_NUMBER_"));
+}
+
+#[test]
+fn test_intl_phone_plus1_hyphenated_no_context_rejected() {
+    let mut a = Anonymizer::new(0.0);
+    let (_, dets) = a.anonymize_text("code +1-202-555-0173 end");
+    assert!(
+        !dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+        "+1 hyphenated without context should be rejected: {dets:?}"
+    );
+}
+
+#[test]
+fn test_us_phone_parenthesized() {
+    let mut a = Anonymizer::new(0.0);
+    let (result, dets) = a.anonymize_text("phone: (202) 555-0173");
+    assert!(
+        dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+        "(xxx) xxx-xxxx should be detected as PHONE_NUMBER: {dets:?}"
+    );
+    assert!(result.contains("[PHONE_NUMBER_"));
+}
+
+#[test]
+fn test_us_phone_parenthesized_dot_separated() {
+    let mut a = Anonymizer::new(0.0);
+    let (result, dets) = a.anonymize_text("call (415) 555.1234");
+    assert!(
+        dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+        "(xxx) xxx.xxxx should be detected as PHONE_NUMBER: {dets:?}"
+    );
+    assert!(result.contains("[PHONE_NUMBER_"));
+}
+
+#[test]
+fn test_us_phone_parenthesized_no_context_rejected() {
+    let mut a = Anonymizer::new(0.0);
+    let (_, dets) = a.anonymize_text("value (202) 555-0173 here");
+    assert!(
+        !dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+        "parenthesized phone without context should be rejected: {dets:?}"
+    );
+}
+
+#[test]
+fn test_uk_local_phone() {
+    let mut a = Anonymizer::new(0.0);
+    let (result, dets) = a.anonymize_text("call 020 7946 0958");
+    assert!(
+        dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+        "UK local 0xx xxxx xxxx should be detected as PHONE_NUMBER: {dets:?}"
+    );
+    assert!(result.contains("[PHONE_NUMBER_"));
+}
+
+#[test]
+fn test_uk_local_phone_no_context_rejected() {
+    let mut a = Anonymizer::new(0.0);
+    let (_, dets) = a.anonymize_text("ref 020 7946 0958 end");
+    assert!(
+        !dets.iter().any(|d| d.entity_type == "PHONE_NUMBER"),
+        "UK local phone without context should be rejected: {dets:?}"
+    );
+}
+
+#[test]
+fn test_uk_phone_not_confused_with_fr_phone() {
+    let mut a = Anonymizer::new(0.0);
+    let (_, dets) = a.anonymize_text("call 020 7946 0958");
+    assert!(
+        !dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
+        "UK local phone should not match FR_PHONE_NUMBER: {dets:?}"
+    );
+}
