@@ -33,7 +33,7 @@ tokenizers = { version = "=0.22.2", optional = true, default-features = false, f
 ndarray = { version = "0.17", optional = true }
 ureq = { version = "3", optional = true }
 sha2 = "0.10"
-md5 = "0.7"
+md5 = "0.8"
 aes = "0.8.4"
 cbc = { version = "0.1.2", features = ["alloc"] }
 
