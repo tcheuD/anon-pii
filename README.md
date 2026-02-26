@@ -133,6 +133,7 @@ sequenceDiagram
 
 ### Anonymize (default)
 
+<!-- BEGIN CLI_ANONYMIZE -->
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `--input` | `-i` | stdin | Input file |
@@ -156,9 +157,11 @@ sequenceDiagram
 | `--share` | | | Output a share-ready Markdown snippet |
 | `--copy` | | | Copy output to clipboard (requires `--share`) |
 | `--ner` | | | Enable NER-based PERSON detection (requires `ner` or `ner-lite` feature) |
+<!-- END CLI_ANONYMIZE -->
 
 ### Restore
 
+<!-- BEGIN CLI_RESTORE -->
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `INPUT` | | | Positional input file |
@@ -166,9 +169,11 @@ sequenceDiagram
 | `--mapping` | `-m` | `~/.anon/mapping.json` | Mapping file for restoration |
 | `--output` | `-o` | | Output file (stdout if omitted) |
 | `--decrypt-key` | | | AES decryption key, hex-encoded (decrypts `ENC[...]` tokens) |
+<!-- END CLI_RESTORE -->
 
 ### Commands
 
+<!-- BEGIN COMMANDS -->
 ```bash
 anon list-entities        # List all supported entity types
 anon update-names <CSV>   # Import custom name lists from CSV for heuristic NER
@@ -178,12 +183,15 @@ anon ui                   # Interactive web UI on :9200 (requires `proxy` featur
 anon proxy                # Anonymizing reverse proxy on :9100 (requires `proxy` feature)
 anon image <path> -o <out>  # OCR-based image PII redaction (requires `image` feature)
 ```
+<!-- END COMMANDS -->
 
 ## Detected entities
 
+<!-- BEGIN ENTITIES -->
 63 entity types across 97 patterns covering 13 countries: emails, URLs, IPs, UUIDs, credit cards, IBANs, phones, dates, crypto addresses, MAC addresses, secrets/tokens, and person names (with `--ner`). Country-specific patterns include SSNs, passports, driver's licenses, tax IDs, and national IDs for US, UK, FR, ES, IT, IN, AU, KR, SG, PL, SI, FI, and TH — each with checksum validation where applicable. Detection works through URL-encoded and Unicode-escaped text.
 
 See [docs/entities.md](docs/entities.md) for the full reference with confidence scores and context keywords.
+<!-- END ENTITIES -->
 
 ## Documentation
 
@@ -233,11 +241,13 @@ cargo run --release --features ner --example benchmark
 
 Typical results (Apple Silicon):
 
+<!-- BEGIN BENCHMARK -->
 | Feature | Throughput | Simple avg | Complex avg | Penalty |
 |---------|-----------|-----------|-------------|---------|
 | none | 251k lines/s | 2.8 μs | 8.9 μs | 3.2x |
 | ner-lite | 184k lines/s | 3.9 μs | 11.4 μs | 2.9x |
 | ner | 247k lines/s | 2.8 μs | 8.9 μs | 3.1x |
+<!-- END BENCHMARK -->
 
 ## License
 
