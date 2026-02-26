@@ -208,6 +208,28 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 
 ## Development
 
+### Setup
+
+```bash
+# Install git hooks (auto-updates README on commit)
+./scripts/install-hooks.sh
+```
+
+### Updating README
+
+The README is auto-updated by a pre-commit hook when `.rs` or `.toml` files change. To manually trigger:
+
+```bash
+# Update README from current code
+cargo run --features ner-lite,proxy,image,pdf --example update_readme
+
+# Update benchmark numbers first, then README
+cargo run --release --example benchmark  # writes bench-results.json
+cargo run --features ner-lite,proxy,image,pdf --example update_readme
+```
+
+### Tests
+
 ```bash
 # Run tests (default — regex-only, no NER)
 cargo test
