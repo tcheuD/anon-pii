@@ -3,8 +3,6 @@
 //! Parses marker sections (`<!-- BEGIN X -->...<!-- END X -->`) and replaces
 //! them with dynamically generated content from the codebase.
 
-// Functions will be wired in main() in Task 9
-#![allow(dead_code)]
 
 use std::collections::HashSet;
 use std::fs;
@@ -262,14 +260,49 @@ fn generate_benchmark_section() -> Option<String> {
 }
 
 fn main() {
-    // Placeholder for now — will be wired in Task 9
     let readme_path = "README.md";
-    let readme = fs::read_to_string(readme_path).unwrap_or_else(|e| {
+    let original = fs::read_to_string(readme_path).unwrap_or_else(|e| {
         eprintln!("Failed to read {}: {}", readme_path, e);
         process::exit(2);
     });
-    let _ = readme;
-    println!("update_readme: ready (entities + marker parser)");
+
+    let mut readme = original.clone();
+    let mut updated_sections = Vec::new();
+
+    // Apply each generator
+    let sections: Vec<(&str, Option<String>)> = vec![
+        ("ENTITIES", Some(generate_entities_section())),
+        ("COMMANDS", Some(generate_commands_section())),
+        ("CLI_ANONYMIZE", Some(generate_cli_anonymize_section())),
+        ("CLI_RESTORE", Some(generate_cli_restore_section())),
+        ("BENCHMARK", generate_benchmark_section()),
+    ];
+
+    for (name, content) in sections {
+        if let Some(content) = content {
+            if let Some(r) = replace_marker(&readme, name, &content) {
+                readme = r;
+                updated_sections.push(name);
+            }
+        }
+    }
+
+    if readme == original {
+        eprintln!("README.md is up to date.");
+        process::exit(0);
+    }
+
+    fs::write(readme_path, &readme).unwrap_or_else(|e| {
+        eprintln!("Failed to write {}: {}", readme_path, e);
+        process::exit(2);
+    });
+
+    eprintln!(
+        "README.md updated: {} section(s) refreshed ({}).",
+        updated_sections.len(),
+        updated_sections.join(", ")
+    );
+    process::exit(1);
 }
 
 #[cfg(test)]
