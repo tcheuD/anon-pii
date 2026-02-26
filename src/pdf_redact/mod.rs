@@ -64,6 +64,8 @@ impl fmt::Display for PdfError {
 
 impl std::error::Error for PdfError {}
 
+pub mod extract;
+
 #[cfg(test)]
 mod tests {
     use super::*;
