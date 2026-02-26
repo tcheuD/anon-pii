@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use regex::Regex;
 use serde_json::Value;
 
@@ -41,12 +43,12 @@ impl Anonymizer {
         let patterns = PATTERNS
             .iter()
             .map(|p| CompiledPatternInternal {
-                entity_type: p.entity_type,
-                name: p.name,
+                entity_type: Cow::Borrowed(p.entity_type),
+                name: Cow::Borrowed(p.name),
                 regex: Regex::new(p.pattern)
                     .unwrap_or_else(|e| panic!("invalid regex for pattern '{}': {}", p.name, e)),
                 score: p.score,
-                context_keywords: p.context_keywords,
+                context_keywords: Cow::Borrowed(p.context_keywords),
                 context_required: p.context_required,
             })
             .collect();

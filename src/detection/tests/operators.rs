@@ -53,7 +53,7 @@ fn test_operator_keep_still_detects() {
     a.operator = Operator::Keep;
     let (_, dets) = a.anonymize_text("email: john@example.com, ip: 192.168.1.1");
     assert_eq!(dets.len(), 2);
-    let types: Vec<&str> = dets.iter().map(|d| d.entity_type).collect();
+    let types: Vec<&str> = dets.iter().map(|d| d.entity_type.as_ref()).collect();
     assert!(types.contains(&"EMAIL_ADDRESS"));
     assert!(types.contains(&"IP_ADDRESS"));
 }

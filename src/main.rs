@@ -368,15 +368,13 @@ fn choose_markdown_fence(s: &str) -> String {
 
 fn summarize_detections(
     detections: &[Detection],
-) -> (usize, std::collections::BTreeMap<&'static str, usize>) {
-    let mut seen: std::collections::HashSet<(&'static str, String)> =
-        std::collections::HashSet::new();
-    let mut by_type: std::collections::BTreeMap<&'static str, usize> =
-        std::collections::BTreeMap::new();
+) -> (usize, std::collections::BTreeMap<String, usize>) {
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut by_type: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
 
     for d in detections {
-        if seen.insert((d.entity_type, d.original.clone())) {
-            *by_type.entry(d.entity_type).or_insert(0) += 1;
+        if seen.insert((d.entity_type.to_string(), d.original.clone())) {
+            *by_type.entry(d.entity_type.to_string()).or_insert(0) += 1;
         }
     }
 
@@ -558,7 +556,7 @@ fn print_detections(detections: &[Detection]) {
     let mut seen = std::collections::HashSet::new();
     let unique: Vec<&Detection> = detections
         .iter()
-        .filter(|d| seen.insert((&d.entity_type, &d.original)))
+        .filter(|d| seen.insert((d.entity_type.as_ref(), &d.original)))
         .collect();
 
     let type_width = unique
@@ -1269,7 +1267,7 @@ mod tests {
     fn test_render_share_markdown_includes_code_fence_and_summary() {
         let dets = vec![
             Detection {
-                entity_type: "EMAIL_ADDRESS",
+                entity_type: std::borrow::Cow::Borrowed("EMAIL_ADDRESS"),
                 original: "john@example.com".to_string(),
                 start: 0,
                 end: 1,
@@ -1277,14 +1275,14 @@ mod tests {
             },
             // duplicate (should be deduped in summary)
             Detection {
-                entity_type: "EMAIL_ADDRESS",
+                entity_type: std::borrow::Cow::Borrowed("EMAIL_ADDRESS"),
                 original: "john@example.com".to_string(),
                 start: 2,
                 end: 3,
                 score: 0.9,
             },
             Detection {
-                entity_type: "IP_ADDRESS",
+                entity_type: std::borrow::Cow::Borrowed("IP_ADDRESS"),
                 original: "127.0.0.1".to_string(),
                 start: 4,
                 end: 5,

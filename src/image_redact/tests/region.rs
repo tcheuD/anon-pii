@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::detection::Detection;
 use crate::image_redact::ocr::reconstruct_text;
 use crate::image_redact::region::map_detections;
@@ -16,7 +18,7 @@ fn word(text: &str, x: u32, y: u32, w: u32, h: u32) -> OcrWord {
 
 fn det(entity_type: &'static str, start: usize, end: usize, score: f64) -> Detection {
     Detection {
-        entity_type,
+        entity_type: Cow::Borrowed(entity_type),
         original: String::new(),
         start,
         end,

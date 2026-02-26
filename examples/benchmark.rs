@@ -205,11 +205,17 @@ fn main() {
     let (_, c_dets) = first_complex.anonymize_text(COMPLEX_LOG);
     println!(
         "  Simple log:  {:?}",
-        s_dets.iter().map(|d| d.entity_type).collect::<Vec<_>>()
+        s_dets
+            .iter()
+            .map(|d| d.entity_type.as_ref())
+            .collect::<Vec<_>>()
     );
     println!(
         "  Complex log: {:?}",
-        c_dets.iter().map(|d| d.entity_type).collect::<Vec<_>>()
+        c_dets
+            .iter()
+            .map(|d| d.entity_type.as_ref())
+            .collect::<Vec<_>>()
     );
     println!();
 

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
@@ -48,7 +50,7 @@ impl Anonymizer {
             for mat in pat.regex.find_iter(text) {
                 // Check context presence
                 let has_ctx = if !pat.context_keywords.is_empty() {
-                    self.has_context(text, mat.start(), mat.end(), pat.context_keywords)
+                    self.has_context(text, mat.start(), mat.end(), &pat.context_keywords)
                 } else {
                     false
                 };
@@ -183,7 +185,7 @@ impl Anonymizer {
                 }
 
                 detections.push(Detection {
-                    entity_type: pat.entity_type,
+                    entity_type: pat.entity_type.clone(),
                     original: mat.as_str().to_string(),
                     start: mat.start(),
                     end: mat.end(),
@@ -197,7 +199,7 @@ impl Anonymizer {
         // Detections are mapped back to original byte positions.
         if let Some((collapsed, pos_map)) = collapse_newlines(text) {
             for pat in &self.patterns {
-                if !MULTILINE_ENTITY_TYPES.contains(&pat.entity_type) {
+                if !MULTILINE_ENTITY_TYPES.contains(&pat.entity_type.as_ref()) {
                     continue;
                 }
                 let max_score = if !pat.context_keywords.is_empty() && !pat.context_required {
@@ -311,7 +313,7 @@ impl Anonymizer {
                     }
 
                     let has_ctx = if !pat.context_keywords.is_empty() {
-                        self.has_context(text, orig_start, orig_end, pat.context_keywords)
+                        self.has_context(text, orig_start, orig_end, &pat.context_keywords)
                     } else {
                         false
                     };
@@ -336,7 +338,7 @@ impl Anonymizer {
                     }
 
                     detections.push(Detection {
-                        entity_type: pat.entity_type,
+                        entity_type: pat.entity_type.clone(),
                         original: matched.to_string(),
                         start: orig_start,
                         end: orig_end,
@@ -360,7 +362,7 @@ impl Anonymizer {
                         }
                         let (ext_text, ext_end) = extend_person_span(text, &span.text, span.end);
                         detections.push(Detection {
-                            entity_type: "PERSON",
+                            entity_type: Cow::Borrowed("PERSON"),
                             original: ext_text,
                             start: span.start,
                             end: ext_end,
@@ -368,7 +370,7 @@ impl Anonymizer {
                         });
                     } else if is_location {
                         detections.push(Detection {
-                            entity_type: "LOCATION",
+                            entity_type: Cow::Borrowed("LOCATION"),
                             original: span.text.clone(),
                             start: span.start,
                             end: span.end,
@@ -401,7 +403,7 @@ impl Anonymizer {
                             .any(|d| d.start <= name_match.start() && d.end >= name_match.end());
                         if !already_covered {
                             detections.push(Detection {
-                                entity_type: "PERSON",
+                                entity_type: Cow::Borrowed("PERSON"),
                                 original: name.to_string(),
                                 start: name_match.start(),
                                 end: name_match.end(),
@@ -628,7 +630,7 @@ impl Anonymizer {
                                         continue;
                                     }
                                     url_inner_detections.push(Detection {
-                                        entity_type: pat.entity_type,
+                                        entity_type: pat.entity_type.clone(),
                                         original: mat.as_str().to_string(),
                                         start: det.start,
                                         end: det.start,
@@ -646,7 +648,7 @@ impl Anonymizer {
         let mut result = text.to_string();
         for det in filtered.iter().rev() {
             let replacement = match self.operator {
-                Operator::Token => self.mapping.add(det.entity_type, &det.original),
+                Operator::Token => self.mapping.add(&det.entity_type, &det.original),
                 Operator::Redact => String::new(),
                 Operator::Keep => continue,
                 Operator::Mask => apply_mask(&det.original, &self.mask_config),
@@ -656,7 +658,7 @@ impl Anonymizer {
                     self.encrypt_key.as_ref().expect("encrypt_key required"),
                 ),
                 Operator::Custom => apply_custom_replacement(
-                    det.entity_type,
+                    &det.entity_type,
                     self.replace_with.as_deref().expect("replace_with required"),
                 ),
             };

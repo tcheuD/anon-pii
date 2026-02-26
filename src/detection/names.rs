@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::normalize::strip_diacritics;
 use super::types::Detection;
 use super::Anonymizer;
@@ -136,7 +138,7 @@ impl Anonymizer {
                     .any(|d| d.start <= abs_pos && d.end >= abs_end);
                 if !already_covered {
                     detections.push(Detection {
-                        entity_type: "PERSON",
+                        entity_type: Cow::Borrowed("PERSON"),
                         original: search.to_string(),
                         start: abs_pos,
                         end: abs_end,
@@ -186,7 +188,7 @@ impl Anonymizer {
                     if !already_covered {
                         let matched_text = &original_text[abs_pos..abs_end];
                         detections.push(Detection {
-                            entity_type: "PERSON",
+                            entity_type: Cow::Borrowed("PERSON"),
                             original: matched_text.to_string(),
                             start: abs_pos,
                             end: abs_end,

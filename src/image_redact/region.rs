@@ -47,7 +47,7 @@ pub fn map_detections(
                 y: min_y.saturating_sub(padding),
                 width: (max_x - min_x).saturating_add(padding.saturating_mul(2)),
                 height: (max_y - min_y).saturating_add(padding.saturating_mul(2)),
-                entity_type: det.entity_type,
+                entity_type: det.entity_type.to_string(),
             })
         })
         .collect()

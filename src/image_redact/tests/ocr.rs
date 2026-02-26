@@ -592,6 +592,8 @@ fn hybrid_reconstruct_unicode() {
 fn hybrid_reconstruct_map_detections_compatible() {
     // Verify that the ReconstructedText from hybrid_reconstruct works with
     // map_detections — spans[i] must index into words[i]
+    use std::borrow::Cow;
+
     use crate::detection::Detection;
     use crate::image_redact::region::map_detections;
 
@@ -603,7 +605,7 @@ fn hybrid_reconstruct_map_detections_compatible() {
     let result = hybrid_reconstruct(full_text, &words);
 
     let detections = vec![Detection {
-        entity_type: "EMAIL_ADDRESS",
+        entity_type: Cow::Borrowed("EMAIL_ADDRESS"),
         original: "test@example.com".to_string(),
         start: result.spans[0].0,
         end: result.spans[0].1,

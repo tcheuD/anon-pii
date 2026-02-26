@@ -81,7 +81,7 @@ mod tests {
 
     fn det(entity_type: &'static str, start: usize, end: usize, score: f64) -> Detection {
         Detection {
-            entity_type,
+            entity_type: std::borrow::Cow::Borrowed(entity_type),
             original: String::new(),
             start,
             end,

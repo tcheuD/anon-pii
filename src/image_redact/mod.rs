@@ -16,7 +16,7 @@ pub struct RedactionRegion {
     pub y: u32,
     pub width: u32,
     pub height: u32,
-    pub entity_type: &'static str,
+    pub entity_type: String,
 }
 
 /// Configuration for image anonymization.
