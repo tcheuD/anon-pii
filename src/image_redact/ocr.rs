@@ -188,3 +188,116 @@ pub fn reconstruct_text(words: &[OcrWord]) -> ReconstructedText {
 
     ReconstructedText { text, spans }
 }
+
+/// Align full-page OCR text with word-level bounding boxes.
+///
+/// Uses the clean full-page text (better quality) while mapping byte-offset
+/// spans to the word boxes (for pixel-domain redaction). Words are sorted
+/// into reading order, then greedily matched to whitespace-delimited tokens
+/// in `full_text`.
+pub fn hybrid_reconstruct(full_text: &str, words: &[OcrWord]) -> ReconstructedText {
+    if words.is_empty() {
+        return ReconstructedText {
+            text: full_text.to_string(),
+            spans: Vec::new(),
+        };
+    }
+
+    // 1. Sort words into reading order (same y-grouping + x-sort as reconstruct_text)
+    let mut indexed: Vec<(usize, &OcrWord)> = words.iter().enumerate().collect();
+    indexed.sort_by(|a, b| a.1.y.cmp(&b.1.y).then(a.1.x.cmp(&b.1.x)));
+
+    // Group into lines by y-tolerance
+    let mut reading_order: Vec<(usize, &OcrWord)> = Vec::with_capacity(words.len());
+    let mut lines: Vec<Vec<(usize, &OcrWord)>> = Vec::new();
+    let mut current_line: Vec<(usize, &OcrWord)> = vec![indexed[0]];
+
+    for &(idx, word) in &indexed[1..] {
+        let last = current_line.last().unwrap().1;
+        let tolerance = (last.height.min(word.height) / 2).max(1);
+        let y_diff = (word.y as i64 - last.y as i64).unsigned_abs() as u32;
+        if y_diff <= tolerance {
+            current_line.push((idx, word));
+        } else {
+            lines.push(std::mem::take(&mut current_line));
+            current_line.push((idx, word));
+        }
+    }
+    lines.push(current_line);
+
+    for line in &mut lines {
+        line.sort_by_key(|(_, w)| w.x);
+    }
+    for line in &lines {
+        reading_order.extend(line);
+    }
+
+    // 2. Collect whitespace-delimited tokens from full_text with byte positions
+    let tokens: Vec<(usize, usize)> = TokenIter::new(full_text).collect();
+
+    // 3. Greedy alignment: reading-order word N → token N
+    // Stores (original_index, start_byte, end_byte)
+    let mut span_entries: Vec<(usize, usize, usize)> = Vec::with_capacity(words.len());
+
+    for (rank, &(orig_idx, _)) in reading_order.iter().enumerate() {
+        if rank < tokens.len() {
+            let (start, end) = tokens[rank];
+            span_entries.push((orig_idx, start, end));
+        } else {
+            // More word boxes than tokens — fallback to (0, 0) sentinel
+            span_entries.push((orig_idx, 0, 0));
+        }
+    }
+
+    // 4. Sort back to original word order
+    span_entries.sort_by_key(|(orig_idx, _, _)| *orig_idx);
+    let spans = span_entries.into_iter().map(|(_, s, e)| (s, e)).collect();
+
+    ReconstructedText {
+        text: full_text.to_string(),
+        spans,
+    }
+}
+
+/// Iterator over whitespace-delimited tokens, yielding `(start_byte, end_byte)`.
+struct TokenIter<'a> {
+    text: &'a str,
+    pos: usize,
+}
+
+impl<'a> TokenIter<'a> {
+    fn new(text: &'a str) -> Self {
+        Self { text, pos: 0 }
+    }
+}
+
+impl<'a> Iterator for TokenIter<'a> {
+    type Item = (usize, usize);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let bytes = self.text.as_bytes();
+        // Skip whitespace
+        while self.pos < bytes.len()
+            && (bytes[self.pos] == b' '
+                || bytes[self.pos] == b'\n'
+                || bytes[self.pos] == b'\r'
+                || bytes[self.pos] == b'\t')
+        {
+            self.pos += 1;
+        }
+        if self.pos >= bytes.len() {
+            return None;
+        }
+        let start = self.pos;
+        // Consume non-whitespace
+        while self.pos < bytes.len()
+            && bytes[self.pos] != b' '
+            && bytes[self.pos] != b'\n'
+            && bytes[self.pos] != b'\r'
+            && bytes[self.pos] != b'\t'
+        {
+            self.pos += 1;
+        }
+        Some((start, self.pos))
+    }
+}

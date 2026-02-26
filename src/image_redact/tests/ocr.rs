@@ -1,5 +1,7 @@
 use super::*;
-use crate::image_redact::ocr::{extract_text, extract_words, reconstruct_text, OcrError};
+use crate::image_redact::ocr::{
+    extract_text, extract_words, hybrid_reconstruct, reconstruct_text, OcrError,
+};
 use std::path::Path;
 
 fn tesseract_available() -> bool {
@@ -466,4 +468,165 @@ fn extract_words_multiline() {
         "multiline image should have at least 2 distinct y values, got {:?}",
         distinct_y_values
     );
+}
+
+// ── hybrid_reconstruct unit tests ───────────────────────────────────
+
+fn make_word(text: &str, x: u32, y: u32, width: u32, height: u32) -> OcrWord {
+    OcrWord {
+        text: text.into(),
+        x,
+        y,
+        width,
+        height,
+        confidence: 0.9,
+    }
+}
+
+#[test]
+fn hybrid_reconstruct_basic() {
+    let words = vec![
+        make_word("hello", 10, 10, 50, 20),
+        make_word("world", 100, 10, 50, 20),
+    ];
+    let full_text = "hello world";
+    let result = hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, "hello world");
+    assert_eq!(result.spans.len(), 2);
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "hello");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "world");
+}
+
+#[test]
+fn hybrid_reconstruct_multiline() {
+    let words = vec![
+        make_word("top", 10, 10, 30, 20),
+        make_word("left", 10, 100, 40, 20),
+        make_word("right", 100, 100, 50, 20),
+    ];
+    let full_text = "top\nleft right";
+    let result = hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, full_text);
+    assert_eq!(result.spans.len(), 3);
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "top");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "left");
+    assert_eq!(&result.text[result.spans[2].0..result.spans[2].1], "right");
+}
+
+#[test]
+fn hybrid_reconstruct_preserves_original_word_order() {
+    // words given out of reading order (word[0]="world" is rightmost)
+    let words = vec![
+        make_word("world", 100, 10, 50, 20),
+        make_word("hello", 10, 10, 50, 20),
+    ];
+    let full_text = "hello world";
+    let result = hybrid_reconstruct(full_text, &words);
+    // spans[0] corresponds to words[0] ("world"), spans[1] to words[1] ("hello")
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "world");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "hello");
+}
+
+#[test]
+fn hybrid_reconstruct_empty_words() {
+    let result = hybrid_reconstruct("some text", &[]);
+    assert_eq!(result.text, "some text");
+    assert!(result.spans.is_empty());
+}
+
+#[test]
+fn hybrid_reconstruct_empty_text() {
+    let result = hybrid_reconstruct("", &[]);
+    assert!(result.text.is_empty());
+    assert!(result.spans.is_empty());
+}
+
+#[test]
+fn hybrid_reconstruct_more_words_than_tokens() {
+    // 3 word boxes but only 2 tokens in full text — extra words get (0,0) fallback
+    let words = vec![
+        make_word("hello", 10, 10, 50, 20),
+        make_word("beautiful", 70, 10, 90, 20),
+        make_word("world", 200, 10, 50, 20),
+    ];
+    let full_text = "hello world";
+    let result = hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, "hello world");
+    // Must produce exactly 3 spans (one per word box)
+    assert_eq!(result.spans.len(), 3);
+    // Greedy positional: word[0]→token[0] "hello", word[1]→token[1] "world",
+    // word[2]→fallback (0,0) since there are only 2 tokens
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "hello");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "world");
+    assert_eq!(result.spans[2], (0, 0));
+}
+
+#[test]
+fn hybrid_reconstruct_fewer_words_than_tokens() {
+    // 2 word boxes but 3 tokens in full text — unmatched tokens are ignored
+    let words = vec![
+        make_word("hello", 10, 10, 50, 20),
+        make_word("world", 100, 10, 50, 20),
+    ];
+    let full_text = "hello beautiful world";
+    let result = hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, "hello beautiful world");
+    assert_eq!(result.spans.len(), 2);
+}
+
+#[test]
+fn hybrid_reconstruct_unicode() {
+    let words = vec![
+        make_word("café", 10, 10, 40, 20),
+        make_word("résumé", 100, 10, 60, 20),
+    ];
+    let full_text = "café résumé";
+    let result = hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, "café résumé");
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "café");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "résumé");
+}
+
+#[test]
+fn hybrid_reconstruct_map_detections_compatible() {
+    // Verify that the ReconstructedText from hybrid_reconstruct works with
+    // map_detections — spans[i] must index into words[i]
+    use crate::detection::Detection;
+    use crate::image_redact::region::map_detections;
+
+    let words = vec![
+        make_word("test@example.com", 10, 10, 200, 20),
+        make_word("other", 10, 50, 50, 20),
+    ];
+    let full_text = "test@example.com\nother";
+    let result = hybrid_reconstruct(full_text, &words);
+
+    let detections = vec![Detection {
+        entity_type: "EMAIL_ADDRESS",
+        original: "test@example.com".to_string(),
+        start: result.spans[0].0,
+        end: result.spans[0].1,
+        score: 0.95,
+    }];
+
+    let regions = map_detections(&words, &result, &detections, 0);
+    assert_eq!(regions.len(), 1);
+    // Region should match the bounding box of words[0]
+    assert_eq!(regions[0].x, 10);
+    assert_eq!(regions[0].y, 10);
+    assert_eq!(regions[0].entity_type, "EMAIL_ADDRESS");
+}
+
+#[test]
+fn hybrid_reconstruct_different_whitespace() {
+    // full-page text uses newline where words would be on same line
+    let words = vec![
+        make_word("line1", 10, 10, 50, 20),
+        make_word("line2", 10, 50, 50, 20),
+    ];
+    let full_text = "line1\nline2";
+    let result = hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, full_text);
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "line1");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "line2");
 }
