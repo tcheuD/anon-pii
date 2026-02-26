@@ -58,7 +58,7 @@ pub fn map_detections(
                 y: (min_y - padding).max(0.0),
                 width: (max_x - min_x) + padding * 2.0,
                 height: (max_y - min_y) + padding * 2.0,
-                entity_type: det.entity_type,
+                entity_type: det.entity_type.to_string(),
             })
         })
         .collect()

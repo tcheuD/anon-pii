@@ -25,7 +25,7 @@ pub struct RedactionRegion {
     pub y: f64,
     pub width: f64,
     pub height: f64,
-    pub entity_type: &'static str,
+    pub entity_type: String,
 }
 
 #[derive(Debug, Clone)]
@@ -113,7 +113,7 @@ mod tests {
             y: 600.0,
             width: 120.0,
             height: 14.0,
-            entity_type: "EMAIL_ADDRESS",
+            entity_type: "EMAIL_ADDRESS".to_string(),
         };
         assert_eq!(region.page, 2);
         assert!((region.x - 50.0).abs() < f64::EPSILON);
