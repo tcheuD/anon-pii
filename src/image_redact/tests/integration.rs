@@ -166,3 +166,105 @@ fn e2e_threshold_filtering() {
         high_detections.len()
     );
 }
+
+#[test]
+#[ignore]
+fn e2e_hybrid_email_ip_creditcard() {
+    if !tesseract_available() {
+        eprintln!("Tesseract not available, skipping");
+        return;
+    }
+
+    let path = Path::new("testdata/images/pii_mixed.png");
+    let words = ocr::extract_words(path, "eng").expect("OCR should succeed on pii_mixed.png");
+    assert!(!words.is_empty(), "should detect words in pii_mixed image");
+
+    let full_text = ocr::extract_text(path, "eng");
+    let reconstructed = ocr::try_hybrid_reconstruct(full_text, &words);
+
+    // Quality assertion: full-page text must contain exact PII strings
+    assert!(
+        reconstructed.text.contains("john.doe@acme-corp.com"),
+        "OCR text should contain exact email, got: {:?}",
+        reconstructed.text
+    );
+    assert!(
+        reconstructed.text.contains("192.168.1.42"),
+        "OCR text should contain exact IP address, got: {:?}",
+        reconstructed.text
+    );
+    assert!(
+        reconstructed.text.contains("4111 1111 1111 1111"),
+        "OCR text should contain exact credit card, got: {:?}",
+        reconstructed.text
+    );
+
+    let mut anonymizer = Anonymizer::new(0.5);
+    let detections = anonymizer.analyze(&reconstructed.text);
+
+    let entity_types: Vec<&str> = detections.iter().map(|d| d.entity_type).collect();
+    assert!(
+        entity_types.iter().any(|t| t.contains("EMAIL")),
+        "should detect EMAIL_ADDRESS, got: {entity_types:?}"
+    );
+    assert!(
+        entity_types.iter().any(|t| t.contains("IP")),
+        "should detect IP_ADDRESS, got: {entity_types:?}"
+    );
+    assert!(
+        entity_types.iter().any(|t| t.contains("CREDIT_CARD")),
+        "should detect CREDIT_CARD, got: {entity_types:?}"
+    );
+
+    // Full pipeline: regions should be produced for all detections
+    let regions = region::map_detections(&words, &reconstructed, &detections, 2);
+    assert!(
+        regions.len() >= 3,
+        "should produce at least 3 redaction regions, got {}",
+        regions.len()
+    );
+}
+
+#[test]
+#[ignore]
+fn e2e_hybrid_vs_wordlevel() {
+    if !tesseract_available() {
+        eprintln!("Tesseract not available, skipping");
+        return;
+    }
+
+    let path = Path::new("testdata/images/pii_mixed.png");
+    let words = ocr::extract_words(path, "eng").expect("OCR should succeed on pii_mixed.png");
+
+    // Word-level only path (old approach)
+    let wordlevel = ocr::reconstruct_text(&words);
+    let mut anon_wl = Anonymizer::new(0.5);
+    let wordlevel_detections = anon_wl.analyze(&wordlevel.text);
+
+    // Hybrid path (new approach using full-page text)
+    let full_text = ocr::extract_text(path, "eng").expect("extract_text should succeed");
+    let hybrid = ocr::hybrid_reconstruct(&full_text, &words);
+    let mut anon_hy = Anonymizer::new(0.5);
+    let hybrid_detections = anon_hy.analyze(&hybrid.text);
+
+    assert!(
+        hybrid_detections.len() >= wordlevel_detections.len(),
+        "hybrid ({}) should find >= entities than word-level ({})\n\
+         hybrid text: {:?}\n\
+         word-level text: {:?}\n\
+         hybrid entities: {:?}\n\
+         word-level entities: {:?}",
+        hybrid_detections.len(),
+        wordlevel_detections.len(),
+        hybrid.text,
+        wordlevel.text,
+        hybrid_detections
+            .iter()
+            .map(|d| (d.entity_type, &d.original))
+            .collect::<Vec<_>>(),
+        wordlevel_detections
+            .iter()
+            .map(|d| (d.entity_type, &d.original))
+            .collect::<Vec<_>>()
+    );
+}
