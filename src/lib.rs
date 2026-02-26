@@ -7,6 +7,8 @@ pub mod image_redact;
 pub mod mapping;
 pub mod ner;
 pub mod patterns;
+#[cfg(feature = "pdf")]
+pub mod pdf_redact;
 #[cfg(feature = "proxy")]
 pub mod proxy;
 #[cfg(feature = "proxy")]
