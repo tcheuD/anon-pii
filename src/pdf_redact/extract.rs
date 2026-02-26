@@ -14,20 +14,20 @@ pub struct ReconstructedPdfText {
 }
 
 pub fn extract_words(path: &Path) -> Result<Vec<PdfWord>, PdfError> {
-    if path.is_symlink() {
+    let meta = fs::symlink_metadata(path).map_err(|e| PdfError::Io(e.to_string()))?;
+    if meta.file_type().is_symlink() {
         return Err(PdfError::Io("refusing to follow symlink".to_string()));
     }
-
-    let metadata = fs::metadata(path).map_err(|e| PdfError::Io(e.to_string()))?;
-    if metadata.len() > MAX_INPUT_SIZE {
+    if meta.len() > MAX_INPUT_SIZE {
         return Err(PdfError::Io(format!(
             "file too large: {} bytes (max {} bytes)",
-            metadata.len(),
+            meta.len(),
             MAX_INPUT_SIZE
         )));
     }
 
-    let doc = Document::load(path).map_err(|e| PdfError::Parse(e.to_string()))?;
+    let bytes = fs::read(path).map_err(|e| PdfError::Io(e.to_string()))?;
+    let doc = Document::load_mem(&bytes).map_err(|e| PdfError::Parse(e.to_string()))?;
 
     let pages: BTreeMap<u32, (u32, u16)> = doc.get_pages();
     let mut words = Vec::new();
