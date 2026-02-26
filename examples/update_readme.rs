@@ -459,13 +459,13 @@ mod tests {
     #[test]
     fn test_generate_benchmark_section_with_cache() {
         let cache = r#"{"features":{"regex-only":{"lines_per_sec":251000,"simple_avg_us":"2.8","complex_avg_us":"8.9","penalty":"3.2"}}}"#;
-        let tmp = "bench-results-test.json";
-        fs::write(tmp, cache).unwrap();
-        let section = generate_benchmark_section_from(tmp).unwrap();
+        let tmp = std::env::temp_dir().join("bench-results-test.json");
+        fs::write(&tmp, cache).unwrap();
+        let section = generate_benchmark_section_from(tmp.to_str().unwrap()).unwrap();
         assert!(section.contains("| Feature |"));
         assert!(section.contains("regex-only"));
         assert!(section.contains("251k"));
-        fs::remove_file(tmp).ok();
+        fs::remove_file(&tmp).expect("cleanup failed");
     }
 
     #[test]

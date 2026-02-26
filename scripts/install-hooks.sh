@@ -9,13 +9,14 @@ cat > "$HOOK_DIR/pre-commit" << 'HOOK'
 #!/bin/sh
 # Auto-update README.md when Rust source changes
 if git diff --cached --name-only | grep -qE '\.(rs|toml)$'; then
-    cargo run --example update_readme --features ner-lite,proxy,image,pdf 2>/dev/null
+    OUTPUT=$(cargo run --example update_readme --features ner-lite,proxy,image,pdf 2>&1)
     EXIT_CODE=$?
     if [ "$EXIT_CODE" -eq 1 ]; then
         git add README.md
         echo "README.md auto-updated and staged."
     elif [ "$EXIT_CODE" -ne 0 ]; then
-        echo "warning: update_readme failed (exit $EXIT_CODE), skipping README update."
+        echo "warning: update_readme failed (exit $EXIT_CODE):"
+        echo "$OUTPUT"
     fi
 fi
 HOOK
