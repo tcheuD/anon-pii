@@ -1,5 +1,5 @@
 use super::*;
-use crate::image_redact::ocr::{extract_words, reconstruct_text, OcrError};
+use crate::image_redact::ocr::{extract_text, extract_words, reconstruct_text, OcrError};
 use std::path::Path;
 
 fn tesseract_available() -> bool {
@@ -340,6 +340,113 @@ fn extract_words_invalid_path() {
     assert!(
         matches!(result.unwrap_err(), OcrError::ImageLoad(_)),
         "expected OcrError::ImageLoad for missing file"
+    );
+}
+
+// ── extract_text unit tests ─────────────────────────────────────────
+
+#[test]
+fn extract_text_rejects_invalid_lang() {
+    let result = extract_text(Path::new("testdata/images/blank.png"), "../etc");
+    assert!(matches!(result, Err(OcrError::Init(_))));
+}
+
+#[test]
+fn extract_text_rejects_empty_lang() {
+    let result = extract_text(Path::new("testdata/images/blank.png"), "");
+    assert!(matches!(result, Err(OcrError::Init(_))));
+}
+
+#[test]
+fn extract_text_accepts_underscore_lang() {
+    let result = extract_text(Path::new("testdata/images/blank.png"), "chi_sim");
+    match result {
+        Err(OcrError::Init(msg)) => assert!(
+            !msg.contains("invalid language code"),
+            "underscore lang should pass validation"
+        ),
+        _ => {}
+    }
+}
+
+#[test]
+fn extract_text_rejects_symlink() {
+    let dir = std::env::temp_dir().join("anon-test-ocr-text-symlink");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("real.png");
+    std::fs::copy("testdata/images/blank.png", &target).unwrap();
+    let link = dir.join("link.png");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    #[cfg(unix)]
+    {
+        let result = extract_text(&link, "eng");
+        assert!(matches!(result, Err(OcrError::ImageLoad(_))));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── extract_text integration tests (require Tesseract, #[ignore]) ───
+
+#[test]
+#[ignore]
+fn extract_text_blank_image() {
+    if !tesseract_available() {
+        eprintln!("Tesseract not available, skipping");
+        return;
+    }
+    let text = extract_text(Path::new("testdata/images/blank.png"), "eng")
+        .expect("should succeed on blank image");
+    assert!(text.is_empty(), "blank image should yield empty text");
+}
+
+#[test]
+#[ignore]
+fn extract_text_invalid_path() {
+    if !tesseract_available() {
+        eprintln!("Tesseract not available, skipping");
+        return;
+    }
+    let result = extract_text(Path::new("nonexistent.png"), "eng");
+    assert!(
+        matches!(result, Err(OcrError::ImageLoad(_))),
+        "expected OcrError::ImageLoad for missing file"
+    );
+}
+
+#[test]
+#[ignore]
+fn extract_text_vs_word_concatenation() {
+    if !tesseract_available() {
+        eprintln!("Tesseract not available, skipping");
+        return;
+    }
+    let path = Path::new("testdata/images/clean_text.png");
+    let full_text = extract_text(path, "eng").expect("extract_text should succeed");
+    let words = extract_words(path, "eng").expect("extract_words should succeed");
+
+    let full_words: Vec<&str> = full_text.split_whitespace().collect();
+    let word_texts: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
+
+    // Both methods should find the same number of words
+    assert_eq!(
+        full_words.len(),
+        word_texts.len(),
+        "word count mismatch: extract_text={full_words:?}, extract_words={word_texts:?}"
+    );
+
+    // Most words should match (Tesseract may produce minor differences between
+    // full-page and word-level segmentation modes)
+    let matching = full_words
+        .iter()
+        .zip(&word_texts)
+        .filter(|(a, b)| a == b)
+        .count();
+    let ratio = matching as f64 / full_words.len().max(1) as f64;
+    assert!(
+        ratio >= 0.5,
+        "less than 50% word match: extract_text={full_words:?}, extract_words={word_texts:?}"
     );
 }
 

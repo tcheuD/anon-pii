@@ -49,9 +49,9 @@ pub fn extract_words(path: &Path, lang: &str) -> Result<Vec<OcrWord>, OcrError> 
 
     // Canonicalize the path so Leptonica can open it even when parent directories
     // are symlinks (e.g. macOS /tmp → /private/tmp).
-    let canonical = path.canonicalize().map_err(|e| {
-        OcrError::ImageLoad(format!("cannot resolve path {}: {e}", path.display()))
-    })?;
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| OcrError::ImageLoad(format!("cannot resolve path {}: {e}", path.display())))?;
 
     let mut lt = LepTess::new(None, lang).map_err(|e| OcrError::Init(e.to_string()))?;
     lt.set_image(&canonical)
@@ -91,6 +91,35 @@ pub fn extract_words(path: &Path, lang: &str) -> Result<Vec<OcrWord>, OcrError> 
     }
 
     Ok(words)
+}
+
+/// Extract full-page text from an image using Tesseract OCR.
+///
+/// Unlike `extract_words`, this returns a single string without bounding boxes,
+/// equivalent to running `tesseract <image> stdout`.
+pub fn extract_text(path: &Path, lang: &str) -> Result<String, OcrError> {
+    if lang.is_empty() || !lang.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return Err(OcrError::Init(format!("invalid language code: {lang}")));
+    }
+    if path.is_symlink() {
+        return Err(OcrError::ImageLoad(
+            "refusing to follow symlink".to_string(),
+        ));
+    }
+
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| OcrError::ImageLoad(format!("cannot resolve path {}: {e}", path.display())))?;
+
+    let mut lt = LepTess::new(None, lang).map_err(|e| OcrError::Init(e.to_string()))?;
+    lt.set_image(&canonical)
+        .map_err(|e| OcrError::ImageLoad(e.to_string()))?;
+
+    let text = lt
+        .get_utf8_text()
+        .map_err(|e| OcrError::Extraction(e.to_string()))?;
+
+    Ok(text.trim_end().to_string())
 }
 
 /// Reconstruct reading-order text from OCR words, tracking byte offsets.
