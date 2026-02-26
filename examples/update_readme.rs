@@ -3,7 +3,6 @@
 //! Parses marker sections (`<!-- BEGIN X -->...<!-- END X -->`) and replaces
 //! them with dynamically generated content from the codebase.
 
-
 use std::collections::HashSet;
 use std::fs;
 use std::process;
