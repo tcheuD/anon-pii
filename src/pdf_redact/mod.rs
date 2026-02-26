@@ -65,6 +65,8 @@ impl fmt::Display for PdfError {
 impl std::error::Error for PdfError {}
 
 pub mod extract;
+pub mod redact;
+pub mod region;
 
 #[cfg(test)]
 mod tests {
