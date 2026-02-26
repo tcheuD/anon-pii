@@ -259,6 +259,23 @@ pub fn hybrid_reconstruct(full_text: &str, words: &[OcrWord]) -> ReconstructedTe
     }
 }
 
+/// Try hybrid reconstruction using full-page text; fall back to word-only
+/// reconstruction if `full_text` is an error.
+pub fn try_hybrid_reconstruct(
+    full_text: Result<String, OcrError>,
+    words: &[OcrWord],
+) -> ReconstructedText {
+    match full_text {
+        Ok(text) => hybrid_reconstruct(&text, words),
+        Err(e) => {
+            eprintln!(
+                "Warning: full-page OCR failed ({e}), falling back to word-level reconstruction"
+            );
+            reconstruct_text(words)
+        }
+    }
+}
+
 /// Iterator over whitespace-delimited tokens, yielding `(start_byte, end_byte)`.
 struct TokenIter<'a> {
     text: &'a str,

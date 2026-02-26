@@ -21,7 +21,8 @@ fn e2e_email_image() {
         .expect("OCR should succeed");
     assert!(!words.is_empty(), "should detect words in email image");
 
-    let reconstructed = ocr::reconstruct_text(&words);
+    let full_text = ocr::extract_text(Path::new("testdata/images/email.png"), "eng");
+    let reconstructed = ocr::try_hybrid_reconstruct(full_text, &words);
     assert!(
         reconstructed.text.contains('@'),
         "reconstructed text should contain @ from email"
@@ -76,7 +77,8 @@ fn e2e_clean_text_no_pii() {
         .expect("OCR should succeed on clean text");
     assert!(!words.is_empty(), "should detect words in clean text image");
 
-    let reconstructed = ocr::reconstruct_text(&words);
+    let full_text = ocr::extract_text(Path::new("testdata/images/clean_text.png"), "eng");
+    let reconstructed = ocr::try_hybrid_reconstruct(full_text, &words);
 
     let mut anonymizer = Anonymizer::new(0.5);
     let detections = anonymizer.analyze(&reconstructed.text);
@@ -148,7 +150,8 @@ fn e2e_threshold_filtering() {
 
     let words = ocr::extract_words(Path::new("testdata/images/email.png"), "eng")
         .expect("OCR should succeed");
-    let reconstructed = ocr::reconstruct_text(&words);
+    let full_text = ocr::extract_text(Path::new("testdata/images/email.png"), "eng");
+    let reconstructed = ocr::try_hybrid_reconstruct(full_text, &words);
 
     let mut low = Anonymizer::new(0.0);
     let low_detections = low.analyze(&reconstructed.text);

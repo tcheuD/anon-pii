@@ -1,6 +1,7 @@
 use super::*;
 use crate::image_redact::ocr::{
-    extract_text, extract_words, hybrid_reconstruct, reconstruct_text, OcrError,
+    extract_text, extract_words, hybrid_reconstruct, reconstruct_text, try_hybrid_reconstruct,
+    OcrError,
 };
 use std::path::Path;
 
@@ -629,4 +630,51 @@ fn hybrid_reconstruct_different_whitespace() {
     assert_eq!(result.text, full_text);
     assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "line1");
     assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "line2");
+}
+
+// ── try_hybrid_reconstruct unit tests ──────────────────────────────
+
+#[test]
+fn try_hybrid_uses_full_text_when_available() {
+    let words = vec![
+        make_word("hello", 0, 0, 50, 20),
+        make_word("world", 60, 0, 50, 20),
+    ];
+    let full_text: Result<String, OcrError> = Ok("hello world".to_string());
+    let result = try_hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, "hello world");
+    assert_eq!(result.spans.len(), 2);
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "hello");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "world");
+}
+
+#[test]
+fn try_hybrid_falls_back_on_error() {
+    let words = vec![
+        make_word("hello", 0, 0, 50, 20),
+        make_word("world", 60, 0, 50, 20),
+    ];
+    let full_text: Result<String, OcrError> = Err(OcrError::Extraction("test error".into()));
+    let result = try_hybrid_reconstruct(full_text, &words);
+    // Falls back to reconstruct_text: same text, valid spans
+    assert_eq!(result.text, "hello world");
+    assert_eq!(result.spans.len(), 2);
+}
+
+#[test]
+fn try_hybrid_empty_words() {
+    let full_text: Result<String, OcrError> = Ok("some text".to_string());
+    let result = try_hybrid_reconstruct(full_text, &[]);
+    // hybrid_reconstruct with empty words returns the full text with no spans
+    assert_eq!(result.text, "some text");
+    assert!(result.spans.is_empty());
+}
+
+#[test]
+fn try_hybrid_empty_words_on_error() {
+    let full_text: Result<String, OcrError> = Err(OcrError::Extraction("fail".into()));
+    let result = try_hybrid_reconstruct(full_text, &[]);
+    // reconstruct_text with empty words returns empty text
+    assert_eq!(result.text, "");
+    assert!(result.spans.is_empty());
 }

@@ -797,8 +797,9 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
 
-            // 2. Reconstruct reading-order text with byte spans
-            let reconstructed = anon::image_redact::ocr::reconstruct_text(&words);
+            // 2. Hybrid OCR: full-page text aligned with word boxes
+            let full_text = anon::image_redact::ocr::extract_text(&input, "eng");
+            let reconstructed = anon::image_redact::ocr::try_hybrid_reconstruct(full_text, &words);
 
             // 3. Run PII detection on extracted text
             let mut anonymizer = Anonymizer::new(threshold);
