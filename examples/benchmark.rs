@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::time::{Duration, Instant};
 
 use anon::detection::Anonymizer;
@@ -218,6 +219,32 @@ fn main() {
             .collect::<Vec<_>>()
     );
     println!();
+
+    // Write cached results for update_readme
+    use serde_json::json;
+
+    let cache_path = "bench-results.json";
+    let mut existing: serde_json::Value = fs::read_to_string(cache_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({"features": {}}));
+
+    if let Some(existing_features) = existing.get_mut("features").and_then(|v| v.as_object_mut()) {
+        existing_features.insert(
+            feature_label().to_string(),
+            json!({
+                "lines_per_sec": throughput as u64,
+                "simple_avg_us": format!("{:.1}", simple_avg.as_secs_f64() * 1e6),
+                "complex_avg_us": format!("{:.1}", complex_avg.as_secs_f64() * 1e6),
+                "penalty": format!("{:.1}", penalty),
+            }),
+        );
+    }
+
+    if let Ok(json_str) = serde_json::to_string_pretty(&existing) {
+        let _ = fs::write(cache_path, json_str);
+        eprintln!("\nBenchmark results cached to {}", cache_path);
+    }
 
     if throughput < 5000.0 {
         println!("WARNING: Throughput under 5k lines/sec");

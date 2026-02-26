@@ -45,3 +45,6 @@ uv.lock
 # Generated reports (contain local paths)
 ai-readability-audit.md
 security_best_practices_report.md
+
+# Benchmark cache (local, machine-specific)
+bench-results.json
