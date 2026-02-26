@@ -10,7 +10,9 @@ use std::collections::HashSet;
 use std::fs;
 use std::process;
 
+use anon::cli::Cli;
 use anon::patterns::PATTERNS;
+use clap::CommandFactory;
 
 /// Known 2-letter country prefixes for entity types.
 const COUNTRY_PREFIXES: &[&str] = &[
@@ -88,6 +90,175 @@ fn generate_entities_section() -> String {
          See [docs/entities.md](docs/entities.md) for the full reference with confidence scores and context keywords.",
         entity_count, pattern_count, country_count, country_list_str
     )
+}
+
+/// Returns the feature requirement note for a subcommand, if any.
+fn feature_note(name: &str) -> Option<&'static str> {
+    match name {
+        "download-model" => Some("requires `ner` feature"),
+        "api" | "ui" | "proxy" => Some("requires `proxy` feature"),
+        "image" => Some("requires `image` feature"),
+        "pdf" => Some("requires `pdf` feature"),
+        _ => None,
+    }
+}
+
+/// Generates the commands section listing all subcommands.
+///
+/// Uses `clap::CommandFactory` to introspect the CLI and produce a bash code block
+/// showing each subcommand with its description.
+fn generate_commands_section() -> String {
+    let cmd = Cli::command();
+    let mut lines = Vec::new();
+
+    for sub in cmd.get_subcommands() {
+        let name = sub.get_name();
+        let about = sub.get_about().map(|s| s.to_string()).unwrap_or_default();
+
+        // Collect positional arguments
+        let positionals: Vec<String> = sub
+            .get_arguments()
+            .filter(|arg| arg.is_positional())
+            .map(|arg| {
+                let id = arg.get_id().as_str().to_uppercase();
+                if arg.is_required_set() {
+                    format!("<{}>", id)
+                } else {
+                    format!("[{}]", id)
+                }
+            })
+            .collect();
+
+        let args_str = if positionals.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", positionals.join(" "))
+        };
+
+        // Build the line with optional feature note
+        let line = if let Some(note) = feature_note(name) {
+            format!("anon {}{:<16} # {} ({})", name, args_str, about, note)
+        } else {
+            format!("anon {}{:<16} # {}", name, args_str, about)
+        };
+
+        lines.push(line);
+    }
+
+    format!("```bash\n{}\n```", lines.join("\n"))
+}
+
+/// Formats a CLI table from a clap Command's arguments.
+fn format_cli_table(cmd: &clap::Command) -> String {
+    let mut rows = Vec::new();
+
+    for arg in cmd.get_arguments() {
+        let id = arg.get_id().as_str();
+
+        // Skip help and version
+        if id == "help" || id == "version" {
+            continue;
+        }
+
+        // Option column: --name or POSITIONAL
+        let option_col = if let Some(long) = arg.get_long() {
+            format!("`--{}`", long)
+        } else if arg.is_positional() {
+            format!("`{}`", id.to_uppercase())
+        } else {
+            continue; // Skip if no long option and not positional
+        };
+
+        // Short column
+        let short_col = arg
+            .get_short()
+            .map(|c| format!("`-{}`", c))
+            .unwrap_or_default();
+
+        // Default column
+        let default_col = arg
+            .get_default_values()
+            .first()
+            .map(|v| format!("`{}`", v.to_string_lossy()))
+            .unwrap_or_default();
+
+        // Description column
+        let desc_col = arg.get_help().map(|s| s.to_string()).unwrap_or_default();
+
+        rows.push(format!(
+            "| {} | {} | {} | {} |",
+            option_col, short_col, default_col, desc_col
+        ));
+    }
+
+    let header =
+        "| Option | Short | Default | Description |\n|--------|-------|---------|-------------|";
+    format!("{}\n{}", header, rows.join("\n"))
+}
+
+/// Generates the CLI options table for the main anonymize command.
+fn generate_cli_anonymize_section() -> String {
+    let cmd = Cli::command();
+    format_cli_table(&cmd)
+}
+
+/// Generates the CLI options table for the restore subcommand.
+fn generate_cli_restore_section() -> String {
+    let cmd = Cli::command();
+    for sub in cmd.get_subcommands() {
+        if sub.get_name() == "restore" {
+            return format_cli_table(sub);
+        }
+    }
+    // Fallback if restore not found
+    "| Option | Short | Default | Description |\n|--------|-------|---------|-------------|"
+        .to_string()
+}
+
+/// Generates the benchmark section from cached results.
+///
+/// Returns `None` if the cache file doesn't exist or is invalid.
+fn generate_benchmark_section_from(path: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let features = json.get("features")?.as_object()?;
+
+    let feature_order = ["regex-only", "ner-lite (heuristic)", "ner (ML)"];
+
+    let mut rows = Vec::new();
+    for &feature in &feature_order {
+        if let Some(data) = features.get(feature) {
+            let lines_per_sec = data.get("lines_per_sec")?.as_u64()?;
+            let simple_avg = data.get("simple_avg_us")?.as_str()?;
+            let complex_avg = data.get("complex_avg_us")?.as_str()?;
+            let penalty = data.get("penalty")?.as_str()?;
+
+            // Format throughput as Nk if >= 1000
+            let throughput_str = if lines_per_sec >= 1000 {
+                format!("{}k", lines_per_sec / 1000)
+            } else {
+                lines_per_sec.to_string()
+            };
+
+            rows.push(format!(
+                "| {} | {} lines/s | {} \u{03bc}s | {} \u{03bc}s | {}x |",
+                feature, throughput_str, simple_avg, complex_avg, penalty
+            ));
+        }
+    }
+
+    if rows.is_empty() {
+        return None;
+    }
+
+    let header =
+        "| Feature | Throughput | Simple avg | Complex avg | Penalty |\n|---------|------------|------------|-------------|---------|";
+    Some(format!("{}\n{}", header, rows.join("\n")))
+}
+
+/// Generates the benchmark section from the default cache file.
+fn generate_benchmark_section() -> Option<String> {
+    generate_benchmark_section_from("bench-results.json")
 }
 
 fn main() {
@@ -224,5 +395,48 @@ mod tests {
             "Expected '{}' in section",
             pattern_count_str
         );
+    }
+
+    #[test]
+    fn test_generate_commands_section() {
+        let section = generate_commands_section();
+        assert!(section.contains("anon list-entities"));
+        assert!(section.contains("anon restore"));
+        assert!(section.starts_with("```bash\n"));
+        assert!(section.ends_with("\n```"));
+    }
+
+    #[test]
+    fn test_generate_cli_anonymize_section() {
+        let section = generate_cli_anonymize_section();
+        assert!(section.contains("| Option |"));
+        assert!(section.contains("`--input`"));
+        assert!(section.contains("`--operator`"));
+        assert!(section.contains("`--threshold`"));
+    }
+
+    #[test]
+    fn test_generate_cli_restore_section() {
+        let section = generate_cli_restore_section();
+        assert!(section.contains("| Option |"));
+        assert!(section.contains("`--mapping`"));
+        assert!(section.contains("`--decrypt-key`"));
+    }
+
+    #[test]
+    fn test_generate_benchmark_section_with_cache() {
+        let cache = r#"{"features":{"regex-only":{"lines_per_sec":251000,"simple_avg_us":"2.8","complex_avg_us":"8.9","penalty":"3.2"}}}"#;
+        let tmp = "bench-results-test.json";
+        fs::write(tmp, cache).unwrap();
+        let section = generate_benchmark_section_from(tmp).unwrap();
+        assert!(section.contains("| Feature |"));
+        assert!(section.contains("regex-only"));
+        assert!(section.contains("251k"));
+        fs::remove_file(tmp).ok();
+    }
+
+    #[test]
+    fn test_generate_benchmark_section_no_cache() {
+        assert!(generate_benchmark_section_from("nonexistent-file.json").is_none());
     }
 }
