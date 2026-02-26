@@ -196,6 +196,29 @@ enum Commands {
         #[arg(long, default_value = "2")]
         padding: u32,
     },
+    /// Anonymize PII in PDF documents via text extraction and redaction
+    #[cfg(feature = "pdf")]
+    Pdf {
+        /// Input PDF file
+        #[arg(value_name = "PATH")]
+        input: PathBuf,
+
+        /// Output PDF file
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Minimum confidence score (0.0-1.0)
+        #[arg(long, default_value = "0.5")]
+        threshold: f64,
+
+        /// Fill color for redacted regions
+        #[arg(long, default_value = "black")]
+        fill_color: String,
+
+        /// Padding around detected PII regions (points)
+        #[arg(long, default_value = "2")]
+        padding: f64,
+    },
     /// Start anonymizing proxy server
     #[cfg(feature = "proxy")]
     Proxy {
@@ -827,6 +850,64 @@ fn main() -> io::Result<()> {
                 output.display()
             );
         }
+        #[cfg(feature = "pdf")]
+        Some(Commands::Pdf {
+            input,
+            output,
+            threshold,
+            fill_color,
+            padding,
+        }) => {
+            // 1. Extract words with bounding boxes from PDF
+            let words = match anon::pdf_redact::extract::extract_words(&input) {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            if words.is_empty() {
+                eprintln!("No text detected in PDF, copying as-is");
+                if let Err(e) =
+                    anon::pdf_redact::redact::redact_pdf(&input, &output, &[], &fill_color)
+                {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+                eprintln!("Redacted 0 region(s) → {}", output.display());
+                return Ok(());
+            }
+
+            // 2. Reconstruct text with byte-span mapping
+            let reconstructed = anon::pdf_redact::extract::reconstruct_text(&words);
+
+            // 3. Run PII detection on reconstructed text
+            let mut anonymizer = Anonymizer::new(threshold);
+            let detections = anonymizer.analyze(&reconstructed.text);
+
+            // 4. Map text detections to PDF page-coordinate regions
+            let regions = anon::pdf_redact::region::map_detections(
+                &words,
+                &reconstructed,
+                &detections,
+                padding,
+            );
+
+            // 5. Render redaction
+            if let Err(e) =
+                anon::pdf_redact::redact::redact_pdf(&input, &output, &regions, &fill_color)
+            {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+
+            eprintln!(
+                "Redacted {} region(s) → {}",
+                regions.len(),
+                output.display()
+            );
+        }
         Some(Commands::ListEntities) => {
             eprintln!("{}", "Supported entity types:".bold());
             eprintln!();
@@ -1254,6 +1335,490 @@ mod tests {
             dirs.len() >= 48,
             "50 generated dirs should be nearly all unique"
         );
+    }
+
+    // ─── PDF subcommand CLI tests ────────────────────────────────────────────────
+
+    #[cfg(feature = "pdf")]
+    mod pdf_cli_tests {
+        use super::*;
+        use std::process::Command;
+
+        fn create_test_pdf(path: &Path) {
+            use lopdf::content::{Content, Operation};
+            use lopdf::{dictionary, Document, Object, Stream};
+
+            let mut doc = Document::with_version("1.5");
+
+            let pages_id = doc.new_object_id();
+            let font_id = doc.add_object(dictionary! {
+                "Type" => "Font",
+                "Subtype" => "Type1",
+                "BaseFont" => "Courier",
+            });
+            let resources_id = doc.add_object(dictionary! {
+                "Font" => dictionary! {
+                    "F1" => font_id,
+                },
+            });
+
+            let page1_content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Td", vec![72.into(), 720.into()]),
+                    Operation::new("Tj", vec![Object::string_literal("Contact Information")]),
+                    Operation::new("Td", vec![0.into(), (-20).into()]),
+                    Operation::new(
+                        "Tj",
+                        vec![Object::string_literal("Email: john.smith@example.com")],
+                    ),
+                    Operation::new("Td", vec![0.into(), (-20).into()]),
+                    Operation::new("Tj", vec![Object::string_literal("Phone: +1-555-123-4567")]),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+
+            let content1_id =
+                doc.add_object(Stream::new(dictionary! {}, page1_content.encode().unwrap()));
+
+            let page1_id = doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => content1_id,
+            });
+
+            let pages = dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(page1_id)],
+                "Count" => 1,
+                "Resources" => resources_id,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            };
+            doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+            let catalog_id = doc.add_object(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => pages_id,
+            });
+            doc.trailer.set("Root", catalog_id);
+
+            doc.save(path).expect("failed to save test PDF");
+        }
+
+        fn create_multipage_pdf(path: &Path) {
+            use lopdf::content::{Content, Operation};
+            use lopdf::{dictionary, Document, Object, Stream};
+
+            let mut doc = Document::with_version("1.5");
+
+            let pages_id = doc.new_object_id();
+            let font_id = doc.add_object(dictionary! {
+                "Type" => "Font",
+                "Subtype" => "Type1",
+                "BaseFont" => "Courier",
+            });
+            let resources_id = doc.add_object(dictionary! {
+                "Font" => dictionary! {
+                    "F1" => font_id,
+                },
+            });
+
+            let page1_content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Td", vec![72.into(), 720.into()]),
+                    Operation::new(
+                        "Tj",
+                        vec![Object::string_literal("Page 1: john.smith@example.com")],
+                    ),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+
+            let page2_content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Td", vec![72.into(), 720.into()]),
+                    Operation::new(
+                        "Tj",
+                        vec![Object::string_literal("Page 2: IP 192.168.1.100")],
+                    ),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+
+            let content1_id =
+                doc.add_object(Stream::new(dictionary! {}, page1_content.encode().unwrap()));
+            let content2_id =
+                doc.add_object(Stream::new(dictionary! {}, page2_content.encode().unwrap()));
+
+            let page1_id = doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => content1_id,
+            });
+            let page2_id = doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => content2_id,
+            });
+
+            let pages = dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(page1_id), Object::Reference(page2_id)],
+                "Count" => 2,
+                "Resources" => resources_id,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            };
+            doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+            let catalog_id = doc.add_object(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => pages_id,
+            });
+            doc.trailer.set("Root", catalog_id);
+
+            doc.save(path).expect("failed to save test PDF");
+        }
+
+        fn create_empty_pdf(path: &Path) {
+            use lopdf::{dictionary, Document, Object};
+
+            let mut doc = Document::with_version("1.5");
+
+            let pages_id = doc.new_object_id();
+
+            let page1_id = doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+            });
+
+            let pages = dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(page1_id)],
+                "Count" => 1,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            };
+            doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+            let catalog_id = doc.add_object(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => pages_id,
+            });
+            doc.trailer.set("Root", catalog_id);
+
+            doc.save(path).expect("failed to save test PDF");
+        }
+
+        fn create_mixed_pii_pdf(path: &Path) {
+            use lopdf::content::{Content, Operation};
+            use lopdf::{dictionary, Document, Object, Stream};
+
+            let mut doc = Document::with_version("1.5");
+
+            let pages_id = doc.new_object_id();
+            let font_id = doc.add_object(dictionary! {
+                "Type" => "Font",
+                "Subtype" => "Type1",
+                "BaseFont" => "Courier",
+            });
+            let resources_id = doc.add_object(dictionary! {
+                "Font" => dictionary! {
+                    "F1" => font_id,
+                },
+            });
+
+            let page1_content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Td", vec![72.into(), 720.into()]),
+                    Operation::new(
+                        "Tj",
+                        vec![Object::string_literal("Email: john.doe@example.com")],
+                    ),
+                    Operation::new("Td", vec![0.into(), (-20).into()]),
+                    Operation::new("Tj", vec![Object::string_literal("Phone: +1-555-123-4567")]),
+                    Operation::new("Td", vec![0.into(), (-20).into()]),
+                    Operation::new("Tj", vec![Object::string_literal("IP: 192.168.1.100")]),
+                    Operation::new("Td", vec![0.into(), (-20).into()]),
+                    Operation::new(
+                        "Tj",
+                        vec![Object::string_literal("Credit card: 4532015112830366")],
+                    ),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+
+            let content1_id =
+                doc.add_object(Stream::new(dictionary! {}, page1_content.encode().unwrap()));
+
+            let page1_id = doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => content1_id,
+            });
+
+            let pages = dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(page1_id)],
+                "Count" => 1,
+                "Resources" => resources_id,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            };
+            doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+            let catalog_id = doc.add_object(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => pages_id,
+            });
+            doc.trailer.set("Root", catalog_id);
+
+            doc.save(path).expect("failed to save test PDF");
+        }
+
+        fn test_dir(name: &str) -> PathBuf {
+            let dir = std::env::temp_dir()
+                .join(format!("anon_pdf_cli_test_{}_{name}", std::process::id()));
+            fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        #[test]
+        fn test_pdf_cli_single_page() {
+            let dir = test_dir("single_page");
+            let input = dir.join("input.pdf");
+            let output = dir.join("output.pdf");
+            create_test_pdf(&input);
+
+            let binary = std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("anon");
+
+            // Skip if binary not built
+            if !binary.exists() {
+                eprintln!("Skipping: binary not found at {:?}", binary);
+                return;
+            }
+
+            let result = Command::new(&binary)
+                .args([
+                    "pdf",
+                    input.to_str().unwrap(),
+                    "-o",
+                    output.to_str().unwrap(),
+                ])
+                .output()
+                .expect("failed to execute command");
+
+            assert!(
+                result.status.success(),
+                "command should succeed: {:?}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(output.exists(), "output PDF should be created");
+
+            // Verify stderr reports redacted regions
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                stderr.contains("Redacted") || stderr.contains("region"),
+                "stderr should report redaction: {}",
+                stderr
+            );
+
+            let _ = fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn test_pdf_cli_multipage() {
+            let dir = test_dir("multipage");
+            let input = dir.join("input.pdf");
+            let output = dir.join("output.pdf");
+            create_multipage_pdf(&input);
+
+            let binary = std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("anon");
+
+            if !binary.exists() {
+                eprintln!("Skipping: binary not found");
+                return;
+            }
+
+            let result = Command::new(&binary)
+                .args([
+                    "pdf",
+                    input.to_str().unwrap(),
+                    "-o",
+                    output.to_str().unwrap(),
+                ])
+                .output()
+                .expect("failed to execute command");
+
+            assert!(
+                result.status.success(),
+                "command should succeed: {:?}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(output.exists(), "output PDF should be created");
+
+            // Verify the output is a valid PDF with same page count
+            let doc = lopdf::Document::load(&output).expect("output should be valid PDF");
+            assert_eq!(doc.get_pages().len(), 2, "should preserve page count");
+
+            let _ = fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn test_pdf_cli_no_text() {
+            let dir = test_dir("no_text");
+            let input = dir.join("input.pdf");
+            let output = dir.join("output.pdf");
+            create_empty_pdf(&input);
+
+            let binary = std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("anon");
+
+            if !binary.exists() {
+                eprintln!("Skipping: binary not found");
+                return;
+            }
+
+            let result = Command::new(&binary)
+                .args([
+                    "pdf",
+                    input.to_str().unwrap(),
+                    "-o",
+                    output.to_str().unwrap(),
+                ])
+                .output()
+                .expect("failed to execute command");
+
+            assert!(
+                result.status.success(),
+                "command should succeed even with empty PDF"
+            );
+            assert!(output.exists(), "output PDF should be created");
+
+            // Verify stderr indicates no PII or 0 regions
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                stderr.contains("0 region")
+                    || stderr.contains("No text")
+                    || stderr.contains("copying"),
+                "stderr should indicate no PII found: {}",
+                stderr
+            );
+
+            let _ = fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn test_pdf_cli_mixed_pii() {
+            let dir = test_dir("mixed_pii");
+            let input = dir.join("input.pdf");
+            let output = dir.join("output.pdf");
+            create_mixed_pii_pdf(&input);
+
+            let binary = std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("anon");
+
+            if !binary.exists() {
+                eprintln!("Skipping: binary not found");
+                return;
+            }
+
+            let result = Command::new(&binary)
+                .args([
+                    "pdf",
+                    input.to_str().unwrap(),
+                    "-o",
+                    output.to_str().unwrap(),
+                    "--threshold",
+                    "0.5",
+                    "--fill-color",
+                    "black",
+                    "--padding",
+                    "2",
+                ])
+                .output()
+                .expect("failed to execute command");
+
+            assert!(
+                result.status.success(),
+                "command should succeed: {:?}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(output.exists(), "output PDF should be created");
+
+            let _ = fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn test_pdf_cli_custom_options() {
+            let dir = test_dir("custom_options");
+            let input = dir.join("input.pdf");
+            let output = dir.join("output.pdf");
+            create_test_pdf(&input);
+
+            let binary = std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("anon");
+
+            if !binary.exists() {
+                eprintln!("Skipping: binary not found");
+                return;
+            }
+
+            let result = Command::new(&binary)
+                .args([
+                    "pdf",
+                    input.to_str().unwrap(),
+                    "-o",
+                    output.to_str().unwrap(),
+                    "--threshold",
+                    "0.7",
+                    "--fill-color",
+                    "#FF0000",
+                    "--padding",
+                    "5",
+                ])
+                .output()
+                .expect("failed to execute command");
+
+            assert!(
+                result.status.success(),
+                "command should succeed with custom options"
+            );
+            assert!(output.exists(), "output PDF should be created");
+
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 
     #[cfg(unix)]
