@@ -136,27 +136,27 @@ sequenceDiagram
 <!-- BEGIN CLI_ANONYMIZE -->
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
-| `--input` | `-i` | stdin | Input file |
-| `--output` | `-o` | stdout | Output file |
-| `--mapping` | `-m` | `~/.anon/mapping.json` | Save mapping to file for later restoration |
-| `--mapping-stderr` | | | Output mapping to stderr |
-| `--include-mapping` | | | Embed mapping as `/* MAPPING: ... */` comment in output |
-| `--verbose` | `-v` | | Show detected entities table on stderr |
-| `--format` | `-f` | `auto` | Force input format: `auto`, `json`, `text`, `sql`, `csv` |
-| `--threshold` | | `0.5` | Minimum confidence score (0.0-1.0) |
-| `--operator` | | `token` | Anonymization operator: `token`, `redact`, `mask`, `hash`, `encrypt`, `keep`, `custom` |
-| `--mask-char` | | `*` | Masking character (used with `--operator mask`) |
-| `--mask-count` | | match length | Fixed mask length (used with `--operator mask`) |
-| `--mask-from-end` | | | Mask from end instead of start |
-| `--hash-algo` | | `sha256` | Hash algorithm: `sha256`, `md5` (used with `--operator hash`) |
-| `--encrypt-key` | | | AES key, hex-encoded: 32/48/64 chars (used with `--operator encrypt`) |
-| `--replace-with` | | | Custom replacement format, e.g. `<{entity_type}>` (used with `--operator custom`) |
-| `--context-boost` | | `0.15` | Context keyword score boost factor (0.0-1.0) |
-| `--min-score-with-context` | | `0.0` | Minimum score for context-boosted detections |
+| `--input` | `-i` |  | Input file (reads from stdin if not provided) |
+| `--output` | `-o` |  | Output file (writes to stdout if not provided) |
+| `--mapping` | `-m` |  | Save mapping to file for later restoration |
+| `--mapping-stderr` |  |  | Output mapping to stderr |
+| `--include-mapping` |  |  | Include mapping as comment in output |
+| `--share` |  |  | Output a share-ready Markdown snippet (safe to paste into issues / AI tools) |
+| `--copy` |  |  | Copy output to clipboard (best effort). Requires --share |
+| `--verbose` | `-v` |  | Show detected entities |
+| `--format` | `-f` | `auto` | Force input format |
+| `--threshold` |  | `0.5` | Minimum confidence score (0.0-1.0) |
+| `--operator` |  | `token` | Anonymization operator |
+| `--mask-char` |  | `*` | Masking character (used with --operator mask) |
+| `--mask-count` |  |  | Fixed mask length (default: match original length) |
+| `--mask-from-end` |  |  | Mask from end instead of start |
+| `--hash-algo` |  | `sha256` | Hash algorithm (used with --operator hash) |
+| `--encrypt-key` |  |  | AES encryption key, hex-encoded (used with --operator encrypt) Must be 32 (128-bit), 48 (192-bit), or 64 (256-bit) hex characters |
+| `--replace-with` |  |  | Custom replacement format string (used with --operator custom) Use {entity_type} as placeholder, e.g. '<{entity_type}>' or 'REDACTED' |
+| `--context-boost` |  | `0.15` | Context score boost factor when keywords are found nearby (0.0-1.0) |
+| `--min-score-with-context` |  | `0.0` | Minimum score for context-boosted detections (0.0 = disabled) |
 | `--language` | `-l` | `en` | Language for detection |
-| `--share` | | | Output a share-ready Markdown snippet |
-| `--copy` | | | Copy output to clipboard (requires `--share`) |
-| `--ner` | | | Enable NER-based PERSON detection (requires `ner` or `ner-lite` feature) |
+| `--ner` |  |  | Enable NER-based PERSON detection (requires ner or ner-lite feature) |
 <!-- END CLI_ANONYMIZE -->
 
 ### Restore
@@ -164,31 +164,32 @@ sequenceDiagram
 <!-- BEGIN CLI_RESTORE -->
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
-| `INPUT` | | | Positional input file |
-| `--input` | `-i` | | Input file flag (overrides positional) |
-| `--mapping` | `-m` | `~/.anon/mapping.json` | Mapping file for restoration |
-| `--output` | `-o` | | Output file (stdout if omitted) |
-| `--decrypt-key` | | | AES decryption key, hex-encoded (decrypts `ENC[...]` tokens) |
+| `INPUT_POSITIONAL` |  |  | Input file (positional, optional) |
+| `--input` | `-i` |  | Input file (flag, optional — overrides positional) |
+| `--mapping` | `-m` |  | Mapping file (defaults to ~/.anon/mapping.json) |
+| `--output` | `-o` |  | Output file (writes to stdout if not provided) |
+| `--decrypt-key` |  |  | AES decryption key, hex-encoded (decrypts ENC[...] tokens) Must be 32 (128-bit), 48 (192-bit), or 64 (256-bit) hex characters |
 <!-- END CLI_RESTORE -->
 
 ### Commands
 
 <!-- BEGIN COMMANDS -->
 ```bash
-anon list-entities        # List all supported entity types
-anon update-names <CSV>   # Import custom name lists from CSV for heuristic NER
-anon download-model       # Download NER ML model (requires `ner` feature)
-anon api                  # Presidio-compatible REST API on :8080, Swagger at /docs (requires `proxy` feature)
-anon ui                   # Interactive web UI on :9200 (requires `proxy` feature)
-anon proxy                # Anonymizing reverse proxy on :9100 (requires `proxy` feature)
-anon image <path> -o <out>  # OCR-based image PII redaction (requires `image` feature)
+anon restore [INPUT_POSITIONAL] # Restore original values from anonymized data
+anon list-entities                 # List all supported entity types
+anon api                 # Start Presidio-compatible REST API server (requires `proxy` feature)
+anon ui                 # Start web UI for interactive anonymization (requires `proxy` feature)
+anon update-names <FILE>          # Import first/last names from a CSV file into ~/.anon/ for heuristic NER
+anon image <INPUT>         # Anonymize PII in images via OCR and redaction (requires `image` feature)
+anon pdf <INPUT>         # Anonymize PII in PDF documents via text extraction and redaction (requires `pdf` feature)
+anon proxy                 # Start anonymizing proxy server (requires `proxy` feature)
 ```
 <!-- END COMMANDS -->
 
 ## Detected entities
 
 <!-- BEGIN ENTITIES -->
-63 entity types across 97 patterns covering 13 countries: emails, URLs, IPs, UUIDs, credit cards, IBANs, phones, dates, crypto addresses, MAC addresses, secrets/tokens, and person names (with `--ner`). Country-specific patterns include SSNs, passports, driver's licenses, tax IDs, and national IDs for US, UK, FR, ES, IT, IN, AU, KR, SG, PL, SI, FI, and TH — each with checksum validation where applicable. Detection works through URL-encoded and Unicode-escaped text.
+63 entity types across 99 patterns covering 13 countries: emails, URLs, IPs, UUIDs, credit cards, IBANs, phones, dates, crypto addresses, MAC addresses, secrets/tokens, and person names (with `--ner`). Country-specific patterns include SSNs, passports, driver's licenses, tax IDs, and national IDs for AU, ES, FI, FR, IN, IT, KR, PL, SG, SI, TH, UK, US — each with checksum validation where applicable. Detection works through URL-encoded and Unicode-escaped text.
 
 See [docs/entities.md](docs/entities.md) for the full reference with confidence scores and context keywords.
 <!-- END ENTITIES -->
@@ -243,10 +244,9 @@ Typical results (Apple Silicon):
 
 <!-- BEGIN BENCHMARK -->
 | Feature | Throughput | Simple avg | Complex avg | Penalty |
-|---------|-----------|-----------|-------------|---------|
-| none | 251k lines/s | 2.8 μs | 8.9 μs | 3.2x |
-| ner-lite | 184k lines/s | 3.9 μs | 11.4 μs | 2.9x |
-| ner | 247k lines/s | 2.8 μs | 8.9 μs | 3.1x |
+|---------|------------|------------|-------------|---------|
+| regex-only | 51k lines/s | 14.2 μs | 39.5 μs | 2.8x |
+| ner-lite (heuristic) | 49k lines/s | 14.7 μs | 41.5 μs | 2.8x |
 <!-- END BENCHMARK -->
 
 ## License
