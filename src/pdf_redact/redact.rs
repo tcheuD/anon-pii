@@ -735,4 +735,79 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    // ---------------------------------------------------------------------------
+    // Security tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn redact_rejects_symlink() {
+        let dir = test_dir("symlink_reject");
+        let target = dir.join("real.pdf");
+        create_test_pdf(&target);
+
+        let link = dir.join("link.pdf");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        #[cfg(unix)]
+        {
+            let output = dir.join("output.pdf");
+            let regions = vec![RedactionRegion {
+                page: 1,
+                x: 72.0,
+                y: 700.0,
+                width: 100.0,
+                height: 20.0,
+                entity_type: "EMAIL_ADDRESS",
+            }];
+
+            let result = redact_pdf(&link, &output, &regions, "black");
+            assert!(
+                matches!(result, Err(RedactError::PdfLoad { .. })),
+                "should reject symlink input"
+            );
+            if let Err(RedactError::PdfLoad { source, .. }) = result {
+                assert!(source.contains("symlink"), "error should mention symlink");
+            }
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_rejects_too_large_file() {
+        use crate::patterns::MAX_INPUT_SIZE;
+
+        let dir = test_dir("large_file_reject");
+        let large_file = dir.join("large.pdf");
+
+        // Create a file that exceeds MAX_INPUT_SIZE
+        let content = vec![0u8; (MAX_INPUT_SIZE + 1) as usize];
+        fs::write(&large_file, &content).unwrap();
+
+        let output = dir.join("output.pdf");
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 72.0,
+            y: 700.0,
+            width: 100.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS",
+        }];
+
+        let result = redact_pdf(&large_file, &output, &regions, "black");
+        assert!(
+            matches!(result, Err(RedactError::PdfLoad { .. })),
+            "should reject file exceeding MAX_INPUT_SIZE"
+        );
+        if let Err(RedactError::PdfLoad { source, .. }) = result {
+            assert!(
+                source.contains("too large") || source.contains("size"),
+                "error should mention file size"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
