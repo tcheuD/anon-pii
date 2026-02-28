@@ -549,13 +549,23 @@ fn main() -> io::Result<()> {
             upstream,
             threshold,
             session_dir,
+            provider,
         }) => {
             let session_dir = session_dir.unwrap_or_else(|| {
                 let suffix = anon::mapping::crypto_random_hex(8);
                 std::env::temp_dir().join(format!("anon-proxy-{suffix}"))
             });
 
-            let state = Arc::new(proxy::ProxyState::new(upstream, threshold, session_dir));
+            let provider: proxy::Provider = provider
+                .parse()
+                .map_err(|e: String| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+            let state = Arc::new(proxy::ProxyState::new(
+                upstream,
+                threshold,
+                session_dir,
+                provider,
+            ));
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(proxy::run(state, port))?;

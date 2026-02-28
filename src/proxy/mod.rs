@@ -25,10 +25,11 @@ pub struct ProxyState {
     pub anonymizer: Mutex<Anonymizer>,
     pub upstream: String,
     pub session_dir: PathBuf,
+    pub provider: Provider,
 }
 
 impl ProxyState {
-    pub fn new(upstream: String, threshold: f64, session_dir: PathBuf) -> Self {
+    pub fn new(upstream: String, threshold: f64, session_dir: PathBuf, provider: Provider) -> Self {
         let mut anonymizer = Anonymizer::new(threshold);
         anonymizer.mapping = anonymizer
             .mapping
@@ -64,6 +65,7 @@ impl ProxyState {
             anonymizer: Mutex::new(anonymizer),
             upstream,
             session_dir,
+            provider,
         }
     }
 
@@ -136,6 +138,51 @@ async fn validate_host(req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
+/// Supported API providers for the proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Provider {
+    #[default]
+    Anthropic,
+    OpenAi,
+    Generic,
+}
+
+impl std::str::FromStr for Provider {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "anthropic" => Ok(Provider::Anthropic),
+            "openai" => Ok(Provider::OpenAi),
+            "generic" => Ok(Provider::Generic),
+            _ => Err(format!("unknown provider: {s}")),
+        }
+    }
+}
+
+impl std::fmt::Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Provider::Anthropic => write!(f, "anthropic"),
+            Provider::OpenAi => write!(f, "openai"),
+            Provider::Generic => write!(f, "generic"),
+        }
+    }
+}
+
+/// Build a router with provider-specific routes.
+fn build_router(provider: Provider) -> Router<Arc<ProxyState>> {
+    match provider {
+        Provider::Anthropic => Router::new().route("/v1/messages", any(handler::handle_messages)),
+        Provider::OpenAi => {
+            Router::new().route("/v1/chat/completions", any(handler::handle_messages))
+        }
+        Provider::Generic => Router::new()
+            .route("/v1/messages", any(handler::handle_messages))
+            .route("/v1/chat/completions", any(handler::handle_messages)),
+    }
+}
+
 pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
     // Ensure session dir exists with restricted permissions
     // Use create_dir (not create_dir_all) so it fails if the path already
@@ -165,8 +212,7 @@ pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
             .await?;
     }
 
-    let app = Router::new()
-        .route("/v1/messages", any(handler::handle_messages))
+    let app = build_router(state.provider)
         .fallback(handler::passthrough)
         .layer(middleware::from_fn(validate_host))
         .with_state(state.clone());
@@ -196,4 +242,164 @@ pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider_from_str_anthropic() {
+        let p: Provider = "anthropic".parse().unwrap();
+        assert_eq!(p, Provider::Anthropic);
+    }
+
+    #[test]
+    fn test_provider_from_str_openai() {
+        let p: Provider = "openai".parse().unwrap();
+        assert_eq!(p, Provider::OpenAi);
+    }
+
+    #[test]
+    fn test_provider_from_str_generic() {
+        let p: Provider = "generic".parse().unwrap();
+        assert_eq!(p, Provider::Generic);
+    }
+
+    #[test]
+    fn test_provider_from_str_case_insensitive() {
+        let p: Provider = "OpenAI".parse().unwrap();
+        assert_eq!(p, Provider::OpenAi);
+        let p2: Provider = "ANTHROPIC".parse().unwrap();
+        assert_eq!(p2, Provider::Anthropic);
+    }
+
+    #[test]
+    fn test_provider_from_str_invalid() {
+        let result: Result<Provider, _> = "invalid".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_provider_display() {
+        assert_eq!(Provider::Anthropic.to_string(), "anthropic");
+        assert_eq!(Provider::OpenAi.to_string(), "openai");
+        assert_eq!(Provider::Generic.to_string(), "generic");
+    }
+
+    #[test]
+    fn test_provider_default_is_anthropic() {
+        assert_eq!(Provider::default(), Provider::Anthropic);
+    }
+
+    #[test]
+    fn test_proxy_state_stores_provider() {
+        let state = ProxyState::new(
+            "https://api.anthropic.com".to_string(),
+            0.5,
+            std::env::temp_dir().join("anon-test-provider"),
+            Provider::OpenAi,
+        );
+        assert_eq!(state.provider, Provider::OpenAi);
+    }
+
+    #[tokio::test]
+    async fn test_router_anthropic_routes_v1_messages() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-router-anthropic"),
+            Provider::Anthropic,
+        ));
+
+        let router = build_router(Provider::Anthropic).with_state(state);
+
+        // /v1/messages should be routed (will fail at upstream, but not 404)
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .header("host", "localhost")
+            .body(Body::from(r#"{"model":"test","messages":[]}"#))
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_ne!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_router_openai_routes_v1_chat_completions() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-router-openai"),
+            Provider::OpenAi,
+        ));
+
+        let router = build_router(Provider::OpenAi).with_state(state);
+
+        // /v1/chat/completions should be routed
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .header("host", "localhost")
+            .body(Body::from(r#"{"model":"gpt-4","messages":[]}"#))
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_ne!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_router_generic_routes_both_endpoints() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let state1 = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-router-generic-1"),
+            Provider::Generic,
+        ));
+
+        let state2 = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-router-generic-2"),
+            Provider::Generic,
+        ));
+
+        let router1 = build_router(Provider::Generic).with_state(state1);
+        let router2 = build_router(Provider::Generic).with_state(state2);
+
+        // /v1/messages should be routed
+        let req1 = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .header("host", "localhost")
+            .body(Body::from(r#"{"model":"test","messages":[]}"#))
+            .unwrap();
+
+        let resp1 = router1.oneshot(req1).await.unwrap();
+        assert_ne!(resp1.status(), StatusCode::NOT_FOUND);
+
+        // /v1/chat/completions should also be routed
+        let req2 = Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .header("host", "localhost")
+            .body(Body::from(r#"{"model":"gpt-4","messages":[]}"#))
+            .unwrap();
+
+        let resp2 = router2.oneshot(req2).await.unwrap();
+        assert_ne!(resp2.status(), StatusCode::NOT_FOUND);
+    }
 }

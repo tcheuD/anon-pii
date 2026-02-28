@@ -231,6 +231,10 @@ pub enum Commands {
         /// Directory to store session data (mapping files)
         #[arg(long)]
         session_dir: Option<PathBuf>,
+
+        /// API provider (anthropic, openai, generic)
+        #[arg(long, default_value = "anthropic")]
+        provider: String,
     },
 }
 

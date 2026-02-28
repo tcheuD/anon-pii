@@ -20,28 +20,50 @@ const SSE_STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6
 /// Maximum size for internal SSE buffers (utf8_buf, line_buf) — 1 MB each.
 const MAX_SSE_BUFFER_SIZE: usize = 1024 * 1024;
 
-/// Headers allowed to be forwarded to the upstream API.
-/// Everything else is dropped to prevent leaking cookies, internal routing
-/// headers, proxy headers, and client IP addresses.
-const ALLOWED_UPSTREAM_HEADERS: &[&str] = &[
-    "x-api-key",
-    "authorization",
-    "content-type",
-    "accept",
-    "anthropic-version",
-    "anthropic-beta",
-    "user-agent",
-];
+/// Headers allowed to be forwarded to the upstream API (base headers).
+/// Provider-specific headers are added via `allowed_headers_for_provider`.
+const ALLOWED_UPSTREAM_HEADERS_BASE: &[&str] =
+    &["authorization", "content-type", "accept", "user-agent"];
 
-/// Filter headers to only include those in the upstream allowlist.
+/// Anthropic-specific headers.
+const ALLOWED_UPSTREAM_HEADERS_ANTHROPIC: &[&str] =
+    &["x-api-key", "anthropic-version", "anthropic-beta"];
+
+/// OpenAI-specific headers.
+const ALLOWED_UPSTREAM_HEADERS_OPENAI: &[&str] = &["openai-organization", "openai-project"];
+
+use super::Provider;
+
+/// Get the list of allowed headers for a specific provider.
+fn allowed_headers_for_provider(provider: Provider) -> Vec<&'static str> {
+    let mut headers: Vec<&'static str> = ALLOWED_UPSTREAM_HEADERS_BASE.to_vec();
+    match provider {
+        Provider::Anthropic => {
+            headers.extend_from_slice(ALLOWED_UPSTREAM_HEADERS_ANTHROPIC);
+        }
+        Provider::OpenAi => {
+            headers.extend_from_slice(ALLOWED_UPSTREAM_HEADERS_OPENAI);
+        }
+        Provider::Generic => {
+            // Generic provider allows all provider-specific headers
+            headers.extend_from_slice(ALLOWED_UPSTREAM_HEADERS_ANTHROPIC);
+            headers.extend_from_slice(ALLOWED_UPSTREAM_HEADERS_OPENAI);
+        }
+    }
+    headers
+}
+
+/// Filter headers to only include those allowed for the provider.
 fn filter_headers_for_upstream(
     headers: &HeaderMap,
     builder: reqwest::RequestBuilder,
+    provider: Provider,
 ) -> reqwest::RequestBuilder {
+    let allowed = allowed_headers_for_provider(provider);
     let mut req = builder;
     for (name, value) in headers.iter() {
         let name_str = name.as_str();
-        if ALLOWED_UPSTREAM_HEADERS.contains(&name_str) {
+        if allowed.contains(&name_str) {
             if let Ok(rn) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
                 if let Ok(rv) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
                     req = req.header(rn, rv);
@@ -113,7 +135,7 @@ pub async fn handle_messages(
     let mut upstream_req = state.client.post(&upstream_url);
 
     // Forward only allowlisted headers
-    upstream_req = filter_headers_for_upstream(&headers, upstream_req);
+    upstream_req = filter_headers_for_upstream(&headers, upstream_req, state.provider);
 
     upstream_req = upstream_req.body(anonymized_body);
 
@@ -357,11 +379,26 @@ fn process_sse_line<R: TokenResolver>(
     }
 }
 
-/// Allowed passthrough path prefixes — only forward to known Anthropic API paths.
-const ALLOWED_PASSTHROUGH_PREFIXES: &[&str] = &["/v1/"];
+/// Allowed passthrough path prefixes for Anthropic API.
+const ALLOWED_PASSTHROUGH_PREFIXES_ANTHROPIC: &[&str] = &["/v1/"];
+
+/// Allowed passthrough path prefixes for OpenAI API.
+const ALLOWED_PASSTHROUGH_PREFIXES_OPENAI: &[&str] = &["/v1/"];
+
+/// Allowed passthrough path prefixes for generic provider (all paths).
+const ALLOWED_PASSTHROUGH_PREFIXES_GENERIC: &[&str] = &["/"];
+
+/// Get allowed passthrough prefixes for a provider.
+fn allowed_passthrough_prefixes_for_provider(provider: Provider) -> &'static [&'static str] {
+    match provider {
+        Provider::Anthropic => ALLOWED_PASSTHROUGH_PREFIXES_ANTHROPIC,
+        Provider::OpenAi => ALLOWED_PASSTHROUGH_PREFIXES_OPENAI,
+        Provider::Generic => ALLOWED_PASSTHROUGH_PREFIXES_GENERIC,
+    }
+}
 
 /// Passthrough handler for any non-/v1/messages paths.
-/// Forwards the request to known Anthropic API paths without anonymization.
+/// Forwards the request to known API paths without anonymization.
 /// Rejects requests to unrecognized paths to prevent SSRF.
 pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body>) -> Response {
     let method = req.method().clone();
@@ -380,8 +417,9 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
             .into_response();
     }
 
-    // Reject paths that don't match known API prefixes
-    if !ALLOWED_PASSTHROUGH_PREFIXES
+    // Reject paths that don't match known API prefixes for this provider
+    let allowed_prefixes = allowed_passthrough_prefixes_for_provider(state.provider);
+    if !allowed_prefixes
         .iter()
         .any(|prefix| path.starts_with(prefix))
     {
@@ -405,7 +443,7 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
     );
 
     // Forward only allowlisted headers
-    upstream_req = filter_headers_for_upstream(&headers, upstream_req);
+    upstream_req = filter_headers_for_upstream(&headers, upstream_req, state.provider);
 
     if !body_bytes.is_empty() {
         upstream_req = upstream_req.body(body_bytes.to_vec());
@@ -443,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_allowed_upstream_headers_allowlist() {
-        // Verify that sensitive headers are NOT in the allowlist
+        // Verify that sensitive headers are NOT in any provider's allowlist
         let sensitive = [
             "cookie",
             "set-cookie",
@@ -454,11 +492,14 @@ mod tests {
             "forwarded",
             "referer",
         ];
-        for h in &sensitive {
-            assert!(
-                !ALLOWED_UPSTREAM_HEADERS.contains(h),
-                "Sensitive header '{h}' must not be in the upstream allowlist"
-            );
+        for provider in [Provider::Anthropic, Provider::OpenAi, Provider::Generic] {
+            let allowed = allowed_headers_for_provider(provider);
+            for h in &sensitive {
+                assert!(
+                    !allowed.contains(h),
+                    "Sensitive header '{h}' must not be in the {provider} allowlist"
+                );
+            }
         }
     }
 
@@ -466,7 +507,7 @@ mod tests {
     fn test_filter_headers_drops_sensitive() {
         let client = reqwest::Client::new();
         let mut headers = HeaderMap::new();
-        // Allowed
+        // Allowed for Anthropic
         headers.insert("x-api-key", HeaderValue::from_static("sk-test"));
         headers.insert("content-type", HeaderValue::from_static("application/json"));
         headers.insert("anthropic-version", HeaderValue::from_static("2024-01-01"));
@@ -477,7 +518,7 @@ mod tests {
         headers.insert("referer", HeaderValue::from_static("http://internal.corp"));
 
         let builder = client.post("http://localhost/test");
-        let filtered = filter_headers_for_upstream(&headers, builder);
+        let filtered = filter_headers_for_upstream(&headers, builder, Provider::Anthropic);
 
         // Build the request to inspect headers
         let req = filtered.build().unwrap();
@@ -513,6 +554,7 @@ mod tests {
             "http://localhost:0".to_string(),
             0.0,
             std::env::temp_dir().join("anon-test-handler"),
+            Provider::Anthropic,
         ));
 
         // Build a request body that exceeds MAX_REQUEST_BODY_SIZE
@@ -552,6 +594,7 @@ mod tests {
             "http://localhost:0".to_string(),
             0.0,
             std::env::temp_dir().join("anon-test-traversal"),
+            Provider::Anthropic,
         ));
 
         let req = Request::builder()
@@ -577,6 +620,7 @@ mod tests {
             "http://localhost:0".to_string(),
             0.0,
             std::env::temp_dir().join("anon-test-traversal-ok"),
+            Provider::Anthropic,
         ));
 
         let req = Request::builder()
@@ -597,6 +641,7 @@ mod tests {
             "http://localhost:0".to_string(),
             0.0,
             std::env::temp_dir().join("anon-test-traversal-enc"),
+            Provider::Anthropic,
         ));
 
         // Even with valid prefix, .. in query or later segments should be blocked
@@ -616,6 +661,7 @@ mod tests {
             "http://localhost:0".to_string(),
             0.0,
             std::env::temp_dir().join("anon-test-handler"),
+            Provider::Anthropic,
         ));
 
         // Valid-sized JSON body — will fail at upstream connect, not at size limit
@@ -629,5 +675,59 @@ mod tests {
         let resp = handle_messages(State(state), HeaderMap::new(), req).await;
         // Should NOT be 413 — it will be 502 (upstream unreachable) or similar
         assert_ne!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn test_allowed_headers_for_anthropic_provider() {
+        let headers = allowed_headers_for_provider(Provider::Anthropic);
+        assert!(headers.contains(&"x-api-key"));
+        assert!(headers.contains(&"anthropic-version"));
+        assert!(headers.contains(&"anthropic-beta"));
+        assert!(headers.contains(&"authorization"));
+        assert!(headers.contains(&"content-type"));
+        // Should NOT contain OpenAI-specific headers
+        assert!(!headers.contains(&"openai-organization"));
+        assert!(!headers.contains(&"openai-project"));
+    }
+
+    #[test]
+    fn test_allowed_headers_for_openai_provider() {
+        let headers = allowed_headers_for_provider(Provider::OpenAi);
+        assert!(headers.contains(&"openai-organization"));
+        assert!(headers.contains(&"openai-project"));
+        assert!(headers.contains(&"authorization"));
+        assert!(headers.contains(&"content-type"));
+        // Should NOT contain Anthropic-specific headers
+        assert!(!headers.contains(&"x-api-key"));
+        assert!(!headers.contains(&"anthropic-version"));
+    }
+
+    #[test]
+    fn test_allowed_headers_for_generic_provider() {
+        let headers = allowed_headers_for_provider(Provider::Generic);
+        // Generic should allow all headers
+        assert!(headers.contains(&"x-api-key"));
+        assert!(headers.contains(&"anthropic-version"));
+        assert!(headers.contains(&"openai-organization"));
+        assert!(headers.contains(&"openai-project"));
+        assert!(headers.contains(&"authorization"));
+    }
+
+    #[test]
+    fn test_passthrough_prefixes_for_anthropic() {
+        let prefixes = allowed_passthrough_prefixes_for_provider(Provider::Anthropic);
+        assert!(prefixes.contains(&"/v1/"));
+    }
+
+    #[test]
+    fn test_passthrough_prefixes_for_openai() {
+        let prefixes = allowed_passthrough_prefixes_for_provider(Provider::OpenAi);
+        assert!(prefixes.contains(&"/v1/"));
+    }
+
+    #[test]
+    fn test_passthrough_prefixes_for_generic() {
+        let prefixes = allowed_passthrough_prefixes_for_provider(Provider::Generic);
+        assert!(prefixes.contains(&"/"));
     }
 }
