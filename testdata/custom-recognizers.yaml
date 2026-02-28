@@ -1,0 +1,31 @@
+# Sample YAML configuration for custom PII recognizers
+#
+# This file demonstrates how to define custom entity recognizers
+# without writing Rust code. Each recognizer has:
+#   - name: Human-readable description
+#   - entity_type: UPPER_SNAKE_CASE identifier (Presidio style)
+#   - patterns: List of regex patterns with confidence scores
+#   - context_keywords: Words that boost confidence when nearby (optional)
+#   - context_required: If true, context keywords are required for a match
+#
+# Usage:
+#   anon --config custom-recognizers.yaml input.txt
+
+recognizers:
+  # French license plate (new format since 2009: AA-123-BB)
+  - name: "French license plate"
+    entity_type: "FR_LICENSE_PLATE"
+    patterns:
+      - regex: '\b[A-Z]{2}-\d{3}-[A-Z]{2}\b'
+        score: 0.85
+    context_keywords: ["plaque", "immatriculation", "vehicule", "voiture", "camion"]
+    context_required: false
+
+  # Internal project codes (requires context to avoid false positives)
+  - name: "Internal project code"
+    entity_type: "INTERNAL_PROJECT_CODE"
+    patterns:
+      - regex: '\bPRJ-\d{4}-\d{3}\b'
+        score: 0.9
+    context_keywords: ["projet", "project", "dossier", "mission"]
+    context_required: true
