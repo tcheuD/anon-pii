@@ -8,6 +8,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 
 use super::anthropic;
+use super::openai;
 use super::sse::{self, TokenBuffer, TokenResolver};
 use super::ProxyState;
 
@@ -113,10 +114,23 @@ pub async fn handle_messages(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Anonymize the request
+    // Anonymize the request based on provider
     {
         let mut anonymizer = state.anonymizer.lock().await;
-        anthropic::anonymize_request(&mut body_json, &mut anonymizer);
+        match state.provider {
+            Provider::Anthropic => anthropic::anonymize_request(&mut body_json, &mut anonymizer),
+            Provider::OpenAi => openai::anonymize_request(&mut body_json, &mut anonymizer),
+            Provider::Generic => {
+                // For generic, try to detect based on request structure
+                // OpenAI uses "messages" with no "system" at top level (system is in messages)
+                // Anthropic uses top-level "system" field
+                if body_json.get("system").is_some() {
+                    anthropic::anonymize_request(&mut body_json, &mut anonymizer);
+                } else {
+                    openai::anonymize_request(&mut body_json, &mut anonymizer);
+                }
+            }
+        }
     }
 
     let anonymized_body = match serde_json::to_vec(&body_json) {
@@ -130,8 +144,20 @@ pub async fn handle_messages(
         }
     };
 
-    // Build upstream request
-    let upstream_url = format!("{}/v1/messages", state.upstream);
+    // Build upstream request with provider-specific path
+    let upstream_path = match state.provider {
+        Provider::Anthropic => "/v1/messages",
+        Provider::OpenAi => "/v1/chat/completions",
+        Provider::Generic => {
+            // For generic, try to infer from request body
+            if body_json.get("system").is_some() {
+                "/v1/messages"
+            } else {
+                "/v1/chat/completions"
+            }
+        }
+    };
+    let upstream_url = format!("{}{}", state.upstream, upstream_path);
     let mut upstream_req = state.client.post(&upstream_url);
 
     // Forward only allowlisted headers
@@ -178,7 +204,21 @@ async fn handle_non_streaming(
     let final_body = if status.is_success() {
         if let Ok(mut resp_json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
             let mapping = state.get_mapping_snapshot().await;
-            anthropic::restore_response(&mut resp_json, &mapping);
+
+            // Restore tokens based on provider
+            match state.provider {
+                Provider::Anthropic => anthropic::restore_response(&mut resp_json, &mapping),
+                Provider::OpenAi => openai::restore_response(&mut resp_json, &mapping),
+                Provider::Generic => {
+                    // For generic, try to detect based on response structure
+                    // OpenAI responses have "choices" array, Anthropic has "content" array
+                    if resp_json.get("choices").is_some() {
+                        openai::restore_response(&mut resp_json, &mapping);
+                    } else {
+                        anthropic::restore_response(&mut resp_json, &mapping);
+                    }
+                }
+            }
 
             // Dump mapping
             if let Err(e) = state.dump_mapping().await {

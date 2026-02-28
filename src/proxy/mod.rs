@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod handler;
+pub mod openai;
 pub mod sse;
 
 use std::net::SocketAddr;
