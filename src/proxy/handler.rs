@@ -1193,4 +1193,731 @@ mod tests {
             "Anthropic provider should reject non-JSON bodies"
         );
     }
+
+    // ============================================================================
+    // INTEGRATION TESTS: ANTHROPIC PROVIDER (REGRESSION)
+    // ============================================================================
+
+    /// Anthropic: test that system string gets anonymized
+    #[test]
+    fn test_anthropic_integration_system_string_anonymized() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "system": "Contact support at admin@company.com or call +1 555-123-4567",
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+
+        anthropic::anonymize_request(&mut body, &mut anonymizer);
+
+        let system = body["system"].as_str().unwrap();
+        assert!(
+            system.contains("[EMAIL_ADDRESS_"),
+            "Anthropic system: email should be anonymized, got: {system}"
+        );
+        assert!(
+            !system.contains("admin@company.com"),
+            "Anthropic system: original email should not appear"
+        );
+    }
+
+    /// Anthropic: test that system array of content blocks gets anonymized
+    #[test]
+    fn test_anthropic_integration_system_array_anonymized() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "Admin email: admin@company.com"},
+                {"type": "text", "text": "Server IP: 192.168.1.100"}
+            ],
+            "messages": [
+                {"role": "user", "content": "Hello"}
+            ]
+        });
+
+        anthropic::anonymize_request(&mut body, &mut anonymizer);
+
+        let text0 = body["system"][0]["text"].as_str().unwrap();
+        assert!(
+            text0.contains("[EMAIL_ADDRESS_"),
+            "Anthropic system array: email should be anonymized, got: {text0}"
+        );
+
+        let text1 = body["system"][1]["text"].as_str().unwrap();
+        assert!(
+            text1.contains("[IP_ADDRESS_"),
+            "Anthropic system array: IP should be anonymized, got: {text1}"
+        );
+    }
+
+    /// Anthropic: test tool_result content string anonymization
+    #[test]
+    fn test_anthropic_integration_tool_result_string_anonymized() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_123",
+                            "content": "Found user john@example.com at 10.0.0.42"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        anthropic::anonymize_request(&mut body, &mut anonymizer);
+
+        let content = body["messages"][0]["content"][0]["content"]
+            .as_str()
+            .unwrap();
+        assert!(
+            content.contains("[EMAIL_ADDRESS_"),
+            "Anthropic tool_result: email should be anonymized, got: {content}"
+        );
+        assert!(
+            content.contains("[IP_ADDRESS_"),
+            "Anthropic tool_result: IP should be anonymized, got: {content}"
+        );
+    }
+
+    /// Anthropic: test tool_result content array anonymization
+    #[test]
+    fn test_anthropic_integration_tool_result_array_anonymized() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_123",
+                            "content": [
+                                {"type": "text", "text": "Email: secret@hidden.org"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        anthropic::anonymize_request(&mut body, &mut anonymizer);
+
+        let text = body["messages"][0]["content"][0]["content"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(
+            text.contains("[EMAIL_ADDRESS_"),
+            "Anthropic tool_result array: email should be anonymized, got: {text}"
+        );
+    }
+
+    /// Anthropic: end-to-end anonymize -> restore roundtrip
+    #[test]
+    fn test_anthropic_integration_roundtrip() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let original_email = "roundtrip@test.com";
+        let original_ip = "172.16.0.1";
+
+        let mut body = serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "messages": [
+                {"role": "user", "content": format!("Contact {} at {}", original_email, original_ip)}
+            ]
+        });
+
+        anthropic::anonymize_request(&mut body, &mut anonymizer);
+
+        // Build a mock response with the tokens
+        let anon_content = body["messages"][0]["content"].as_str().unwrap();
+        let mut response = serde_json::json!({
+            "content": [
+                {"type": "text", "text": format!("I see {}", anon_content)}
+            ]
+        });
+
+        anthropic::restore_response(&mut response, &anonymizer.mapping);
+
+        let restored = response["content"][0]["text"].as_str().unwrap();
+        assert!(
+            restored.contains(original_email),
+            "Anthropic roundtrip: email should be restored, got: {restored}"
+        );
+        assert!(
+            restored.contains(original_ip),
+            "Anthropic roundtrip: IP should be restored, got: {restored}"
+        );
+    }
+
+    // ============================================================================
+    // INTEGRATION TESTS: OPENAI PROVIDER
+    // ============================================================================
+
+    /// OpenAI: test multiple tool_calls in a single message
+    #[test]
+    fn test_openai_integration_multiple_tool_calls() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "model": "gpt-4",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_user",
+                                "arguments": "{\"email\": \"john@example.com\"}"
+                            }
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {
+                                "name": "get_server",
+                                "arguments": "{\"ip\": \"192.168.1.100\"}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        openai::anonymize_request(&mut body, &mut anonymizer);
+
+        let args1 = body["messages"][0]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .unwrap();
+        assert!(
+            args1.contains("[EMAIL_ADDRESS_"),
+            "OpenAI multiple tool_calls: first email should be anonymized, got: {args1}"
+        );
+
+        let args2 = body["messages"][0]["tool_calls"][1]["function"]["arguments"]
+            .as_str()
+            .unwrap();
+        assert!(
+            args2.contains("[IP_ADDRESS_"),
+            "OpenAI multiple tool_calls: second IP should be anonymized, got: {args2}"
+        );
+    }
+
+    /// OpenAI: test nested tool parameters descriptions
+    #[test]
+    fn test_openai_integration_nested_tool_parameters() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "complex_tool",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "config": {
+                                    "type": "object",
+                                    "description": "Contact admin@support.com for help",
+                                    "properties": {
+                                        "endpoint": {
+                                            "type": "string",
+                                            "description": "Server at 10.0.0.42"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        openai::anonymize_request(&mut body, &mut anonymizer);
+
+        let config_desc = body["tools"][0]["function"]["parameters"]["properties"]["config"]
+            ["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            config_desc.contains("[EMAIL_ADDRESS_"),
+            "OpenAI nested params: top-level description should be anonymized, got: {config_desc}"
+        );
+
+        let endpoint_desc = body["tools"][0]["function"]["parameters"]["properties"]["config"]
+            ["properties"]["endpoint"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            endpoint_desc.contains("[IP_ADDRESS_"),
+            "OpenAI nested params: nested description should be anonymized, got: {endpoint_desc}"
+        );
+    }
+
+    /// OpenAI: end-to-end anonymize -> restore roundtrip
+    #[test]
+    fn test_openai_integration_roundtrip() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let original_email = "openai-roundtrip@test.com";
+
+        let mut request = serde_json::json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "user", "content": format!("My email is {}", original_email)}
+            ]
+        });
+
+        openai::anonymize_request(&mut request, &mut anonymizer);
+
+        // Build a mock response echoing the token
+        let anon_content = request["messages"][0]["content"].as_str().unwrap();
+        let mut response = serde_json::json!({
+            "id": "chatcmpl-test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": format!("Got your email: {}", anon_content)
+                    },
+                    "finish_reason": "stop"
+                }
+            ]
+        });
+
+        openai::restore_response(&mut response, &anonymizer.mapping);
+
+        let restored = response["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap();
+        assert!(
+            restored.contains(original_email),
+            "OpenAI roundtrip: email should be restored, got: {restored}"
+        );
+    }
+
+    /// OpenAI: SSE streaming content delta restoration
+    #[test]
+    fn test_openai_integration_sse_streaming_content() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_stream123]".to_string(),
+            "stream@test.com".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+
+        // Simulate streaming deltas split across events
+        let mut output = String::new();
+
+        // First chunk: partial token
+        let line1 = r#"data: {"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"content":"Your email is [EMAIL_"},"finish_reason":null}]}"#;
+        process_sse_line(line1, &mut token_buffer, &mut output, Provider::OpenAi);
+
+        // Second chunk: rest of token
+        let line2 = r#"data: {"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"content":"ADDRESS_stream123]"},"finish_reason":null}]}"#;
+        process_sse_line(line2, &mut token_buffer, &mut output, Provider::OpenAi);
+
+        assert!(
+            output.contains("stream@test.com"),
+            "OpenAI SSE streaming: token should be restored across chunks, got: {output}"
+        );
+    }
+
+    /// OpenAI: SSE streaming tool_calls arguments restoration
+    #[test]
+    fn test_openai_integration_sse_streaming_tool_calls() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[IP_ADDRESS_toolcall1]".to_string(),
+            "10.20.30.40".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        let line = r#"data: {"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"[IP_ADDRESS_toolcall1]"}}]},"finish_reason":null}]}"#;
+        process_sse_line(line, &mut token_buffer, &mut output, Provider::OpenAi);
+
+        assert!(
+            output.contains("10.20.30.40"),
+            "OpenAI SSE tool_calls: IP should be restored, got: {output}"
+        );
+    }
+
+    // ============================================================================
+    // INTEGRATION TESTS: GENERIC PROVIDER
+    // ============================================================================
+
+    /// Generic: deeply nested objects are fully anonymized
+    #[test]
+    fn test_generic_integration_deep_nesting() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "level1": {
+                "level2": {
+                    "level3": {
+                        "level4": {
+                            "secret": "Deep email: deep@nested.com"
+                        }
+                    }
+                }
+            }
+        });
+
+        generic::anonymize_request(&mut body, &mut anonymizer);
+
+        let secret = body["level1"]["level2"]["level3"]["level4"]["secret"]
+            .as_str()
+            .unwrap();
+        assert!(
+            secret.contains("[EMAIL_ADDRESS_"),
+            "Generic deep nesting: email should be anonymized, got: {secret}"
+        );
+    }
+
+    /// Generic: mixed arrays and objects are fully anonymized
+    #[test]
+    fn test_generic_integration_mixed_structure() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "users": [
+                {
+                    "emails": ["user1@test.com", "user1-alt@test.com"],
+                    "ips": ["192.168.1.1", "192.168.1.2"]
+                },
+                {
+                    "emails": ["user2@test.com"],
+                    "ips": ["10.0.0.1"]
+                }
+            ]
+        });
+
+        generic::anonymize_request(&mut body, &mut anonymizer);
+
+        // Check all emails are anonymized
+        let email00 = body["users"][0]["emails"][0].as_str().unwrap();
+        assert!(
+            email00.contains("[EMAIL_ADDRESS_"),
+            "Generic mixed: first user first email should be anonymized, got: {email00}"
+        );
+
+        let email01 = body["users"][0]["emails"][1].as_str().unwrap();
+        assert!(
+            email01.contains("[EMAIL_ADDRESS_"),
+            "Generic mixed: first user second email should be anonymized, got: {email01}"
+        );
+
+        let email10 = body["users"][1]["emails"][0].as_str().unwrap();
+        assert!(
+            email10.contains("[EMAIL_ADDRESS_"),
+            "Generic mixed: second user email should be anonymized, got: {email10}"
+        );
+
+        // Check all IPs are anonymized
+        let ip00 = body["users"][0]["ips"][0].as_str().unwrap();
+        assert!(
+            ip00.contains("[IP_ADDRESS_"),
+            "Generic mixed: first user first IP should be anonymized, got: {ip00}"
+        );
+    }
+
+    /// Generic: end-to-end roundtrip with complex structure
+    #[test]
+    fn test_generic_integration_roundtrip() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let original_email = "generic-roundtrip@test.com";
+        let original_ip = "203.0.113.42";
+
+        let mut request = serde_json::json!({
+            "data": {
+                "contact": original_email,
+                "server": original_ip
+            }
+        });
+
+        generic::anonymize_request(&mut request, &mut anonymizer);
+
+        // Build mock response with tokens
+        let anon_email = request["data"]["contact"].as_str().unwrap();
+        let anon_ip = request["data"]["server"].as_str().unwrap();
+
+        let mut response = serde_json::json!({
+            "result": {
+                "processed_contact": anon_email,
+                "processed_server": anon_ip
+            }
+        });
+
+        generic::restore_response(&mut response, &anonymizer.mapping);
+
+        let restored_email = response["result"]["processed_contact"].as_str().unwrap();
+        assert!(
+            restored_email.contains(original_email),
+            "Generic roundtrip: email should be restored, got: {restored_email}"
+        );
+
+        let restored_ip = response["result"]["processed_server"].as_str().unwrap();
+        assert!(
+            restored_ip.contains(original_ip),
+            "Generic roundtrip: IP should be restored, got: {restored_ip}"
+        );
+    }
+
+    /// Generic: SSE streaming with unknown format (fallback to line-based restore)
+    #[test]
+    fn test_generic_integration_sse_unknown_format() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_unknown1]".to_string(),
+            "unknown@format.com".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        // Non-standard SSE format (not OpenAI or Anthropic schema)
+        let line = r#"data: {"custom_field": "Value is [EMAIL_ADDRESS_unknown1]"}"#;
+        process_sse_line(line, &mut token_buffer, &mut output, Provider::Generic);
+
+        assert!(
+            output.contains("unknown@format.com"),
+            "Generic SSE unknown format: token should be restored, got: {output}"
+        );
+    }
+
+    // ============================================================================
+    // ERROR CASE TESTS
+    // ============================================================================
+
+    /// Test empty body handling for Anthropic provider
+    #[tokio::test]
+    async fn test_anthropic_empty_body_returns_error() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-anthropic-empty"),
+            Provider::Anthropic,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+
+        // Empty body should return BAD_REQUEST for schema-based providers
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "Anthropic: empty body should return 400 Bad Request"
+        );
+    }
+
+    /// Test empty body handling for OpenAI provider
+    #[tokio::test]
+    async fn test_openai_empty_body_returns_error() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-openai-empty"),
+            Provider::OpenAi,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+
+        // Empty body should return BAD_REQUEST for schema-based providers
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "OpenAI: empty body should return 400 Bad Request"
+        );
+    }
+
+    /// Test empty body handling for Generic provider (should pass through)
+    #[tokio::test]
+    async fn test_generic_empty_body_passes_through() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-empty"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+
+        // Generic provider should pass through empty bodies (will fail at upstream connect)
+        // NOT return 400 Bad Request
+        assert_ne!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "Generic: empty body should NOT return 400 (upstream may be unreachable though)"
+        );
+    }
+
+    /// Test malformed JSON handling
+    #[tokio::test]
+    async fn test_malformed_json_returns_error() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-malformed-json"),
+            Provider::Anthropic,
+        ));
+
+        // Malformed JSON: missing closing brace
+        let body = br#"{"model": "claude", "messages": ["#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .body(Body::from(body.to_vec()))
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "Malformed JSON should return 400 Bad Request"
+        );
+
+        let body_bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let text = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            text.to_lowercase().contains("json") || text.to_lowercase().contains("parse"),
+            "Error message should mention JSON parsing issue: {text}"
+        );
+    }
+
+    /// Test header forwarding: OpenAI headers NOT forwarded to Anthropic provider
+    #[test]
+    fn test_header_forwarding_openai_headers_blocked_for_anthropic() {
+        let client = reqwest::Client::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("openai-organization", HeaderValue::from_static("org-123"));
+        headers.insert("openai-project", HeaderValue::from_static("proj-456"));
+        headers.insert("x-api-key", HeaderValue::from_static("sk-ant-test"));
+
+        let builder = client.post("http://localhost/test");
+        let filtered = filter_headers_for_upstream(&headers, builder, Provider::Anthropic);
+        let req = filtered.build().unwrap();
+        let fwd_headers = req.headers();
+
+        // OpenAI headers should NOT be forwarded to Anthropic
+        assert!(
+            fwd_headers.get("openai-organization").is_none(),
+            "openai-organization should not be forwarded to Anthropic"
+        );
+        assert!(
+            fwd_headers.get("openai-project").is_none(),
+            "openai-project should not be forwarded to Anthropic"
+        );
+
+        // Anthropic headers SHOULD be forwarded
+        assert_eq!(
+            fwd_headers.get("x-api-key").unwrap(),
+            "sk-ant-test",
+            "x-api-key should be forwarded to Anthropic"
+        );
+    }
+
+    /// Test header forwarding: Anthropic headers NOT forwarded to OpenAI provider
+    #[test]
+    fn test_header_forwarding_anthropic_headers_blocked_for_openai() {
+        let client = reqwest::Client::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("sk-ant-test"));
+        headers.insert("anthropic-version", HeaderValue::from_static("2024-01-01"));
+        headers.insert("authorization", HeaderValue::from_static("Bearer sk-test"));
+
+        let builder = client.post("http://localhost/test");
+        let filtered = filter_headers_for_upstream(&headers, builder, Provider::OpenAi);
+        let req = filtered.build().unwrap();
+        let fwd_headers = req.headers();
+
+        // Anthropic headers should NOT be forwarded to OpenAI
+        assert!(
+            fwd_headers.get("x-api-key").is_none(),
+            "x-api-key should not be forwarded to OpenAI"
+        );
+        assert!(
+            fwd_headers.get("anthropic-version").is_none(),
+            "anthropic-version should not be forwarded to OpenAI"
+        );
+
+        // Standard headers SHOULD be forwarded
+        assert_eq!(
+            fwd_headers.get("authorization").unwrap(),
+            "Bearer sk-test",
+            "authorization should be forwarded to OpenAI"
+        );
+    }
+
+    /// Test header forwarding: Generic provider forwards ALL provider headers
+    #[test]
+    fn test_header_forwarding_generic_allows_all() {
+        let client = reqwest::Client::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("sk-ant-test"));
+        headers.insert("anthropic-version", HeaderValue::from_static("2024-01-01"));
+        headers.insert("openai-organization", HeaderValue::from_static("org-123"));
+        headers.insert("authorization", HeaderValue::from_static("Bearer sk-test"));
+
+        let builder = client.post("http://localhost/test");
+        let filtered = filter_headers_for_upstream(&headers, builder, Provider::Generic);
+        let req = filtered.build().unwrap();
+        let fwd_headers = req.headers();
+
+        // Generic provider should forward ALL provider-specific headers
+        assert_eq!(
+            fwd_headers.get("x-api-key").unwrap(),
+            "sk-ant-test",
+            "x-api-key should be forwarded for Generic"
+        );
+        assert_eq!(
+            fwd_headers.get("anthropic-version").unwrap(),
+            "2024-01-01",
+            "anthropic-version should be forwarded for Generic"
+        );
+        assert_eq!(
+            fwd_headers.get("openai-organization").unwrap(),
+            "org-123",
+            "openai-organization should be forwarded for Generic"
+        );
+        assert_eq!(
+            fwd_headers.get("authorization").unwrap(),
+            "Bearer sk-test",
+            "authorization should be forwarded for Generic"
+        );
+    }
 }

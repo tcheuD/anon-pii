@@ -2,24 +2,38 @@
 
 [Back to README](../README.md)
 
-Anonymizing reverse proxy that sits between AI coding tools and the Anthropic API. PII is stripped from outgoing prompts and restored in incoming responses — including SSE streams.
+Anonymizing reverse proxy that sits between AI coding tools and LLM APIs. PII is stripped from outgoing prompts and restored in incoming responses — including SSE streams. Supports Anthropic, OpenAI, and generic LLM providers.
+
+## Supported Providers
+
+| Provider | Endpoint | Description |
+|----------|----------|-------------|
+| `anthropic` (default) | `/v1/messages` | Anthropic Claude API - schema-aware anonymization |
+| `openai` | `/v1/chat/completions` | OpenAI Chat Completions API - schema-aware anonymization |
+| `generic` | Both endpoints | Any LLM API - whole-body JSON anonymization |
+
+### Provider-specific behavior
+
+- **Anthropic**: Anonymizes `system`, `messages[].content`, `tool_result.content`, `tool_use.input`. Only forwards Anthropic headers (`x-api-key`, `anthropic-version`, `anthropic-beta`).
+- **OpenAI**: Anonymizes `messages[].content`, `tool_calls[].function.arguments`, `tools[].function.parameters.*.description`. Only forwards OpenAI headers (`openai-organization`, `openai-project`).
+- **Generic**: Anonymizes all string values in the entire JSON body recursively. Forwards all provider headers. Use this for local LLMs (Ollama, vLLM) or unsupported providers.
 
 ## Request / response flow
 
 ```mermaid
 sequenceDiagram
-    participant C as Claude / client
+    participant C as Client
     participant P as anon proxy
-    participant A as Anthropic API
+    participant A as LLM API
     participant F as mapping.json
 
-    C->>P: POST /v1/messages (JSON, optional stream=true)
-    P->>P: Parse + anonymize schema fields
+    C->>P: POST /v1/messages or /v1/chat/completions (JSON, optional stream=true)
+    P->>P: Parse + anonymize (schema-aware or whole-body)
     P->>A: Forward allowlisted headers + anonymized body
     A-->>P: Response (JSON or SSE)
 
     alt Non-streaming JSON
-        P->>P: Restore bracketed tokens in content[].text
+        P->>P: Restore bracketed tokens in response
     else Streaming SSE
         loop For each SSE delta chunk
             P->>P: TokenBuffer rebuilds split [TOKEN_...]
@@ -48,15 +62,32 @@ flowchart TD
 ## Start the proxy
 
 ```bash
+# Anthropic (default)
 anon proxy
 # anon proxy listening on http://127.0.0.1:9100
 # upstream: https://api.anthropic.com
+
+# OpenAI
+anon proxy --provider openai --upstream https://api.openai.com
+# anon proxy listening on http://127.0.0.1:9100
+# upstream: https://api.openai.com
+
+# Generic (any LLM API)
+anon proxy --provider generic --upstream http://localhost:11434
+# anon proxy listening on http://127.0.0.1:9100
+# upstream: http://localhost:11434
 ```
 
-## Use with Claude Code
+## Use with AI coding tools
 
 ```bash
+# Claude Code (Anthropic)
 ANTHROPIC_BASE_URL=http://127.0.0.1:9100 claude
+
+# OpenAI-compatible tools
+OPENAI_API_BASE=http://127.0.0.1:9100 your-tool
+
+# For tools that need https, use a local TLS terminator like caddy or mkcert
 ```
 
 All prompts are anonymized before reaching the API. Responses have tokens restored automatically.
@@ -69,6 +100,7 @@ All prompts are anonymized before reaching the API. Responses have tokens restor
 | `--upstream` | `-u` | `https://api.anthropic.com` | Upstream API URL |
 | `--threshold` | | `0.5` | Minimum confidence score (0.0-1.0) |
 | `--session-dir` | | `/tmp/anon-proxy-<random>` | Directory for mapping files |
+| `--provider` | | `anthropic` | API provider: `anthropic`, `openai`, or `generic` |
 
 ## Testing without an API key
 
@@ -115,6 +147,8 @@ watch -n1 'jq . /tmp/my-session/mapping.json'
 
 ## Test with curl
 
+### Anthropic API
+
 ```bash
 # Non-streaming
 curl -s http://127.0.0.1:9100/v1/messages \
@@ -142,6 +176,53 @@ curl -s --no-buffer http://127.0.0.1:9100/v1/messages \
       {"role": "user", "content": "What about pilot JDU on aircraft F-HOPA?"}
     ]
   }'
+```
+
+### OpenAI API
+
+```bash
+# Start proxy with OpenAI provider
+anon proxy --provider openai --upstream https://api.openai.com
+
+# Non-streaming
+curl -s http://127.0.0.1:9100/v1/chat/completions \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [
+      {"role": "user", "content": "Contact me at john@example.com"}
+    ]
+  }' | jq .
+
+# Streaming
+curl -s --no-buffer http://127.0.0.1:9100/v1/chat/completions \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "model": "gpt-4",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "My server is at 192.168.1.100"}
+    ]
+  }'
+```
+
+### Generic (Ollama example)
+
+```bash
+# Start proxy with generic provider pointing to Ollama
+anon proxy --provider generic --upstream http://localhost:11434
+
+# Works with any endpoint that Ollama supports
+curl -s http://127.0.0.1:9100/v1/chat/completions \
+  -H "content-type: application/json" \
+  -d '{
+    "model": "llama3.2",
+    "messages": [
+      {"role": "user", "content": "Email admin@secret.com for help"}
+    ]
+  }' | jq .
 ```
 
 ## Security notes
