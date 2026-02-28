@@ -680,3 +680,107 @@ fn try_hybrid_empty_words_on_error() {
     assert_eq!(result.text, "");
     assert!(result.spans.is_empty());
 }
+
+// ── Unicode whitespace tests (issue #81) ─────────────────────────────
+
+#[test]
+fn hybrid_reconstruct_unicode_non_breaking_space() {
+    // Non-breaking space \u{00A0} should be treated as whitespace
+    let words = vec![
+        make_word("hello", 10, 10, 50, 20),
+        make_word("world", 100, 10, 50, 20),
+    ];
+    let full_text = "hello\u{00A0}world"; // non-breaking space
+    let result = hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, full_text);
+    assert_eq!(result.spans.len(), 2);
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "hello");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "world");
+}
+
+#[test]
+fn hybrid_reconstruct_unicode_ideographic_space() {
+    // Ideographic space \u{3000} should be treated as whitespace
+    let words = vec![
+        make_word("hello", 10, 10, 50, 20),
+        make_word("world", 100, 10, 50, 20),
+    ];
+    let full_text = "hello\u{3000}world"; // ideographic space (CJK)
+    let result = hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, full_text);
+    assert_eq!(result.spans.len(), 2);
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "hello");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "world");
+}
+
+#[test]
+fn hybrid_reconstruct_mixed_unicode_whitespace() {
+    // Mix of ASCII and Unicode whitespace characters
+    let words = vec![
+        make_word("a", 10, 10, 20, 20),
+        make_word("b", 50, 10, 20, 20),
+        make_word("c", 90, 10, 20, 20),
+    ];
+    // Space, non-breaking space, ideographic space separating tokens
+    let full_text = "a b\u{00A0}c";
+    let result = hybrid_reconstruct(full_text, &words);
+    assert_eq!(result.text, full_text);
+    assert_eq!(result.spans.len(), 3);
+    assert_eq!(&result.text[result.spans[0].0..result.spans[0].1], "a");
+    assert_eq!(&result.text[result.spans[1].0..result.spans[1].1], "b");
+    assert_eq!(&result.text[result.spans[2].0..result.spans[2].1], "c");
+}
+
+// ── Sentinel span helper tests (issue #81) ───────────────────────────
+
+#[test]
+fn reconstructed_text_span_valid_returns_false_for_sentinel() {
+    // When word count exceeds token count, overflow words get sentinel (0, 0)
+    // Greedy alignment: reading-order word N -> token N
+    // With 3 words and 2 tokens, the last word in reading order gets sentinel
+    let words = vec![
+        make_word("hello", 10, 10, 50, 20),
+        make_word("extra", 70, 10, 50, 20),
+        make_word("world", 200, 10, 50, 20),
+    ];
+    let full_text = "hello world"; // only 2 tokens
+    let result = hybrid_reconstruct(full_text, &words);
+
+    // word[0] -> token[0], word[1] -> token[1], word[2] -> sentinel (0, 0)
+    assert!(result.span_valid(0), "first word should have valid span");
+    assert!(result.span_valid(1), "second word should have valid span");
+    assert!(
+        !result.span_valid(2),
+        "third word should have sentinel span (overflow)"
+    );
+}
+
+#[test]
+fn reconstructed_text_span_valid_all_valid() {
+    let words = vec![
+        make_word("hello", 10, 10, 50, 20),
+        make_word("world", 100, 10, 50, 20),
+    ];
+    let full_text = "hello world";
+    let result = hybrid_reconstruct(full_text, &words);
+
+    assert!(result.span_valid(0));
+    assert!(result.span_valid(1));
+}
+
+#[test]
+fn reconstructed_text_span_valid_out_of_bounds_returns_false() {
+    let words = vec![make_word("hello", 10, 10, 50, 20)];
+    let full_text = "hello";
+    let result = hybrid_reconstruct(full_text, &words);
+
+    assert!(result.span_valid(0));
+    assert!(
+        !result.span_valid(1),
+        "out of bounds index should return false"
+    );
+    assert!(
+        !result.span_valid(999),
+        "out of bounds index should return false"
+    );
+}

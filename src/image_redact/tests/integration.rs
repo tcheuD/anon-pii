@@ -37,7 +37,10 @@ fn e2e_email_image() {
     assert!(
         detections.iter().any(|d| d.entity_type.contains("EMAIL")),
         "should detect EMAIL entity, got: {:?}",
-        detections.iter().map(|d| d.entity_type).collect::<Vec<_>>()
+        detections
+            .iter()
+            .map(|d| d.entity_type.as_ref())
+            .collect::<Vec<_>>()
     );
 
     let regions = region::map_detections(&words, &reconstructed, &detections, 2);
@@ -87,7 +90,7 @@ fn e2e_clean_text_no_pii() {
         "clean text should have no PII detections, got: {:?}",
         detections
             .iter()
-            .map(|d| (d.entity_type, &d.original))
+            .map(|d| (d.entity_type.as_ref(), &d.original))
             .collect::<Vec<_>>()
     );
 
@@ -202,7 +205,7 @@ fn e2e_hybrid_email_ip_creditcard() {
     let mut anonymizer = Anonymizer::new(0.5);
     let detections = anonymizer.analyze(&reconstructed.text);
 
-    let entity_types: Vec<&str> = detections.iter().map(|d| d.entity_type).collect();
+    let entity_types: Vec<&str> = detections.iter().map(|d| d.entity_type.as_ref()).collect();
     assert!(
         entity_types.iter().any(|t| t.contains("EMAIL")),
         "should detect EMAIL_ADDRESS, got: {entity_types:?}"
@@ -260,11 +263,11 @@ fn e2e_hybrid_vs_wordlevel() {
         wordlevel.text,
         hybrid_detections
             .iter()
-            .map(|d| (d.entity_type, &d.original))
+            .map(|d| (d.entity_type.as_ref(), &d.original))
             .collect::<Vec<_>>(),
         wordlevel_detections
             .iter()
-            .map(|d| (d.entity_type, &d.original))
+            .map(|d| (d.entity_type.as_ref(), &d.original))
             .collect::<Vec<_>>()
     );
 }

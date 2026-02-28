@@ -30,10 +30,28 @@ impl std::error::Error for OcrError {}
 ///
 /// `spans[i]` is the `(start, end)` byte range in `text` corresponding to `words[i]`
 /// from the original input slice (not the sorted reading order).
+///
+/// When word count exceeds token count during `hybrid_reconstruct`, overflow words
+/// receive a sentinel span `(0, 0)`. Use [`span_valid`](Self::span_valid) to check
+/// for valid spans before slicing.
 #[derive(Debug, Clone)]
 pub struct ReconstructedText {
     pub text: String,
     pub spans: Vec<(usize, usize)>,
+}
+
+impl ReconstructedText {
+    /// Returns `true` if the span at index `i` is valid (not a sentinel).
+    ///
+    /// Sentinel spans `(0, 0)` are assigned when `hybrid_reconstruct` has more
+    /// word boxes than whitespace-delimited tokens in the full-page text.
+    /// This method returns `false` for out-of-bounds indices as well.
+    pub fn span_valid(&self, i: usize) -> bool {
+        match self.spans.get(i) {
+            Some(&(start, end)) => start != 0 || end != 0,
+            None => false,
+        }
+    }
 }
 
 /// Extract words with bounding boxes from an image using Tesseract OCR.
@@ -277,6 +295,9 @@ pub fn try_hybrid_reconstruct(
 }
 
 /// Iterator over whitespace-delimited tokens, yielding `(start_byte, end_byte)`.
+///
+/// Uses `char::is_whitespace()` to handle Unicode whitespace characters such as
+/// non-breaking space (`\u{00A0}`) and ideographic space (`\u{3000}`).
 struct TokenIter<'a> {
     text: &'a str,
     pos: usize,
@@ -292,29 +313,35 @@ impl<'a> Iterator for TokenIter<'a> {
     type Item = (usize, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let bytes = self.text.as_bytes();
-        // Skip whitespace
-        while self.pos < bytes.len()
-            && (bytes[self.pos] == b' '
-                || bytes[self.pos] == b'\n'
-                || bytes[self.pos] == b'\r'
-                || bytes[self.pos] == b'\t')
-        {
-            self.pos += 1;
+        // Skip whitespace using char_indices for Unicode support
+        for (byte_idx, ch) in self.text[self.pos..].char_indices() {
+            if !ch.is_whitespace() {
+                self.pos += byte_idx;
+                break;
+            }
+            // If we're at the last character and it's whitespace, advance past it
+            if self.pos + byte_idx + ch.len_utf8() >= self.text.len() {
+                self.pos = self.text.len();
+                return None;
+            }
         }
-        if self.pos >= bytes.len() {
+
+        if self.pos >= self.text.len() {
             return None;
         }
+
         let start = self.pos;
-        // Consume non-whitespace
-        while self.pos < bytes.len()
-            && bytes[self.pos] != b' '
-            && bytes[self.pos] != b'\n'
-            && bytes[self.pos] != b'\r'
-            && bytes[self.pos] != b'\t'
-        {
-            self.pos += 1;
+
+        // Consume non-whitespace characters
+        for (byte_idx, ch) in self.text[self.pos..].char_indices() {
+            if ch.is_whitespace() {
+                self.pos += byte_idx;
+                return Some((start, self.pos));
+            }
         }
+
+        // Reached end of string
+        self.pos = self.text.len();
         Some((start, self.pos))
     }
 }

@@ -18,7 +18,7 @@ fn region(x: u32, y: u32, w: u32, h: u32) -> RedactionRegion {
         y,
         width: w,
         height: h,
-        entity_type: "TEST",
+        entity_type: "TEST".to_string(),
     }
 }
 
