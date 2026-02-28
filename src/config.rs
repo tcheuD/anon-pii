@@ -621,7 +621,10 @@ recognizers:
 "#;
         let result = RecognizerConfigFile::from_yaml(yaml);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ConfigError::InvalidRegex { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            ConfigError::InvalidRegex { .. }
+        ));
     }
 
     #[cfg(unix)]

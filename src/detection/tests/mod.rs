@@ -1,5 +1,6 @@
 mod au;
 mod aviation;
+mod config;
 mod context;
 mod crypto;
 mod csv;

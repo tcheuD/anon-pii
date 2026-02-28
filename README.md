@@ -157,6 +157,7 @@ sequenceDiagram
 | `--min-score-with-context` |  | `0.0` | Minimum score for context-boosted detections (0.0 = disabled) |
 | `--language` | `-l` | `en` | Language for detection |
 | `--ner` |  |  | Enable NER-based PERSON detection (requires ner or ner-lite feature) |
+| `--config` | `-c` |  | Path to YAML recognizer configuration file for custom patterns |
 <!-- END CLI_ANONYMIZE -->
 
 ### Restore
@@ -267,8 +268,8 @@ Typical results (Apple Silicon):
 <!-- BEGIN BENCHMARK -->
 | Feature | Throughput | Simple avg | Complex avg | Penalty |
 |---------|------------|------------|-------------|---------|
-| regex-only | 51k lines/s | 14.2 μs | 39.5 μs | 2.8x |
-| ner-lite (heuristic) | 49k lines/s | 14.7 μs | 41.5 μs | 2.8x |
+| regex-only | 59k lines/s | 12.6 μs | 33.1 μs | 2.6x |
+| ner-lite (heuristic) | 52k lines/s | 14.5 μs | 37.3 μs | 2.6x |
 <!-- END BENCHMARK -->
 
 ## License

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anon::cli::{Cli, Commands, Format};
+use anon::config::RecognizerConfigFile;
 use anon::detection::{
     decrypt_encrypted, parse_encrypt_key, Anonymizer, Detection, MaskConfig, Operator,
 };
@@ -676,16 +677,37 @@ fn main() -> io::Result<()> {
             );
         }
         Some(Commands::ListEntities) => {
+            // Load custom patterns from config if provided
+            let custom_config = if let Some(ref config_path) = cli.config {
+                match RecognizerConfigFile::load(config_path) {
+                    Ok(config) => Some(config),
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
             eprintln!("{}", "Supported entity types:".bold());
             eprintln!();
 
             let mut seen = std::collections::HashSet::new();
-            let type_width = PATTERNS
+
+            // Calculate max type width including custom patterns
+            let mut type_width = PATTERNS
                 .iter()
                 .map(|p| p.entity_type.len())
                 .max()
                 .unwrap_or(10);
+            if let Some(ref config) = custom_config {
+                for r in &config.recognizers {
+                    type_width = type_width.max(r.entity_type.len());
+                }
+            }
 
+            // Print built-in patterns
             for p in PATTERNS {
                 if seen.insert(p.entity_type) {
                     // Check context across all patterns for this entity type
@@ -714,6 +736,29 @@ fn main() -> io::Result<()> {
                     );
                 }
             }
+
+            // Print custom patterns from config
+            if let Some(ref config) = custom_config {
+                for r in &config.recognizers {
+                    if seen.insert(r.entity_type.as_str()) {
+                        let context = if r.context_required && !r.context_keywords.is_empty() {
+                            " (context-aware)".dimmed().to_string()
+                        } else if !r.context_required && !r.context_keywords.is_empty() {
+                            " (context-boosted)".dimmed().to_string()
+                        } else {
+                            String::new()
+                        };
+                        eprintln!(
+                            "  {:<tw$}  {} [custom]{}",
+                            r.entity_type.green(),
+                            r.name,
+                            context,
+                            tw = type_width
+                        );
+                    }
+                }
+            }
+
             #[cfg(any(feature = "ner", feature = "ner-lite"))]
             {
                 let backend = if cfg!(feature = "ner") {
@@ -752,6 +797,27 @@ fn main() -> io::Result<()> {
             }
 
             let mut anonymizer = Anonymizer::new(cli.threshold);
+
+            // Load custom recognizers from config file if provided
+            if let Some(ref config_path) = cli.config {
+                match RecognizerConfigFile::load(config_path) {
+                    Ok(config) => {
+                        anonymizer.add_custom_patterns(&config);
+                        if cli.verbose {
+                            eprintln!(
+                                "Loaded {} custom recognizer(s) from {}",
+                                config.recognizers.len(),
+                                config_path.display()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+
             anonymizer.context_boost = cli.context_boost.clamp(0.0, 1.0);
             anonymizer.min_score_with_context = cli.min_score_with_context.clamp(0.0, 1.0);
             anonymizer.operator = cli.operator;

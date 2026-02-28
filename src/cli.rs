@@ -103,6 +103,10 @@ pub struct Cli {
     #[cfg(any(feature = "ner", feature = "ner-lite"))]
     #[arg(long)]
     pub ner: bool,
+
+    /// Path to YAML recognizer configuration file for custom patterns
+    #[arg(short = 'c', long, global = true)]
+    pub config: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]

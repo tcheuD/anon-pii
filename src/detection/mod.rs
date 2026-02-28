@@ -1,8 +1,10 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use serde_json::Value;
 
+use crate::config::RecognizerConfigFile;
 use crate::mapping::Mapping;
 use crate::ner::NerDetector;
 use crate::patterns::{CONTEXT_SCORE_BOOST, PATTERNS};
@@ -70,6 +72,62 @@ impl Anonymizer {
 
     pub fn set_ner_detector(&mut self, detector: Box<dyn NerDetector>) {
         self.ner_detector = Some(detector);
+    }
+
+    /// Add custom patterns from a YAML config file to the pattern list.
+    ///
+    /// Custom patterns are appended to the built-in patterns and participate
+    /// in the same detection, context matching, and overlap resolution pipeline.
+    pub fn add_custom_patterns(&mut self, config: &RecognizerConfigFile) {
+        for recognizer in &config.recognizers {
+            // Leak the strings to get 'static lifetime (safe because configs are loaded once)
+            let entity_type: &'static str =
+                Box::leak(recognizer.entity_type.clone().into_boxed_str());
+            let name: &'static str = Box::leak(recognizer.name.clone().into_boxed_str());
+
+            // Leak context keywords
+            let keywords: Vec<&'static str> = recognizer
+                .context_keywords
+                .iter()
+                .map(|s| -> &'static str { Box::leak(s.clone().into_boxed_str()) })
+                .collect();
+            let keywords_slice: &'static [&'static str] = Box::leak(keywords.into_boxed_slice());
+
+            for pattern in &recognizer.patterns {
+                // Build regex with the same size limit as config validation
+                let regex = RegexBuilder::new(&pattern.regex)
+                    .size_limit(1 << 20)
+                    .build()
+                    .expect("regex already validated in config loader");
+
+                self.patterns.push(CompiledPattern {
+                    entity_type: Cow::Borrowed(entity_type),
+                    name: Cow::Borrowed(name),
+                    regex,
+                    score: pattern.score,
+                    context_keywords: Cow::Borrowed(keywords_slice),
+                    context_required: recognizer.context_required,
+                });
+            }
+        }
+    }
+
+    /// Get all unique entity types from the pattern list.
+    ///
+    /// Includes both built-in and custom entity types.
+    pub fn get_entity_types(&self) -> Vec<&str> {
+        let mut seen = HashSet::new();
+        self.patterns
+            .iter()
+            .filter_map(|p| {
+                let entity_type = p.entity_type.as_ref();
+                if seen.insert(entity_type) {
+                    Some(entity_type)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Run the full detection pipeline (normalization, pattern matching, validators,
