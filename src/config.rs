@@ -4,6 +4,7 @@
 //! Users can specify entity types, regex patterns, context keywords, and scores
 //! without writing Rust code.
 
+use regex::RegexBuilder;
 use serde::Deserialize;
 use std::path::Path;
 
@@ -27,6 +28,8 @@ pub enum ConfigError {
         recognizer_name: String,
         entity_type: String,
     },
+    /// Config path is a symlink.
+    SymlinkPath(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -56,6 +59,9 @@ impl std::fmt::Display for ConfigError {
                 f,
                 "Invalid entity_type in recognizer '{recognizer_name}': '{entity_type}' (must be UPPER_SNAKE_CASE)"
             ),
+            ConfigError::SymlinkPath(path) => {
+                write!(f, "Refusing to follow symlink: {path}")
+            }
         }
     }
 }
@@ -115,6 +121,11 @@ impl RecognizerConfigFile {
     /// - Any score is outside [0.0, 1.0]
     /// - Any entity_type is not UPPER_SNAKE_CASE
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+        let path = path.as_ref();
+        let meta = std::fs::symlink_metadata(path).map_err(ConfigError::Io)?;
+        if meta.file_type().is_symlink() {
+            return Err(ConfigError::SymlinkPath(path.display().to_string()));
+        }
         let content = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
         Self::from_yaml(&content)
     }
@@ -146,8 +157,11 @@ impl RecognizerConfigFile {
                     });
                 }
 
-                // Validate regex compiles
-                if let Err(e) = regex::Regex::new(&pattern.regex) {
+                // Validate regex compiles within a size budget (1 MiB compiled DFA limit)
+                if let Err(e) = RegexBuilder::new(&pattern.regex)
+                    .size_limit(1 << 20)
+                    .build()
+                {
                     return Err(ConfigError::InvalidRegex {
                         recognizer_name: recognizer.name.clone(),
                         pattern: pattern.regex.clone(),
@@ -591,6 +605,47 @@ recognizers:
         assert!(msg.contains("test"));
         assert!(msg.contains("bad_type"));
         assert!(msg.contains("UPPER_SNAKE_CASE"));
+    }
+
+    #[test]
+    fn test_regex_size_limit_rejects_huge_pattern() {
+        // A bounded quantifier {1,N} creates ~N NFA states. With N=1_000_000
+        // and each state taking several bytes, this exceeds the 1 MiB limit.
+        let yaml = r#"
+recognizers:
+  - name: "Huge regex"
+    entity_type: "HUGE_REGEX"
+    patterns:
+      - regex: '\w{1,1000000}'
+        score: 0.5
+"#;
+        let result = RecognizerConfigFile::from_yaml(yaml);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ConfigError::InvalidRegex { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_rejects_symlink() {
+        let dir = std::env::temp_dir().join("anon-test-config-symlink");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let real_file = dir.join("real.yaml");
+        std::fs::write(&real_file, "recognizers: []\n").unwrap();
+
+        let link = dir.join("link.yaml");
+        std::os::unix::fs::symlink(&real_file, &link).unwrap();
+
+        let result = RecognizerConfigFile::load(&link);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ConfigError::SymlinkPath(_)));
+
+        // Non-symlink should still work
+        let result = RecognizerConfigFile::load(&real_file);
+        assert!(result.is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
