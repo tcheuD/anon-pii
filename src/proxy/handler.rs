@@ -279,6 +279,7 @@ async fn handle_streaming(
         cached,
     };
     let mut token_buffer = TokenBuffer::new(resolver);
+    let provider = state.provider;
 
     // Read the SSE stream and process events
     let byte_stream = upstream_resp.bytes_stream();
@@ -330,7 +331,7 @@ async fn handle_streaming(
                         // Complete line (newline follows)
                         line_buf.push_str(segment);
                         let line = std::mem::take(&mut line_buf);
-                        process_sse_line(&line, &mut token_buffer, &mut output);
+                        process_sse_line(&line, &mut token_buffer, &mut output, provider);
                     }
                 }
 
@@ -386,8 +387,10 @@ fn process_sse_line<R: TokenResolver>(
     line: &str,
     token_buffer: &mut TokenBuffer<R>,
     output: &mut String,
+    provider: Provider,
 ) {
     if let Some(data) = line.strip_prefix("data: ") {
+        // Both Anthropic and OpenAI use data: [DONE] for termination
         if data == "[DONE]" {
             let remaining = token_buffer.flush();
             if !remaining.is_empty() {
@@ -397,10 +400,31 @@ fn process_sse_line<R: TokenResolver>(
             return;
         }
 
-        if let Some(text_content) = sse::extract_text_delta(data) {
+        // Extract text delta based on provider
+        let extract_result = match provider {
+            Provider::Anthropic => sse::extract_text_delta(data),
+            Provider::OpenAi => sse::extract_text_delta_openai(data),
+            Provider::Generic => {
+                // Try OpenAI first (more common format), fall back to Anthropic
+                sse::extract_text_delta_openai(data).or_else(|| sse::extract_text_delta(data))
+            }
+        };
+
+        if let Some(text_content) = extract_result {
             let restored = token_buffer.feed(&text_content);
             if !restored.is_empty() {
-                if let Some(new_data) = sse::replace_text_delta(data, &restored) {
+                // Replace text delta based on provider
+                let replace_result = match provider {
+                    Provider::Anthropic => sse::replace_text_delta(data, &restored),
+                    Provider::OpenAi => sse::replace_text_delta_openai(data, &restored),
+                    Provider::Generic => {
+                        // Try OpenAI first, fall back to Anthropic
+                        sse::replace_text_delta_openai(data, &restored)
+                            .or_else(|| sse::replace_text_delta(data, &restored))
+                    }
+                };
+
+                if let Some(new_data) = replace_result {
                     output.push_str(&format!("data: {new_data}\n\n"));
                 } else {
                     output.push_str(line);
@@ -769,5 +793,143 @@ mod tests {
     fn test_passthrough_prefixes_for_generic() {
         let prefixes = allowed_passthrough_prefixes_for_provider(Provider::Generic);
         assert!(prefixes.contains(&"/"));
+    }
+
+    // ============================================================================
+    // PROCESS_SSE_LINE PROVIDER-AWARE TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_process_sse_line_anthropic_text_delta() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_a1b2c3d4]".to_string(),
+            "john@example.com".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        let line = r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"[EMAIL_ADDRESS_a1b2c3d4]"}}"#;
+        process_sse_line(line, &mut token_buffer, &mut output, Provider::Anthropic);
+
+        assert!(
+            output.contains("john@example.com"),
+            "Anthropic: email should be restored, got: {output}"
+        );
+        assert!(
+            !output.contains("[EMAIL_ADDRESS_"),
+            "Anthropic: token should not appear"
+        );
+    }
+
+    #[test]
+    fn test_process_sse_line_openai_text_delta() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_a1b2c3d4]".to_string(),
+            "john@example.com".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        let line = r#"data: {"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"content":"[EMAIL_ADDRESS_a1b2c3d4]"},"finish_reason":null}]}"#;
+        process_sse_line(line, &mut token_buffer, &mut output, Provider::OpenAi);
+
+        assert!(
+            output.contains("john@example.com"),
+            "OpenAI: email should be restored, got: {output}"
+        );
+        assert!(
+            !output.contains("[EMAIL_ADDRESS_"),
+            "OpenAI: token should not appear"
+        );
+    }
+
+    #[test]
+    fn test_process_sse_line_openai_tool_calls() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_abcd1234]".to_string(),
+            "admin@secret.org".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        let line = r#"data: {"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"[EMAIL_ADDRESS_abcd1234]"}}]},"finish_reason":null}]}"#;
+        process_sse_line(line, &mut token_buffer, &mut output, Provider::OpenAi);
+
+        assert!(
+            output.contains("admin@secret.org"),
+            "OpenAI tool call: email should be restored, got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_process_sse_line_done_flushes_buffer() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_a1b2c3d4]".to_string(),
+            "test@example.com".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        // Both OpenAI and Anthropic use data: [DONE] for termination
+        process_sse_line(
+            "data: [DONE]",
+            &mut token_buffer,
+            &mut output,
+            Provider::OpenAi,
+        );
+
+        assert!(
+            output.contains("data: [DONE]"),
+            "DONE should be forwarded, got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_process_sse_line_generic_detects_openai_format() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[IP_ADDRESS_12345678]".to_string(),
+            "192.168.1.100".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        // OpenAI-style SSE event should be processed correctly in generic mode
+        let line = r#"data: {"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"content":"Server at [IP_ADDRESS_12345678]"},"finish_reason":null}]}"#;
+        process_sse_line(line, &mut token_buffer, &mut output, Provider::Generic);
+
+        assert!(
+            output.contains("192.168.1.100"),
+            "Generic (OpenAI format): IP should be restored, got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_process_sse_line_generic_detects_anthropic_format() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping
+            .mappings
+            .insert("[IP_ADDRESS_12345678]".to_string(), "10.0.0.42".to_string());
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        // Anthropic-style SSE event should be processed correctly in generic mode
+        let line = r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"IP is [IP_ADDRESS_12345678]"}}"#;
+        process_sse_line(line, &mut token_buffer, &mut output, Provider::Generic);
+
+        assert!(
+            output.contains("10.0.0.42"),
+            "Generic (Anthropic format): IP should be restored, got: {output}"
+        );
     }
 }

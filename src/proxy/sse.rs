@@ -98,6 +98,74 @@ pub fn extract_text_delta(data: &str) -> Option<String> {
     delta.get("text")?.as_str().map(|s| s.to_string())
 }
 
+/// Parse an OpenAI SSE data line and extract the text delta if present.
+///
+/// OpenAI SSE events for streaming:
+/// - `choices[].delta.content` for text content
+/// - `choices[].delta.tool_calls[].function.arguments` for tool call arguments
+///
+/// Returns `Some(text)` if this event contains a text delta, `None` otherwise.
+pub fn extract_text_delta_openai(data: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(data).ok()?;
+
+    let choices = value.get("choices")?.as_array()?;
+    let first_choice = choices.first()?;
+    let delta = first_choice.get("delta")?;
+
+    // Try content first (regular text streaming)
+    if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+        return Some(content.to_string());
+    }
+
+    // Try tool_calls[].function.arguments (tool call streaming)
+    if let Some(tool_calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
+        if let Some(first_tc) = tool_calls.first() {
+            if let Some(func) = first_tc.get("function") {
+                if let Some(args) = func.get("arguments").and_then(|a| a.as_str()) {
+                    return Some(args.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Rebuild an OpenAI SSE data line with a replaced text delta.
+///
+/// Handles both `choices[].delta.content` and `choices[].delta.tool_calls[].function.arguments`.
+pub fn replace_text_delta_openai(data: &str, new_text: &str) -> Option<String> {
+    let mut value: serde_json::Value = serde_json::from_str(data).ok()?;
+
+    let choices = value.get_mut("choices")?.as_array_mut()?;
+    let first_choice = choices.first_mut()?;
+    let delta = first_choice.get_mut("delta")?;
+
+    // Try content first (regular text streaming)
+    if let Some(content) = delta.get_mut("content") {
+        if content.is_string() {
+            *content = serde_json::Value::String(new_text.to_string());
+            return serde_json::to_string(&value).ok();
+        }
+    }
+
+    // Try tool_calls[].function.arguments (tool call streaming)
+    if let Some(tool_calls) = delta.get_mut("tool_calls").and_then(|tc| tc.as_array_mut()) {
+        if let Some(first_tc) = tool_calls.first_mut() {
+            if let Some(func) = first_tc.get_mut("function") {
+                if let Some(args) = func.get_mut("arguments") {
+                    if args.is_string() {
+                        *args = serde_json::Value::String(new_text.to_string());
+                        return serde_json::to_string(&value).ok();
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Rebuild an SSE data line with a replaced text delta.
 pub fn replace_text_delta(data: &str, new_text: &str) -> Option<String> {
     let mut value: serde_json::Value = serde_json::from_str(data).ok()?;
@@ -217,5 +285,89 @@ mod tests {
         let replaced = replace_text_delta(data, "john@example.com").unwrap();
         let v: serde_json::Value = serde_json::from_str(&replaced).unwrap();
         assert_eq!(v["delta"]["text"], "john@example.com");
+    }
+
+    // ============================================================================
+    // OPENAI SSE DELTA TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_extract_text_delta_openai_content() {
+        // OpenAI streams text via choices[].delta.content
+        let data = r#"{"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#;
+        assert_eq!(extract_text_delta_openai(data), Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn test_extract_text_delta_openai_first_chunk_role_only() {
+        // First chunk may contain role but no content
+        let data = r#"{"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#;
+        assert_eq!(extract_text_delta_openai(data), None);
+    }
+
+    #[test]
+    fn test_extract_text_delta_openai_empty_delta() {
+        // Final chunk often has empty delta with finish_reason
+        let data = r#"{"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
+        assert_eq!(extract_text_delta_openai(data), None);
+    }
+
+    #[test]
+    fn test_extract_text_delta_openai_tool_calls_arguments() {
+        // OpenAI streams tool call arguments via choices[].delta.tool_calls[].function.arguments
+        let data = r#"{"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"email\":"}}]},"finish_reason":null}]}"#;
+        assert_eq!(
+            extract_text_delta_openai(data),
+            Some(r#"{"email":"#.to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_text_delta_openai_no_choices() {
+        let data = r#"{"id":"chatcmpl-abc","object":"chat.completion.chunk"}"#;
+        assert_eq!(extract_text_delta_openai(data), None);
+    }
+
+    #[test]
+    fn test_replace_text_delta_openai_content() {
+        let data = r#"{"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"[EMAIL_ADDRESS_a1b2c3d4]"},"finish_reason":null}]}"#;
+        let replaced = replace_text_delta_openai(data, "john@example.com").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&replaced).unwrap();
+        assert_eq!(v["choices"][0]["delta"]["content"], "john@example.com");
+    }
+
+    #[test]
+    fn test_replace_text_delta_openai_tool_calls_arguments() {
+        let data = r#"{"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"[EMAIL_ADDRESS_a1b2c3d4]"}}]},"finish_reason":null}]}"#;
+        let replaced = replace_text_delta_openai(data, "john@example.com").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&replaced).unwrap();
+        assert_eq!(
+            v["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"],
+            "john@example.com"
+        );
+    }
+
+    #[test]
+    fn test_replace_text_delta_openai_preserves_structure() {
+        let data = r#"{"id":"chatcmpl-abc","object":"chat.completion.chunk","created":1700000000,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"test"},"finish_reason":null}]}"#;
+        let replaced = replace_text_delta_openai(data, "restored").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&replaced).unwrap();
+
+        // Verify structure is preserved
+        assert_eq!(v["id"], "chatcmpl-abc");
+        assert_eq!(v["object"], "chat.completion.chunk");
+        assert_eq!(v["created"], 1700000000);
+        assert_eq!(v["model"], "gpt-4");
+        assert_eq!(v["choices"][0]["index"], 0);
+        assert_eq!(v["choices"][0]["delta"]["content"], "restored");
+        assert!(v["choices"][0]["finish_reason"].is_null());
+    }
+
+    #[test]
+    fn test_replace_text_delta_openai_empty_delta_returns_none() {
+        // When delta has no content/arguments, replace should return None
+        let data =
+            r#"{"id":"chatcmpl-abc","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#;
+        assert!(replace_text_delta_openai(data, "test").is_none());
     }
 }
