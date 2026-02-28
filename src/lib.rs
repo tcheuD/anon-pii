@@ -1,6 +1,7 @@
 #[cfg(feature = "proxy")]
 pub mod api;
 pub mod cli;
+pub mod config;
 pub mod detection;
 pub mod format;
 #[cfg(feature = "image")]
