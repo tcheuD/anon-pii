@@ -8,6 +8,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 
 use super::anthropic;
+use super::generic;
 use super::openai;
 use super::sse::{self, TokenBuffer, TokenResolver};
 use super::ProxyState;
@@ -89,6 +90,13 @@ pub async fn handle_messages(
     headers: HeaderMap,
     req: Request<Body>,
 ) -> Response {
+    // Extract the request path before consuming the body (needed for generic mode)
+    let request_path = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| "/".to_string());
+
     // Read body with size limit to prevent OOM
     let body: Bytes = match axum::body::to_bytes(req.into_body(), MAX_REQUEST_BODY_SIZE).await {
         Ok(b) => b,
@@ -101,63 +109,67 @@ pub async fn handle_messages(
         }
     };
 
-    // Parse request body
-    let mut body_json: serde_json::Value = match serde_json::from_slice(&body) {
-        Ok(v) => v,
-        Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response();
-        }
-    };
+    // Parse request body as JSON
+    let parse_result: Result<serde_json::Value, _> = serde_json::from_slice(&body);
 
-    let is_streaming = body_json
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    // For generic mode, non-JSON bodies are passed through without anonymization
+    let (anonymized_body, is_streaming) = match parse_result {
+        Ok(mut body_json) => {
+            let is_streaming = body_json
+                .get("stream")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
-    // Anonymize the request based on provider
-    {
-        let mut anonymizer = state.anonymizer.lock().await;
-        match state.provider {
-            Provider::Anthropic => anthropic::anonymize_request(&mut body_json, &mut anonymizer),
-            Provider::OpenAi => openai::anonymize_request(&mut body_json, &mut anonymizer),
-            Provider::Generic => {
-                // For generic, try to detect based on request structure
-                // OpenAI uses "messages" with no "system" at top level (system is in messages)
-                // Anthropic uses top-level "system" field
-                if body_json.get("system").is_some() {
-                    anthropic::anonymize_request(&mut body_json, &mut anonymizer);
-                } else {
-                    openai::anonymize_request(&mut body_json, &mut anonymizer);
+            // Anonymize the request based on provider
+            {
+                let mut anonymizer = state.anonymizer.lock().await;
+                match state.provider {
+                    Provider::Anthropic => {
+                        anthropic::anonymize_request(&mut body_json, &mut anonymizer)
+                    }
+                    Provider::OpenAi => openai::anonymize_request(&mut body_json, &mut anonymizer),
+                    Provider::Generic => {
+                        generic::anonymize_request(&mut body_json, &mut anonymizer)
+                    }
                 }
             }
-        }
-    }
 
-    let anonymized_body = match serde_json::to_vec(&body_json) {
-        Ok(b) => b,
+            let serialized = match serde_json::to_vec(&body_json) {
+                Ok(b) => b,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Serialization error: {e}"),
+                    )
+                        .into_response();
+                }
+            };
+
+            (serialized, is_streaming)
+        }
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Serialization error: {e}"),
-            )
-                .into_response();
+            // Non-JSON body: only allowed for generic provider
+            if state.provider == Provider::Generic {
+                eprintln!(
+                    "Warning: non-JSON request body passed through without anonymization: {e}"
+                );
+                // Pass through without anonymization, assume non-streaming
+                (body.to_vec(), false)
+            } else {
+                return (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response();
+            }
         }
     };
 
     // Build upstream request with provider-specific path
-    let upstream_path = match state.provider {
-        Provider::Anthropic => "/v1/messages",
-        Provider::OpenAi => "/v1/chat/completions",
+    let upstream_url = match state.provider {
+        Provider::Anthropic => format!("{}/v1/messages", state.upstream),
+        Provider::OpenAi => format!("{}/v1/chat/completions", state.upstream),
         Provider::Generic => {
-            // For generic, try to infer from request body
-            if body_json.get("system").is_some() {
-                "/v1/messages"
-            } else {
-                "/v1/chat/completions"
-            }
+            // Generic mode: preserve the original request path
+            format!("{}{}", state.upstream, request_path)
         }
     };
-    let upstream_url = format!("{}{}", state.upstream, upstream_path);
     let mut upstream_req = state.client.post(&upstream_url);
 
     // Forward only allowlisted headers
@@ -209,15 +221,7 @@ async fn handle_non_streaming(
             match state.provider {
                 Provider::Anthropic => anthropic::restore_response(&mut resp_json, &mapping),
                 Provider::OpenAi => openai::restore_response(&mut resp_json, &mapping),
-                Provider::Generic => {
-                    // For generic, try to detect based on response structure
-                    // OpenAI responses have "choices" array, Anthropic has "content" array
-                    if resp_json.get("choices").is_some() {
-                        openai::restore_response(&mut resp_json, &mapping);
-                    } else {
-                        anthropic::restore_response(&mut resp_json, &mapping);
-                    }
-                }
+                Provider::Generic => generic::restore_response(&mut resp_json, &mapping),
             }
 
             // Dump mapping
@@ -431,6 +435,11 @@ fn process_sse_line<R: TokenResolver>(
                     output.push('\n');
                 }
             }
+        } else if provider == Provider::Generic {
+            // Generic mode: restore tokens directly in the raw data line
+            // This handles non-standard SSE formats from arbitrary LLM APIs
+            let restored = token_buffer.feed(data);
+            output.push_str(&format!("data: {restored}\n"));
         } else {
             output.push_str(line);
             output.push('\n');
@@ -930,6 +939,258 @@ mod tests {
         assert!(
             output.contains("10.0.0.42"),
             "Generic (Anthropic format): IP should be restored, got: {output}"
+        );
+    }
+
+    // ============================================================================
+    // GENERIC PROVIDER WHOLE-BODY ANONYMIZATION TESTS
+    // ============================================================================
+
+    /// Test that generic provider anonymizes the full request JSON body via anonymize_json_value()
+    #[test]
+    fn test_generic_anonymize_request_whole_body() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "prompt": "My email is john@example.com",
+            "config": {
+                "user_ip": "192.168.1.100",
+                "nested": {
+                    "phone": "+33 6 12 34 56 78"
+                }
+            },
+            "metadata": {
+                "source": "Server at 10.0.0.42"
+            }
+        });
+
+        generic::anonymize_request(&mut body, &mut anonymizer);
+
+        // Email in prompt should be anonymized
+        let prompt = body["prompt"].as_str().unwrap();
+        assert!(
+            prompt.contains("[EMAIL_ADDRESS_"),
+            "Email in prompt should be anonymized, got: {prompt}"
+        );
+        assert!(
+            !prompt.contains("john@example.com"),
+            "Original email should not appear"
+        );
+
+        // IP in nested config should be anonymized
+        let user_ip = body["config"]["user_ip"].as_str().unwrap();
+        assert!(
+            user_ip.contains("[IP_ADDRESS_"),
+            "IP should be anonymized, got: {user_ip}"
+        );
+
+        // Phone in deeply nested object should be anonymized
+        let phone = body["config"]["nested"]["phone"].as_str().unwrap();
+        assert!(
+            phone.contains("[FR_PHONE_NUMBER_") || phone.contains("[PHONE_NUMBER_"),
+            "Phone should be anonymized, got: {phone}"
+        );
+
+        // IP in metadata should be anonymized
+        let source = body["metadata"]["source"].as_str().unwrap();
+        assert!(
+            source.contains("[IP_ADDRESS_"),
+            "IP in metadata should be anonymized, got: {source}"
+        );
+    }
+
+    /// Test that generic provider restores tokens in the full response body
+    #[test]
+    fn test_generic_restore_response_whole_body() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_a1b2c3d4]".to_string(),
+            "john@example.com".to_string(),
+        );
+        mapping.mappings.insert(
+            "[IP_ADDRESS_12345678]".to_string(),
+            "192.168.1.100".to_string(),
+        );
+        mapping.rebuild_caches();
+
+        let mut response = serde_json::json!({
+            "result": "User [EMAIL_ADDRESS_a1b2c3d4] connected from [IP_ADDRESS_12345678]",
+            "data": {
+                "email": "[EMAIL_ADDRESS_a1b2c3d4]",
+                "nested": {
+                    "ip": "[IP_ADDRESS_12345678]"
+                }
+            }
+        });
+
+        generic::restore_response(&mut response, &mapping);
+
+        // All tokens should be restored
+        let result = response["result"].as_str().unwrap();
+        assert!(
+            result.contains("john@example.com"),
+            "Email should be restored in result, got: {result}"
+        );
+        assert!(
+            result.contains("192.168.1.100"),
+            "IP should be restored in result, got: {result}"
+        );
+
+        let email = response["data"]["email"].as_str().unwrap();
+        assert!(
+            email.contains("john@example.com"),
+            "Email should be restored in data.email, got: {email}"
+        );
+
+        let ip = response["data"]["nested"]["ip"].as_str().unwrap();
+        assert!(
+            ip.contains("192.168.1.100"),
+            "IP should be restored in data.nested.ip, got: {ip}"
+        );
+    }
+
+    /// Test that generic SSE streaming restores tokens in data lines (line-by-line)
+    #[test]
+    fn test_generic_sse_line_restores_tokens_in_any_data_line() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_abcd1234]".to_string(),
+            "admin@secret.org".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        // Non-standard SSE format (not OpenAI or Anthropic) — generic should still restore
+        let line = r#"data: {"text": "[EMAIL_ADDRESS_abcd1234] is the user"}"#;
+        process_sse_line(line, &mut token_buffer, &mut output, Provider::Generic);
+
+        // Generic mode should restore tokens in any data: line
+        assert!(
+            output.contains("admin@secret.org"),
+            "Generic SSE: token should be restored in any data line, got: {output}"
+        );
+    }
+
+    /// Test that arrays in generic request body are anonymized
+    #[test]
+    fn test_generic_anonymize_request_arrays() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "emails": ["john@example.com", "jane@test.org"],
+            "records": [
+                {"ip": "192.168.1.1"},
+                {"ip": "10.0.0.42"}
+            ]
+        });
+
+        generic::anonymize_request(&mut body, &mut anonymizer);
+
+        // Array elements should be anonymized
+        let email0 = body["emails"][0].as_str().unwrap();
+        assert!(
+            email0.contains("[EMAIL_ADDRESS_"),
+            "First email in array should be anonymized, got: {email0}"
+        );
+
+        let email1 = body["emails"][1].as_str().unwrap();
+        assert!(
+            email1.contains("[EMAIL_ADDRESS_"),
+            "Second email in array should be anonymized, got: {email1}"
+        );
+
+        // Nested objects in arrays should be anonymized
+        let ip0 = body["records"][0]["ip"].as_str().unwrap();
+        assert!(
+            ip0.contains("[IP_ADDRESS_"),
+            "IP in first record should be anonymized, got: {ip0}"
+        );
+
+        let ip1 = body["records"][1]["ip"].as_str().unwrap();
+        assert!(
+            ip1.contains("[IP_ADDRESS_"),
+            "IP in second record should be anonymized, got: {ip1}"
+        );
+    }
+
+    /// Test that generic provider preserves non-string values
+    #[test]
+    fn test_generic_anonymize_preserves_non_strings() {
+        let mut anonymizer = crate::detection::Anonymizer::new(0.0);
+        let mut body = serde_json::json!({
+            "count": 42,
+            "enabled": true,
+            "ratio": 3.14,
+            "nothing": null,
+            "text": "Contact john@example.com"
+        });
+
+        generic::anonymize_request(&mut body, &mut anonymizer);
+
+        // Non-string values should be preserved
+        assert_eq!(body["count"], 42);
+        assert_eq!(body["enabled"], true);
+        assert_eq!(body["ratio"], 3.14);
+        assert!(body["nothing"].is_null());
+
+        // String should be anonymized
+        let text = body["text"].as_str().unwrap();
+        assert!(text.contains("[EMAIL_ADDRESS_"));
+    }
+
+    /// Test that generic mode passes through non-JSON request bodies
+    #[tokio::test]
+    async fn test_generic_non_json_passthrough() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-non-json"),
+            Provider::Generic,
+        ));
+
+        // Non-JSON body (plain text)
+        let body = b"This is plain text with john@example.com";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/generate")
+            .body(Body::from(body.to_vec()))
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+
+        // Should NOT return 400 Bad Request for non-JSON in generic mode
+        // Will return 502 (upstream unreachable), but that's OK for this test
+        assert_ne!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "Generic mode should accept non-JSON bodies"
+        );
+    }
+
+    /// Test that non-generic providers reject non-JSON request bodies
+    #[tokio::test]
+    async fn test_non_generic_rejects_non_json() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-anthropic-non-json"),
+            Provider::Anthropic,
+        ));
+
+        // Non-JSON body (plain text)
+        let body = b"This is plain text";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .body(Body::from(body.to_vec()))
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+
+        // Anthropic provider should reject non-JSON bodies
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "Anthropic provider should reject non-JSON bodies"
         );
     }
 }

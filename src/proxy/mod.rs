@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod generic;
 pub mod handler;
 pub mod openai;
 pub mod sse;
