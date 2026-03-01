@@ -107,6 +107,12 @@ pub struct Cli {
     /// Path to YAML recognizer configuration file for custom patterns
     #[arg(short = 'c', long, global = true)]
     pub config: Option<PathBuf>,
+
+    /// Batch size for NER inference when processing text (default: 32)
+    /// Set to 0 to disable batching. Only affects text format with --ner.
+    #[cfg(any(feature = "ner", feature = "ner-lite"))]
+    #[arg(long, default_value = "32")]
+    pub batch_size: usize,
 }
 
 #[derive(Subcommand)]

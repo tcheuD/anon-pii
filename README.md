@@ -158,6 +158,7 @@ sequenceDiagram
 | `--language` | `-l` | `en` | Language for detection |
 | `--ner` |  |  | Enable NER-based PERSON detection (requires ner or ner-lite feature) |
 | `--config` | `-c` |  | Path to YAML recognizer configuration file for custom patterns |
+| `--batch-size` |  | `32` | Batch size for NER inference when processing text (default: 32) Set to 0 to disable batching. Only affects text format with --ner |
 <!-- END CLI_ANONYMIZE -->
 
 ### Restore

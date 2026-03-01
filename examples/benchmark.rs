@@ -105,11 +105,58 @@ fn bench_lines(line: &str, count: usize, make_anonymizer: &dyn Fn() -> Anonymize
     }
 }
 
+/// Benchmark batched processing: process lines in batches using `anonymize_texts()`.
+fn bench_lines_batched(
+    line: &str,
+    count: usize,
+    batch_size: usize,
+    make_anonymizer: &dyn Fn() -> Anonymizer,
+) -> BenchResult {
+    let mut anonymizer = make_anonymizer();
+    let mut lines_with_detections = 0usize;
+    let mut entity_counts: HashMap<String, usize> = HashMap::new();
+    let mut total_detections = 0usize;
+
+    // Pre-build batches of the line
+    let lines: Vec<&str> = (0..count).map(|_| line).collect();
+    let num_batches = (count + batch_size - 1) / batch_size;
+    let mut times = Vec::with_capacity(num_batches);
+
+    for batch in lines.chunks(batch_size) {
+        let t0 = Instant::now();
+        let results = anonymizer.anonymize_texts(batch);
+        times.push(t0.elapsed());
+
+        for (_, dets) in results {
+            if !dets.is_empty() {
+                lines_with_detections += 1;
+            }
+            total_detections += dets.len();
+            for d in &dets {
+                *entity_counts.entry(d.entity_type.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    BenchResult {
+        times,
+        lines_with_detections,
+        entity_counts,
+        total_detections,
+    }
+}
+
+const DEFAULT_BATCH_SIZE: usize = 32;
+
 fn main() {
     let num_lines: usize = std::env::args()
         .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_NUM_LINES);
+    let batch_size: usize = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_BATCH_SIZE);
     let num_simple = (num_lines as f64 * SIMPLE_RATIO) as usize;
     let num_complex = num_lines - num_simple;
 
@@ -130,6 +177,7 @@ fn main() {
         let _ = a.anonymize_text(COMPLEX_LOG);
     }
 
+    // ─── Sequential benchmark (existing) ─────────────────────────────────────────
     let simple = bench_lines(SIMPLE_LOG, num_simple, &make_anonymizer);
     let complex = bench_lines(COMPLEX_LOG, num_complex, &make_anonymizer);
 
@@ -141,8 +189,8 @@ fn main() {
     let total_time: Duration = simple.times.iter().chain(complex.times.iter()).sum();
     let total_secs = total_time.as_secs_f64();
     let total_bytes = SIMPLE_LOG.len() * num_simple + COMPLEX_LOG.len() * num_complex;
-    let throughput = num_lines as f64 / total_secs;
-    let data_rate = total_bytes as f64 / total_secs / 1024.0 / 1024.0;
+    let seq_throughput = num_lines as f64 / total_secs;
+    let seq_data_rate = total_bytes as f64 / total_secs / 1024.0 / 1024.0;
     let penalty = complex_avg.as_secs_f64() / simple_avg.as_secs_f64();
 
     // Merge entity counts
@@ -155,11 +203,11 @@ fn main() {
         *all_entities.entry(k.clone()).or_insert(0) += v;
     }
 
-    println!("Performance");
+    println!("Sequential Performance (per-line)");
     println!("{}", "-".repeat(60));
     println!("Total time:         {:.3} s", total_secs);
-    println!("Throughput:         {:.0} lines/sec", throughput);
-    println!("Data rate:          {:.2} MB/sec", data_rate);
+    println!("Throughput:         {:.0} lines/sec", seq_throughput);
+    println!("Data rate:          {:.2} MB/sec", seq_data_rate);
     println!("{}", "-".repeat(60));
     println!(
         "Simple  — avg: {:>8.1} us  p99: {:>8.1} us",
@@ -172,6 +220,28 @@ fn main() {
         complex_p99.as_secs_f64() * 1e6
     );
     println!("Complexity penalty: {:.1}x", penalty);
+    println!();
+
+    // ─── Batched benchmark ───────────────────────────────────────────────────────
+    let batch_simple = bench_lines_batched(SIMPLE_LOG, num_simple, batch_size, &make_anonymizer);
+    let batch_complex = bench_lines_batched(COMPLEX_LOG, num_complex, batch_size, &make_anonymizer);
+
+    let batch_total_time: Duration = batch_simple
+        .times
+        .iter()
+        .chain(batch_complex.times.iter())
+        .sum();
+    let batch_total_secs = batch_total_time.as_secs_f64();
+    let batch_throughput = num_lines as f64 / batch_total_secs;
+    let batch_data_rate = total_bytes as f64 / batch_total_secs / 1024.0 / 1024.0;
+    let speedup = batch_throughput / seq_throughput;
+
+    println!("Batched Performance (batch_size={})", batch_size);
+    println!("{}", "-".repeat(60));
+    println!("Total time:         {:.3} s", batch_total_secs);
+    println!("Throughput:         {:.0} lines/sec", batch_throughput);
+    println!("Data rate:          {:.2} MB/sec", batch_data_rate);
+    println!("Speedup vs seq:     {:.1}x", speedup);
     println!();
 
     println!("Detection rates");
@@ -233,7 +303,9 @@ fn main() {
         existing_features.insert(
             feature_label().to_string(),
             json!({
-                "lines_per_sec": throughput as u64,
+                "lines_per_sec": seq_throughput as u64,
+                "lines_per_sec_batched": batch_throughput as u64,
+                "batch_speedup": format!("{:.1}", speedup),
                 "simple_avg_us": format!("{:.1}", simple_avg.as_secs_f64() * 1e6),
                 "complex_avg_us": format!("{:.1}", complex_avg.as_secs_f64() * 1e6),
                 "penalty": format!("{:.1}", penalty),
@@ -246,12 +318,19 @@ fn main() {
         eprintln!("\nBenchmark results cached to {}", cache_path);
     }
 
-    if throughput < 5000.0 {
-        println!("WARNING: Throughput under 5k lines/sec");
-    } else if throughput < 50_000.0 {
-        println!("OK: Moderate throughput");
+    if seq_throughput < 5000.0 {
+        println!("WARNING: Sequential throughput under 5k lines/sec");
+    } else if seq_throughput < 50_000.0 {
+        println!("OK: Moderate sequential throughput");
     } else {
-        println!("FAST: High throughput");
+        println!("FAST: High sequential throughput");
+    }
+
+    if speedup > 1.5 {
+        println!(
+            "BATCH: {:.1}x speedup with batch_size={}",
+            speedup, batch_size
+        );
     }
 }
 

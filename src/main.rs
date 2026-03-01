@@ -374,6 +374,58 @@ fn print_detections(detections: &[Detection]) {
     eprintln!();
 }
 
+// ─── Batched text processing ────────────────────────────────────────────────
+
+/// Process text input line-by-line with batched NER inference.
+///
+/// Splits input into lines, batches them according to `batch_size`, and uses
+/// `Anonymizer::anonymize_texts()` to process each batch with efficient NER inference.
+/// Results are reassembled preserving newlines and line order.
+///
+/// When `batch_size` is 0, falls back to unbatched `anonymize_text()` on the whole input.
+#[allow(dead_code)] // Used only in tests and with ner/ner-lite features
+fn process_text_batched(
+    anonymizer: &mut Anonymizer,
+    content: &str,
+    batch_size: usize,
+) -> (String, Vec<Detection>) {
+    if content.is_empty() {
+        return (String::new(), Vec::new());
+    }
+
+    // batch_size 0 means no batching - process whole input at once
+    if batch_size == 0 {
+        return anonymizer.anonymize_text(content);
+    }
+
+    let trailing_newline = content.ends_with('\n');
+    let lines: Vec<&str> = content.lines().collect();
+
+    if lines.is_empty() {
+        return (String::new(), Vec::new());
+    }
+
+    let mut all_results: Vec<String> = Vec::with_capacity(lines.len());
+    let mut all_detections: Vec<Detection> = Vec::new();
+
+    // Process in batches
+    for batch in lines.chunks(batch_size) {
+        let batch_results = anonymizer.anonymize_texts(batch);
+        for (anonymized, detections) in batch_results {
+            all_results.push(anonymized);
+            all_detections.extend(detections);
+        }
+    }
+
+    // Reassemble with newlines
+    let mut result = all_results.join("\n");
+    if trailing_newline {
+        result.push('\n');
+    }
+
+    (result, all_detections)
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 fn main() -> io::Result<()> {
@@ -945,7 +997,17 @@ fn main() -> io::Result<()> {
             } else if format_name == "sql" {
                 anonymizer.anonymize_sql(&content)
             } else {
-                anonymizer.anonymize_text(&content)
+                // Text format: use batched processing when NER is enabled
+                #[cfg(any(feature = "ner", feature = "ner-lite"))]
+                if cli.ner && cli.batch_size > 0 {
+                    process_text_batched(&mut anonymizer, &content, cli.batch_size)
+                } else {
+                    anonymizer.anonymize_text(&content)
+                }
+                #[cfg(not(any(feature = "ner", feature = "ner-lite")))]
+                {
+                    anonymizer.anonymize_text(&content)
+                }
             };
 
             // Handle --include-mapping: append mapping as comment at end
@@ -1705,5 +1767,168 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ─── Batch processing tests ─────────────────────────────────────────────────
+
+    #[cfg(any(feature = "ner", feature = "ner-lite"))]
+    mod batch_cli_tests {
+        use anon::cli::Cli;
+        use clap::Parser;
+
+        #[test]
+        fn test_batch_size_flag_exists() {
+            // Verify that the --batch-size flag is recognized
+            let cli = Cli::try_parse_from(["anon", "--ner", "--batch-size", "64"]);
+            assert!(
+                cli.is_ok(),
+                "CLI should accept --batch-size flag: {:?}",
+                cli.err()
+            );
+            let cli = cli.unwrap();
+            assert_eq!(cli.batch_size, 64);
+        }
+
+        #[test]
+        fn test_batch_size_default_value() {
+            // Default batch size should be 32
+            let cli = Cli::parse_from(["anon", "--ner"]);
+            assert_eq!(cli.batch_size, 32, "Default batch size should be 32");
+        }
+
+        #[test]
+        fn test_batch_size_zero_disables_batching() {
+            // --batch-size 0 should disable batching (process line by line)
+            let cli = Cli::parse_from(["anon", "--ner", "--batch-size", "0"]);
+            assert_eq!(cli.batch_size, 0);
+        }
+    }
+
+    #[test]
+    fn test_process_text_batched_multiline() {
+        // Process multiline text with batching should preserve line order
+        let input = "Line1: test@example.com\nLine2: 192.168.1.1\nLine3: no PII here";
+        let mut anonymizer = Anonymizer::new(0.0);
+
+        let result = process_text_batched(&mut anonymizer, input, 2);
+        let lines: Vec<&str> = result.0.lines().collect();
+
+        assert_eq!(lines.len(), 3, "Should preserve line count");
+        assert!(
+            lines[0].contains("[EMAIL_ADDRESS_"),
+            "Line 1 should have email token"
+        );
+        assert!(
+            lines[1].contains("[IP_ADDRESS_"),
+            "Line 2 should have IP token"
+        );
+        assert_eq!(lines[2], "Line3: no PII here", "Line 3 should be unchanged");
+    }
+
+    #[test]
+    fn test_process_text_batched_preserves_empty_lines() {
+        let input = "test@example.com\n\n192.168.1.1\n";
+        let mut anonymizer = Anonymizer::new(0.0);
+
+        let (result, _) = process_text_batched(&mut anonymizer, input, 32);
+
+        assert!(result.contains("\n\n"), "Should preserve empty lines");
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 3, "Should have 3 lines (including empty)");
+    }
+
+    #[test]
+    fn test_process_text_batched_preserves_trailing_newline() {
+        let input = "test@example.com\n192.168.1.1\n";
+        let mut anonymizer = Anonymizer::new(0.0);
+
+        let (result, _) = process_text_batched(&mut anonymizer, input, 32);
+
+        assert!(result.ends_with('\n'), "Should preserve trailing newline");
+    }
+
+    #[test]
+    fn test_process_text_batched_no_trailing_newline() {
+        let input = "test@example.com\n192.168.1.1";
+        let mut anonymizer = Anonymizer::new(0.0);
+
+        let (result, _) = process_text_batched(&mut anonymizer, input, 32);
+
+        assert!(!result.ends_with('\n'), "Should not add trailing newline");
+    }
+
+    #[test]
+    fn test_process_text_batched_single_line() {
+        let input = "Contact: test@example.com";
+        let mut anonymizer = Anonymizer::new(0.0);
+
+        let (result, detections) = process_text_batched(&mut anonymizer, input, 32);
+
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+        assert!(detections.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
+    }
+
+    #[test]
+    fn test_process_text_batched_empty_input() {
+        let input = "";
+        let mut anonymizer = Anonymizer::new(0.0);
+
+        let (result, detections) = process_text_batched(&mut anonymizer, input, 32);
+
+        assert_eq!(result, "");
+        assert!(detections.is_empty());
+    }
+
+    #[test]
+    fn test_process_text_batched_identical_to_unbatched() {
+        // Batched processing should produce identical results to unbatched
+        let input = "Email: alice@example.com\nIP: 10.0.0.1\nPhone: +33 6 12 34 56 78";
+
+        let mut a1 = Anonymizer::new(0.0);
+        let (_unbatched, unbatched_dets) = a1.anonymize_text(input);
+
+        let mut a2 = Anonymizer::new(0.0);
+        let (_batched, batched_dets) = process_text_batched(&mut a2, input, 2);
+
+        // Detection counts per entity type should match
+        let count_type =
+            |dets: &[Detection], t: &str| dets.iter().filter(|d| d.entity_type == t).count();
+
+        assert_eq!(
+            count_type(&unbatched_dets, "EMAIL_ADDRESS"),
+            count_type(&batched_dets, "EMAIL_ADDRESS"),
+            "EMAIL_ADDRESS count should match"
+        );
+        assert_eq!(
+            count_type(&unbatched_dets, "IP_ADDRESS"),
+            count_type(&batched_dets, "IP_ADDRESS"),
+            "IP_ADDRESS count should match"
+        );
+    }
+
+    #[test]
+    fn test_process_text_batched_batch_size_one() {
+        // Batch size 1 should work (degrades to per-line processing)
+        let input = "test@example.com\n192.168.1.1";
+        let mut anonymizer = Anonymizer::new(0.0);
+
+        let (result, detections) = process_text_batched(&mut anonymizer, input, 1);
+
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+        assert!(result.contains("[IP_ADDRESS_"));
+        assert_eq!(detections.len(), 2);
+    }
+
+    #[test]
+    fn test_process_text_batched_large_batch_size() {
+        // Batch size larger than line count should work
+        let input = "test@example.com\n192.168.1.1";
+        let mut anonymizer = Anonymizer::new(0.0);
+
+        let (result, detections) = process_text_batched(&mut anonymizer, input, 1000);
+
+        assert!(result.contains("[EMAIL_ADDRESS_"));
+        assert!(result.contains("[IP_ADDRESS_"));
+        assert_eq!(detections.len(), 2);
     }
 }
