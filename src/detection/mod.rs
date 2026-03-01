@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::config::RecognizerConfigFile;
 use crate::mapping::Mapping;
-use crate::ner::NerDetector;
+use crate::ner::{NerDetector, NerSpan};
 use crate::patterns::{CONTEXT_SCORE_BOOST, PATTERNS};
 
 mod context;
@@ -261,6 +261,65 @@ impl Anonymizer {
             }
             other => other.clone(),
         }
+    }
+
+    /// Anonymize multiple texts in a batch, using batched NER inference for efficiency.
+    ///
+    /// This method produces identical results to calling `anonymize_text()` N times,
+    /// but batches NER inference across all texts for better performance when NER is enabled.
+    ///
+    /// - Regex detection runs per-text (already fast)
+    /// - NER detection uses `detect_persons_batch()` for efficient batched inference
+    /// - Overlap resolution, name consistency, and replacement run per-text
+    pub fn anonymize_texts(&mut self, texts: &[&str]) -> Vec<(String, Vec<Detection>)> {
+        if texts.is_empty() {
+            return Vec::new();
+        }
+
+        // Get batch NER results upfront if NER is enabled
+        let batch_ner_results: Option<Vec<Vec<NerSpan>>> = self
+            .ner_detector
+            .as_ref()
+            .map(|ner| ner.detect_persons_batch(texts));
+
+        // Process each text
+        let mut results = Vec::with_capacity(texts.len());
+        for (i, text) in texts.iter().enumerate() {
+            // Temporarily swap in a cached NER detector if we have batch results
+            let cached_spans = batch_ner_results.as_ref().map(|r| r[i].clone());
+            let original_detector = if cached_spans.is_some() {
+                self.ner_detector.take()
+            } else {
+                None
+            };
+
+            if let Some(spans) = cached_spans {
+                self.ner_detector = Some(Box::new(CachedNerDetector { spans }));
+            }
+
+            let result = self.anonymize_text(text);
+
+            // Restore original detector
+            if original_detector.is_some() {
+                self.ner_detector = original_detector;
+            }
+
+            results.push(result);
+        }
+
+        results
+    }
+}
+
+/// Internal NER detector that returns pre-computed cached spans.
+/// Used by `anonymize_texts` to inject batch NER results into individual text processing.
+struct CachedNerDetector {
+    spans: Vec<NerSpan>,
+}
+
+impl NerDetector for CachedNerDetector {
+    fn detect_persons(&self, _text: &str) -> Vec<NerSpan> {
+        self.spans.clone()
     }
 }
 

@@ -1,5 +1,6 @@
 mod au;
 mod aviation;
+mod batch;
 mod config;
 mod context;
 mod crypto;
