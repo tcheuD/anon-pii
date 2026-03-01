@@ -75,6 +75,31 @@ pub struct MlNerDetector {
     min_score: f64,
 }
 
+/// Derive the path for the optimized model from the original model path.
+fn optimized_model_path(model_path: &Path) -> PathBuf {
+    model_path.with_extension("optimized.onnx")
+}
+
+/// Check if we should use a cached optimized model.
+/// Returns true if the optimized model exists and is newer than the original.
+fn should_use_cached_optimized(model_path: &Path, optimized_path: &Path) -> bool {
+    if !optimized_path.exists() {
+        return false;
+    }
+
+    // Compare modification times: if model.onnx is newer, re-optimize
+    let model_mtime = match std::fs::metadata(model_path).and_then(|m| m.modified()) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let optimized_mtime = match std::fs::metadata(optimized_path).and_then(|m| m.modified()) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    optimized_mtime >= model_mtime
+}
+
 impl MlNerDetector {
     pub fn new(config: &NerConfig) -> Result<Self, Box<dyn std::error::Error>> {
         // Validate ORT_DYLIB_PATH before ort loads the dynamic library
@@ -96,10 +121,21 @@ impl MlNerDetector {
             .map(|n| n.get())
             .unwrap_or(1);
 
-        let session = ort::session::Session::builder()?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
-            .with_intra_threads(num_cores)?
-            .commit_from_file(&model_path)?;
+        let optimized_path = optimized_model_path(&model_path);
+
+        let session = if should_use_cached_optimized(&model_path, &optimized_path) {
+            // Load cached optimized model (skip Level3 optimization)
+            ort::session::Session::builder()?
+                .with_intra_threads(num_cores)?
+                .commit_from_file(&optimized_path)?
+        } else {
+            // Optimize and save for future runs
+            ort::session::Session::builder()?
+                .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
+                .with_optimized_model_path(&optimized_path)?
+                .with_intra_threads(num_cores)?
+                .commit_from_file(&model_path)?
+        };
 
         let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| format!("Failed to load tokenizer: {e}"))?;
@@ -1231,5 +1267,85 @@ mod tests {
             "Name should not be duplicated from overlapping chunks, got {} occurrences",
             jean_count
         );
+    }
+
+    // ===== Optimized model caching tests =====
+
+    #[test]
+    fn test_optimized_path_derived_from_model_path() {
+        let model_path = PathBuf::from("/some/dir/model.onnx");
+        let optimized = optimized_model_path(&model_path);
+        assert_eq!(
+            optimized,
+            PathBuf::from("/some/dir/model.optimized.onnx"),
+            "Should derive optimized path from model path"
+        );
+    }
+
+    #[test]
+    fn test_should_reoptimize_when_optimized_missing() {
+        // Non-existent optimized file should trigger re-optimization
+        let model_path = std::env::temp_dir().join("test_model_for_opt_check.onnx");
+        std::fs::write(&model_path, b"fake model").unwrap();
+
+        let optimized_path = std::env::temp_dir().join("nonexistent_optimized.onnx");
+        // Ensure it doesn't exist
+        let _ = std::fs::remove_file(&optimized_path);
+
+        let result = should_use_cached_optimized(&model_path, &optimized_path);
+        assert!(
+            !result,
+            "Should return false when optimized model doesn't exist"
+        );
+
+        let _ = std::fs::remove_file(&model_path);
+    }
+
+    #[test]
+    fn test_should_reoptimize_when_model_newer() {
+        // If model.onnx is newer than model.optimized.onnx, re-optimize
+        let tmp = std::env::temp_dir();
+        let model_path = tmp.join("stale_test_model.onnx");
+        let optimized_path = tmp.join("stale_test_model.optimized.onnx");
+
+        // Create optimized first (older)
+        std::fs::write(&optimized_path, b"old optimized").unwrap();
+        // Sleep briefly to ensure different mtime
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Create model second (newer)
+        std::fs::write(&model_path, b"newer model").unwrap();
+
+        let result = should_use_cached_optimized(&model_path, &optimized_path);
+        assert!(
+            !result,
+            "Should return false when model.onnx is newer than optimized"
+        );
+
+        let _ = std::fs::remove_file(&model_path);
+        let _ = std::fs::remove_file(&optimized_path);
+    }
+
+    #[test]
+    fn test_should_use_cached_when_optimized_newer() {
+        // If model.optimized.onnx is newer, use cached
+        let tmp = std::env::temp_dir();
+        let model_path = tmp.join("fresh_test_model.onnx");
+        let optimized_path = tmp.join("fresh_test_model.optimized.onnx");
+
+        // Create model first (older)
+        std::fs::write(&model_path, b"older model").unwrap();
+        // Sleep briefly to ensure different mtime
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Create optimized second (newer)
+        std::fs::write(&optimized_path, b"newer optimized").unwrap();
+
+        let result = should_use_cached_optimized(&model_path, &optimized_path);
+        assert!(
+            result,
+            "Should return true when optimized is newer than model.onnx"
+        );
+
+        let _ = std::fs::remove_file(&model_path);
+        let _ = std::fs::remove_file(&optimized_path);
     }
 }
