@@ -76,6 +76,15 @@ jobs:
           name: benchmark-results
           path: bench-results.json
 
+      - name: Ensure gh-pages branch exists
+        run: |
+          if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            git switch --orphan gh-pages
+            git commit --allow-empty -m "Initialize gh-pages for benchmarks"
+            git push origin gh-pages
+            git switch -
+          fi
+
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@4bdcce38c94cec68da58d012ac24b7b1155efe8b # v1.20.7
         with:
