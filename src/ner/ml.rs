@@ -144,6 +144,16 @@ const MAX_SEQ_LEN: usize = 512;
 /// Overlap between chunks in tokens. Enough to capture names split at boundaries.
 const CHUNK_OVERLAP: usize = 50;
 
+/// Metadata for a chunk of text being processed in batch inference.
+struct ChunkInfo {
+    /// Index into the original texts array
+    text_idx: usize,
+    /// Start token position in the full encoding (inclusive)
+    token_start: usize,
+    /// End token position in the full encoding (exclusive)
+    token_end: usize,
+}
+
 impl NerDetector for MlNerDetector {
     fn detect_persons(&self, text: &str) -> Vec<NerSpan> {
         if text.is_empty() {
@@ -187,6 +197,193 @@ impl NerDetector for MlNerDetector {
         dedup_spans(&mut all_spans);
 
         all_spans
+    }
+
+    fn detect_persons_batch(&self, texts: &[&str]) -> Vec<Vec<NerSpan>> {
+        if texts.is_empty() {
+            return Vec::new();
+        }
+
+        // Tokenize all texts and collect chunk metadata
+        let mut chunk_infos: Vec<ChunkInfo> = Vec::new();
+        let mut encodings: Vec<tokenizers::Encoding> = Vec::new();
+
+        let max_content_tokens = MAX_SEQ_LEN - 2;
+
+        for (text_idx, text) in texts.iter().enumerate() {
+            if text.is_empty() {
+                encodings.push(tokenizers::Encoding::default());
+                continue;
+            }
+
+            let encoding = match self.tokenizer.encode(*text, false) {
+                Ok(enc) => enc,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: NER tokenization failed for text {}: {e}",
+                        text_idx
+                    );
+                    encodings.push(tokenizers::Encoding::default());
+                    continue;
+                }
+            };
+
+            let total_tokens = encoding.get_ids().len();
+
+            if total_tokens <= max_content_tokens {
+                // Single chunk for this text
+                chunk_infos.push(ChunkInfo {
+                    text_idx,
+                    token_start: 0,
+                    token_end: total_tokens,
+                });
+            } else {
+                // Sliding window chunks
+                let mut start = 0;
+                while start < total_tokens {
+                    let end = (start + max_content_tokens).min(total_tokens);
+                    chunk_infos.push(ChunkInfo {
+                        text_idx,
+                        token_start: start,
+                        token_end: end,
+                    });
+                    if end >= total_tokens {
+                        break;
+                    }
+                    start = end - CHUNK_OVERLAP;
+                }
+            }
+
+            encodings.push(encoding);
+        }
+
+        // If no chunks (all empty texts), return empty results
+        if chunk_infos.is_empty() {
+            return texts.iter().map(|_| Vec::new()).collect();
+        }
+
+        // Build padded batch tensors
+        let batch_size = chunk_infos.len();
+        let max_seq_len = chunk_infos
+            .iter()
+            .map(|c| c.token_end - c.token_start + 2) // +2 for [CLS] and [SEP]
+            .max()
+            .unwrap_or(0);
+
+        // Flat arrays for batch: [batch_size * max_seq_len]
+        let mut input_ids_flat: Vec<i64> = vec![0i64; batch_size * max_seq_len];
+        let mut attention_mask_flat: Vec<i64> = vec![0i64; batch_size * max_seq_len];
+
+        for (chunk_idx, chunk) in chunk_infos.iter().enumerate() {
+            let encoding = &encodings[chunk.text_idx];
+            let all_ids = encoding.get_ids();
+            let chunk_ids = &all_ids[chunk.token_start..chunk.token_end];
+            let seq_len = chunk_ids.len() + 2; // +2 for [CLS] and [SEP]
+
+            let row_offset = chunk_idx * max_seq_len;
+
+            // [CLS] token
+            input_ids_flat[row_offset] = 101;
+            attention_mask_flat[row_offset] = 1;
+
+            // Content tokens
+            for (i, &id) in chunk_ids.iter().enumerate() {
+                input_ids_flat[row_offset + 1 + i] = id as i64;
+                attention_mask_flat[row_offset + 1 + i] = 1;
+            }
+
+            // [SEP] token
+            input_ids_flat[row_offset + seq_len - 1] = 102;
+            attention_mask_flat[row_offset + seq_len - 1] = 1;
+
+            // Remaining positions are already 0 (padding)
+        }
+
+        // Create tensors
+        let shape = vec![batch_size as i64, max_seq_len as i64];
+        let ids_tensor = match ort::value::Tensor::from_array((shape.clone(), input_ids_flat)) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Warning: NER batch input_ids tensor creation failed: {e}");
+                return texts.iter().map(|t| self.detect_persons(t)).collect();
+            }
+        };
+        let mask_tensor = match ort::value::Tensor::from_array((shape, attention_mask_flat)) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Warning: NER batch attention_mask tensor creation failed: {e}");
+                return texts.iter().map(|t| self.detect_persons(t)).collect();
+            }
+        };
+
+        let inputs = ort::inputs![
+            "input_ids" => ids_tensor,
+            "attention_mask" => mask_tensor,
+        ];
+
+        // Run single batched inference
+        let mut session = match self.session.lock() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Warning: NER session lock poisoned: {e}");
+                return texts.iter().map(|t| self.detect_persons(t)).collect();
+            }
+        };
+
+        let outputs = match session.run(inputs) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("Warning: NER batch inference failed: {e}");
+                return texts.iter().map(|t| self.detect_persons(t)).collect();
+            }
+        };
+
+        let (output_shape, logits) = match outputs[0].try_extract_tensor::<f32>() {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("Warning: NER batch logits extraction failed: {e}");
+                return texts.iter().map(|t| self.detect_persons(t)).collect();
+            }
+        };
+
+        let num_labels = if output_shape.len() == 3 {
+            output_shape[2] as usize
+        } else {
+            eprintln!(
+                "Warning: NER unexpected batch output shape: {:?}",
+                output_shape
+            );
+            return texts.iter().map(|t| self.detect_persons(t)).collect();
+        };
+
+        // Decode spans from each chunk in the batch
+        let mut results: Vec<Vec<NerSpan>> = texts.iter().map(|_| Vec::new()).collect();
+
+        for (chunk_idx, chunk) in chunk_infos.iter().enumerate() {
+            let text = texts[chunk.text_idx];
+            let encoding = &encodings[chunk.text_idx];
+            let chunk_offsets = &encoding.get_offsets()[chunk.token_start..chunk.token_end];
+
+            // Logits for this chunk start at: chunk_idx * max_seq_len * num_labels
+            let chunk_logits_offset = chunk_idx * max_seq_len * num_labels;
+
+            let spans = self.decode_chunk_spans(
+                text,
+                chunk_offsets,
+                logits,
+                chunk_logits_offset,
+                num_labels,
+            );
+
+            results[chunk.text_idx].extend(spans);
+        }
+
+        // Deduplicate spans for each text
+        for spans in &mut results {
+            dedup_spans(spans);
+        }
+
+        results
     }
 }
 
@@ -341,7 +538,58 @@ impl MlNerDetector {
             {
                 current_end = off_end;
                 current_scores.push(softmax_score(logits, row_offset, max_idx, num_labels));
-            } else {
+            } else if let Some(start) = current_start.take() {
+                flush_span(
+                    text,
+                    start,
+                    current_end,
+                    &current_scores,
+                    &current_label,
+                    self.min_score,
+                    &mut spans,
+                );
+                current_scores.clear();
+            }
+        }
+
+        if let Some(start) = current_start.take() {
+            flush_span(
+                text,
+                start,
+                current_end,
+                &current_scores,
+                &current_label,
+                self.min_score,
+                &mut spans,
+            );
+        }
+
+        spans
+    }
+
+    /// Decode BIO tags from batch logits for a single chunk.
+    /// Used by `detect_persons_batch` to decode each chunk's results.
+    fn decode_chunk_spans(
+        &self,
+        text: &str,
+        chunk_offsets: &[(usize, usize)],
+        logits: &[f32],
+        chunk_logits_offset: usize,
+        num_labels: usize,
+    ) -> Vec<NerSpan> {
+        let mut spans: Vec<NerSpan> = Vec::new();
+        let mut current_start: Option<usize> = None;
+        let mut current_end: usize = 0;
+        let mut current_scores: Vec<f32> = Vec::new();
+        let mut current_label: String = String::new();
+
+        for (chunk_i, &(off_start, off_end)) in chunk_offsets.iter().enumerate() {
+            // logits index is chunk_i + 1 (skip [CLS])
+            // Position in the flat logits array:
+            // chunk_logits_offset + (chunk_i + 1) * num_labels
+            let logit_i = chunk_i + 1;
+
+            if off_start == off_end {
                 if let Some(start) = current_start.take() {
                     flush_span(
                         text,
@@ -354,6 +602,66 @@ impl MlNerDetector {
                     );
                     current_scores.clear();
                 }
+                continue;
+            }
+
+            let row_offset = chunk_logits_offset + logit_i * num_labels;
+            let mut max_idx = 0usize;
+            let mut max_val = f32::NEG_INFINITY;
+            for j in 0..num_labels {
+                let val = logits[row_offset + j];
+                if val > max_val {
+                    max_val = val;
+                    max_idx = j;
+                }
+            }
+
+            let label = &self.id2label[max_idx];
+            let is_begin = label.starts_with("B-");
+            let is_inside = label.starts_with("I-");
+            let entity_tag = if is_begin || is_inside {
+                &label[2..] // "PER", "LOC", "ORG", "MISC"
+            } else {
+                ""
+            };
+            // Only track PER and LOC entities
+            let is_tracked = entity_tag == "PER" || entity_tag == "LOC";
+
+            if is_begin && is_tracked {
+                if let Some(start) = current_start.take() {
+                    flush_span(
+                        text,
+                        start,
+                        current_end,
+                        &current_scores,
+                        &current_label,
+                        self.min_score,
+                        &mut spans,
+                    );
+                    current_scores.clear();
+                }
+                current_start = Some(off_start);
+                current_end = off_end;
+                current_label = entity_tag.to_string();
+                current_scores.push(softmax_score(logits, row_offset, max_idx, num_labels));
+            } else if is_inside
+                && is_tracked
+                && current_start.is_some()
+                && entity_tag == current_label
+            {
+                current_end = off_end;
+                current_scores.push(softmax_score(logits, row_offset, max_idx, num_labels));
+            } else if let Some(start) = current_start.take() {
+                flush_span(
+                    text,
+                    start,
+                    current_end,
+                    &current_scores,
+                    &current_label,
+                    self.min_score,
+                    &mut spans,
+                );
+                current_scores.clear();
             }
         }
 
@@ -742,5 +1050,186 @@ mod tests {
         } else {
             eprintln!("No system library found for positive test, skipping");
         }
+    }
+
+    // ===== Batched inference tests =====
+
+    #[test]
+    fn test_batch_vs_sequential_results_identical() {
+        // Core correctness test: batch results must match sequential results exactly
+        let detector = match try_create_detector() {
+            Some(d) => d,
+            None => return,
+        };
+
+        let texts = vec![
+            "Jean Dupont called from Paris",
+            "Marie Lefebvre is the pilot",
+            "Hello world with no names",
+            "Captain Pierre Martin reported",
+        ];
+
+        // Get sequential results
+        let sequential: Vec<Vec<NerSpan>> =
+            texts.iter().map(|t| detector.detect_persons(t)).collect();
+
+        // Get batched results
+        let batched = detector.detect_persons_batch(&texts);
+
+        assert_eq!(
+            sequential.len(),
+            batched.len(),
+            "Batch should return same number of results"
+        );
+
+        for (i, (seq, batch)) in sequential.iter().zip(batched.iter()).enumerate() {
+            assert_eq!(
+                seq.len(),
+                batch.len(),
+                "Text {}: different number of spans (seq={}, batch={})",
+                i,
+                seq.len(),
+                batch.len()
+            );
+
+            for (s, b) in seq.iter().zip(batch.iter()) {
+                assert_eq!(s.text, b.text, "Text {}: span text mismatch", i);
+                assert_eq!(s.start, b.start, "Text {}: span start mismatch", i);
+                assert_eq!(s.end, b.end, "Text {}: span end mismatch", i);
+                assert_eq!(s.label, b.label, "Text {}: span label mismatch", i);
+                // Scores should be very close (floating point tolerance)
+                assert!(
+                    (s.score - b.score).abs() < 0.001,
+                    "Text {}: score mismatch (seq={}, batch={})",
+                    i,
+                    s.score,
+                    b.score
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_batch_mixed_length_inputs() {
+        // Test with texts of varying lengths in the same batch
+        let detector = match try_create_detector() {
+            Some(d) => d,
+            None => return,
+        };
+
+        let short = "Jean Dupont";
+        let medium = "Marie Lefebvre is a pilot based in Paris. She works for Air France.";
+        // Long text that triggers sliding window (>512 tokens)
+        let filler = "The quick brown fox jumps over the lazy dog. ".repeat(50);
+        let long = format!("{filler}Captain Pierre Martin reported an incident.");
+
+        let texts: Vec<&str> = vec![short, medium, &long];
+
+        // Should not panic and results should match sequential
+        let batched = detector.detect_persons_batch(&texts);
+        assert_eq!(batched.len(), 3);
+
+        // Verify each matches sequential
+        for (i, text) in texts.iter().enumerate() {
+            let seq = detector.detect_persons(text);
+            assert_eq!(seq.len(), batched[i].len(), "Text {} length mismatch", i);
+        }
+    }
+
+    #[test]
+    fn test_batch_empty_texts() {
+        let detector = match try_create_detector() {
+            Some(d) => d,
+            None => return,
+        };
+
+        // Empty batch
+        let empty: Vec<&str> = vec![];
+        let result = detector.detect_persons_batch(&empty);
+        assert!(result.is_empty());
+
+        // Batch with some empty strings
+        let texts = vec!["", "Jean Dupont", "", "Marie"];
+        let result = detector.detect_persons_batch(&texts);
+        assert_eq!(result.len(), 4);
+        assert!(result[0].is_empty(), "Empty string should yield no spans");
+        assert!(result[2].is_empty(), "Empty string should yield no spans");
+    }
+
+    #[test]
+    fn test_batch_single_text() {
+        let detector = match try_create_detector() {
+            Some(d) => d,
+            None => return,
+        };
+
+        let texts = vec!["Jean Dupont called from Paris"];
+        let batched = detector.detect_persons_batch(&texts);
+        let sequential = detector.detect_persons(texts[0]);
+
+        assert_eq!(batched.len(), 1);
+        assert_eq!(batched[0].len(), sequential.len());
+    }
+
+    #[test]
+    fn test_batch_sliding_window_chunking_preserved() {
+        // Verify that sliding window chunking works correctly in batch mode
+        let detector = match try_create_detector() {
+            Some(d) => d,
+            None => return,
+        };
+
+        // Create texts that require chunking (>510 content tokens each)
+        let filler = "The quick brown fox jumps over the lazy dog. ".repeat(50);
+        let long1 = format!("{filler}Jean Dupont was there.");
+        let long2 = format!("{filler}Marie Lefebvre arrived later.");
+
+        let texts: Vec<&str> = vec![&long1, &long2];
+        let batched = detector.detect_persons_batch(&texts);
+
+        assert_eq!(batched.len(), 2);
+
+        // Names should be detected even though they're past the 512 token boundary
+        assert!(
+            batched[0]
+                .iter()
+                .any(|s| s.text.contains("Jean") || s.text.contains("Dupont")),
+            "Should detect Jean Dupont past chunk boundary"
+        );
+        assert!(
+            batched[1]
+                .iter()
+                .any(|s| s.text.contains("Marie") || s.text.contains("Lefebvre")),
+            "Should detect Marie Lefebvre past chunk boundary"
+        );
+    }
+
+    #[test]
+    fn test_batch_deduplication_preserved() {
+        // Verify that deduplication of overlapping spans works in batch mode
+        let detector = match try_create_detector() {
+            Some(d) => d,
+            None => return,
+        };
+
+        // Long text with name near a chunk boundary (where overlap dedup matters)
+        let filler = "word ".repeat(500); // ~500 tokens
+        let text = format!("{filler}Jean Dupont continued.");
+
+        let texts = vec![text.as_str()];
+        let batched = detector.detect_persons_batch(&texts);
+
+        // Count how many times "Jean Dupont" appears in spans
+        let jean_count = batched[0]
+            .iter()
+            .filter(|s| s.text.contains("Jean") || s.text.contains("Dupont"))
+            .count();
+
+        // Should be exactly 1 (not duplicated from overlapping chunks)
+        assert!(
+            jean_count <= 1,
+            "Name should not be duplicated from overlapping chunks, got {} occurrences",
+            jean_count
+        );
     }
 }
