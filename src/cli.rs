@@ -251,4 +251,6 @@ pub enum Format {
     Text,
     Sql,
     Csv,
+    #[cfg(feature = "xlsx")]
+    Xlsx,
 }
