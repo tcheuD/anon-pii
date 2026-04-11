@@ -140,6 +140,7 @@ Tokens follow `[ENTITY_TYPE_XXXX]` format with random hex suffix (e.g., `[EMAIL_
 | `ner-lite` | Heuristic name detection (titles, name dictionaries) | None (zero deps) |
 | `ner` | ML name detection via ONNX DistilBERT (implies `ner-lite`) | ort, tokenizers, ndarray, ureq |
 | `proxy` | Reverse proxy + web UI | tokio, axum, reqwest, futures, bytes |
+| `xlsx` | XLSX spreadsheet input parsing (scaffold) | calamine |
 
 ## Entity naming
 

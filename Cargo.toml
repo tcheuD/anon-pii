@@ -31,6 +31,9 @@ leptess = { version = "=0.14.0", optional = true }
 # PDF text extraction and redaction — behind "pdf" feature, pinned for supply chain safety
 lopdf = { version = "=0.39.0", optional = true }
 
+# XLSX spreadsheet parsing — behind "xlsx" feature, pinned for supply chain safety
+calamine = { version = "=0.34.0", optional = true }
+
 # NER (ML-based) — behind "ner" feature
 ort = { version = "=2.0.0-rc.12", features = ["load-dynamic"], optional = true }
 tokenizers = { version = "=0.22.2", optional = true, default-features = false, features = ["fancy-regex"] }
@@ -48,6 +51,7 @@ ner = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:ureq", "ner-lite"]
 ner-lite = []
 image = ["dep:image_crate", "dep:leptess"]
 pdf = ["dep:lopdf"]
+xlsx = ["dep:calamine"]
 
 [profile.release]
 lto = true
