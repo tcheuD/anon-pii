@@ -78,6 +78,9 @@ jobs:
       - name: Clippy (image)
         run: cargo clippy --features image -- -D warnings
 
+      - name: Clippy (xlsx)
+        run: cargo clippy --features xlsx -- -D warnings
+
   # ============================================================================
   # Rust Tests (ubuntu — always, macOS — main only)
   # ============================================================================
@@ -87,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ['', 'ner-lite,proxy']
+        features: ['', 'ner-lite,proxy', 'xlsx']
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

@@ -15,3 +15,5 @@ pub mod pdf_redact;
 pub mod proxy;
 #[cfg(feature = "proxy")]
 pub mod ui;
+#[cfg(feature = "xlsx")]
+pub mod xlsx;
