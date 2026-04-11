@@ -978,6 +978,12 @@ fn main() -> io::Result<()> {
                 Format::Text => (None, "text"),
                 Format::Sql => (None, "sql"),
                 Format::Csv => (None, "csv"),
+                #[cfg(feature = "xlsx")]
+                Format::Xlsx => {
+                    eprintln!("Error: XLSX parsing not yet implemented");
+                    eprintln!("Hint: use --format csv to export to CSV first");
+                    std::process::exit(1);
+                }
             };
 
             let (result, detections) = if let Some(parsed) = parsed_json {
