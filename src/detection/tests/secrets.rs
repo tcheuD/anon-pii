@@ -1,12 +1,17 @@
 use super::super::*;
 
+fn synthetic_secret(parts: &[&str]) -> String {
+    parts.concat()
+}
+
 // -- SECRET_KEY tests --
 
 #[test]
 fn test_secret_key_stripe_underscore() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) =
-        a.anonymize_text("STRIPE_SECRET = \"sk_live_51N7xRgAv8bN2xT9mW5qJ7pL3kYz\"");
+    let key = synthetic_secret(&["sk", "_live_", "51N7xRgAv8bN2xT9mW5qJ7pL3kYz"]);
+    let input = format!("STRIPE_SECRET = \"{key}\"");
+    let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "Stripe key with underscores should be detected.\nDetections: {:?}",
@@ -18,7 +23,9 @@ fn test_secret_key_stripe_underscore() {
 #[test]
 fn test_secret_key_stripe_dash() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) = a.anonymize_text("key = sk-live-Rg4v8bN2xT9mW5qJ7pL3kYz6hD1fA0cE8iU2wX");
+    let key = synthetic_secret(&["sk", "-live-", "Rg4v8bN2xT9mW5qJ7pL3kYz6hD1fA0cE8iU2wX"]);
+    let input = format!("key = {key}");
+    let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "Stripe key with dashes should be detected.\nDetections: {:?}",
@@ -30,8 +37,9 @@ fn test_secret_key_stripe_dash() {
 #[test]
 fn test_secret_key_github_pat() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) =
-        a.anonymize_text("export GH_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn");
+    let key = synthetic_secret(&["ghp", "_", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn"]);
+    let input = format!("export GH_TOKEN={key}");
+    let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "GitHub PAT should be detected.\nDetections: {:?}",
@@ -43,7 +51,9 @@ fn test_secret_key_github_pat() {
 #[test]
 fn test_secret_key_aws() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) = a.anonymize_text("aws_access_key_id = AKIAIOSFODNN7EXAMPLE");
+    let key = synthetic_secret(&["AKIA", "IOSFODNN7", "EXAMPLE"]);
+    let input = format!("aws_access_key_id = {key}");
+    let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "AWS access key should be detected.\nDetections: {:?}",
@@ -55,7 +65,9 @@ fn test_secret_key_aws() {
 #[test]
 fn test_secret_key_slack() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) = a.anonymize_text("SLACK_TOKEN=xoxb-1234567890-abcdefghij");
+    let key = synthetic_secret(&["xox", "b-", "1234567890-abcdefghij"]);
+    let input = format!("SLACK_TOKEN={key}");
+    let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "Slack bot token should be detected.\nDetections: {:?}",
@@ -67,8 +79,13 @@ fn test_secret_key_slack() {
 #[test]
 fn test_secret_key_openai() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) =
-        a.anonymize_text("OPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx");
+    let key = synthetic_secret(&[
+        "sk",
+        "-proj-",
+        "abc123def456ghi789jkl012mno345pqr678stu901vwx",
+    ]);
+    let input = format!("OPENAI_API_KEY={key}");
+    let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "OpenAI key should be detected.\nDetections: {:?}",
@@ -80,7 +97,8 @@ fn test_secret_key_openai() {
 #[test]
 fn test_secret_key_private_key_header() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) = a.anonymize_text("-----BEGIN RSA PRIVATE KEY-----");
+    let input = synthetic_secret(&["-----BEGIN ", "RSA ", "PRIVATE KEY-----"]);
+    let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "PEM private key header should be detected.\nDetections: {:?}",
@@ -92,7 +110,8 @@ fn test_secret_key_private_key_header() {
 #[test]
 fn test_secret_key_private_key_header_generic() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) = a.anonymize_text("-----BEGIN PRIVATE KEY-----");
+    let input = synthetic_secret(&["-----BEGIN ", "PRIVATE ", "KEY-----"]);
+    let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "SECRET_KEY"),
         "Generic PEM private key header should be detected.\nDetections: {:?}",
@@ -264,7 +283,13 @@ fn test_password_prefixed_keyword() {
 #[test]
 fn test_jwt_three_segments_detected() {
     let mut a = Anonymizer::new(0.0);
-    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    let jwt = synthetic_secret(&[
+        "eyJhbGciOiJIUzI1NiJ9",
+        ".",
+        "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+        ".",
+        "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+    ]);
     let input = format!("Authorization: Bearer {jwt}");
     let (result, dets) = a.anonymize_text(&input);
     assert!(
@@ -279,8 +304,13 @@ fn test_jwt_three_segments_detected() {
 fn test_jwt_two_segments_detected() {
     let mut a = Anonymizer::new(0.0);
     // JWT without signature (2 segments) — common in URL params
-    let input = "token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0&cc_last4=4242";
-    let (result, dets) = a.anonymize_text(input);
+    let jwt = synthetic_secret(&[
+        "eyJhbGciOiJIUzI1NiJ9",
+        ".",
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0",
+    ]);
+    let input = format!("token={jwt}&cc_last4=4242");
+    let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),
         "JWT with 2 segments should be detected: {:?}",

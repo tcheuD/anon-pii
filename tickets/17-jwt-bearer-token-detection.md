@@ -12,11 +12,11 @@ JWT (JSON Web Tokens) and bearer tokens in log lines are not detected. These are
 ## Observed Miss (Stress Test)
 
 ```text
-Input:  POST /payment/callback?token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0&cc_last4=4242
+Input:  POST /payment/callback?token=<JWT_TWO_SEGMENT_FIXTURE>&cc_last4=4242
 Output: (JWT passed through unmasked)
 ```
 
-The JWT `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOi...` is a base64-encoded authentication credential containing user identity (`"name": "John Doe"`) and should be masked.
+The JWT fixture is a base64-encoded authentication credential containing user identity (`"name": "John Doe"`) and should be masked.
 
 ## Proposed Pattern
 
@@ -51,8 +51,8 @@ This is lower priority and higher false-positive risk, so it could be a separate
 
 ```text
 # Should detect
-"Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
-"token=eyJhbGciOiJIUzI1NiJ9.eyJuYW1lIjoiSm9obiJ9.signature"
+"Authorization: Bearer <JWT_THREE_SEGMENT_FIXTURE>"
+"token=<JWT_TWO_SEGMENT_FIXTURE>"
 
 # Should NOT detect
 "version=eyJub3QiOiJhIHRva2VuIn0" (only 2 segments, not a valid JWT)

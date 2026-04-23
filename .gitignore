@@ -33,7 +33,10 @@ target/
 .idea/
 .vscode/
 
-# Other
+# OS / editor noise
+.DS_Store
+
+# Local env / package managers
 uv.lock
 
 
@@ -48,3 +51,14 @@ security_best_practices_report.md
 
 # Benchmark cache (local, machine-specific)
 bench-results.json
+
+# Local anonymization outputs. Mapping files can contain original PII.
+mapping.json
+*.mapping.json
+*.anon-mapping.json
+anonymized.txt
+redacted.png
+
+# Optional local Python environments used by benchmark helpers
+.bench-venv/
+.venv-bench/
