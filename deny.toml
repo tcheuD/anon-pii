@@ -2,21 +2,16 @@
 ignore = []
 
 [licenses]
+# Keep this list limited to licenses present in the checked dependency graph so
+# newly introduced licenses require an explicit review.
 allow = [
     "MIT",
     "Apache-2.0",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
     "Unlicense",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
-    "OpenSSL",
     "Zlib",
-    "CC0-1.0",
     "BSL-1.0",
     "MPL-2.0",
-    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
