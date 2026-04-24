@@ -2,6 +2,25 @@
 
 Fast CLI tool to anonymize PII in debug data before sharing with AI tools.
 
+`anon` is a local data-minimization aid. It helps detect, pseudonymize, redact,
+or mask sensitive values before they leave your machine, but it is not a privacy
+compliance guarantee and it cannot prove that a payload is fully anonymized.
+Always evaluate it against your own data, policies, and risk tolerance before
+production use.
+
+## Security & Privacy Notice
+
+- **Mapping files contain original PII.** The default token operator saves
+  reversible token mappings to `~/.anon/mapping.json` so `anon restore` can put
+  values back. Protect this file like the original data and never commit it.
+- **False negatives are possible.** Pattern and NER-based detection can miss
+  unusual identifiers, domain-specific formats, non-Latin text, split secrets,
+  or ambiguous names.
+- **False positives are possible.** Context-aware patterns and name detection can
+  redact benign data, especially in logs with dense identifiers.
+- **High-risk workflows need review.** Medical, legal, financial, HR,
+  education, and government data should use additional controls and human review.
+
 ## Installation
 
 ```bash
@@ -196,6 +215,19 @@ anon proxy                 # Start anonymizing proxy server (requires `proxy` fe
 See [docs/entities.md](docs/entities.md) for the full reference with confidence scores and context keywords.
 <!-- END ENTITIES -->
 
+## Known Limitations
+
+- `anon` is optimized for developer/debug workflows, not legal de-identification
+  or formal anonymization.
+- Optional NER improves person detection but still depends on model coverage,
+  dictionaries, local context, and post-processing heuristics.
+- Image and PDF redaction rely on text extraction/OCR quality. Always visually
+  inspect redacted documents before sharing.
+- Proxy mode trusts local callers on the same machine. Do not expose it on a
+  network interface.
+- Custom recognizers can introduce catastrophic false positives or false
+  negatives if regexes, scores, or context keywords are too broad.
+
 ## Documentation
 
 | Guide | Description |
@@ -207,6 +239,12 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 | [Threat model](docs/threat-model.md) | Security threat model and mitigations |
 | [YouTrack integration](docs/youtrack.md) | `scripts/yt` — fetch issues with human review |
 | [Image redaction](docs/image-redaction.md) | OCR-based image PII redaction |
+
+## Responsible Disclosure
+
+Please report security issues privately where possible. See
+[SECURITY.md](SECURITY.md) for reporting guidance and sensitive-data handling
+rules.
 
 ## Development
 
