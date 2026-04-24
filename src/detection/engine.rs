@@ -501,7 +501,7 @@ impl Anonymizer {
         }
 
         // Sort by position for display
-        filtered.sort_by(|a, b| a.start.cmp(&b.start));
+        filtered.sort_by_key(|d| d.start);
 
         // Extract inner PII from URL query parameters for audit visibility.
         // These are reported in the detection list but not used for replacement

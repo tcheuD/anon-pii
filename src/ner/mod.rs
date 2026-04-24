@@ -55,7 +55,7 @@ impl NerDetector for CombinedNerDetector {
                 }
             }
         }
-        all_spans.sort_by(|a, b| a.start.cmp(&b.start));
+        all_spans.sort_by_key(|span| span.start);
         all_spans
     }
 
@@ -81,7 +81,7 @@ impl NerDetector for CombinedNerDetector {
 
         // Sort each result by start position
         for spans in &mut results {
-            spans.sort_by(|a, b| a.start.cmp(&b.start));
+            spans.sort_by_key(|span| span.start);
         }
 
         results

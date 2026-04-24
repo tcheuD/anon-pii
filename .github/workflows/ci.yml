@@ -46,7 +46,7 @@ jobs:
         run: cargo fmt --all --check
 
   # ============================================================================
-  # Rust Clippy Lint
+  # Rust Clippy Lint (lightweight PR gate)
   # ============================================================================
   rust-clippy:
     name: Rust Clippy
@@ -72,17 +72,8 @@ jobs:
       - name: Clippy (all features except ner)
         run: cargo clippy --features ner-lite,proxy -- -D warnings
 
-      - name: Install Tesseract (for image feature)
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr libtesseract-dev libleptonica-dev
-
-      - name: Clippy (image)
-        run: cargo clippy --features image -- -D warnings
-
-      - name: Clippy (xlsx)
-        run: cargo clippy --features xlsx -- -D warnings
-
   # ============================================================================
-  # Rust Tests (ubuntu — always, macOS — main only)
+  # Rust Tests (lightweight PR gate)
   # ============================================================================
   rust-test:
     name: Rust Test (${{ matrix.features || 'default' }})
@@ -90,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ['', 'ner-lite,proxy', 'xlsx']
+        features: ['', 'ner-lite,proxy']
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -142,10 +133,34 @@ jobs:
           fi
 
   # ============================================================================
-  # Rust Tests — Image (requires Tesseract)
+  # Rust Tests — XLSX (main/manual only)
+  # ============================================================================
+  rust-test-xlsx:
+    name: Rust Test (xlsx)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          prefix-key: v1-test
+          shared-key: xlsx
+
+      - name: Run tests (xlsx)
+        run: cargo test --features xlsx
+
+  # ============================================================================
+  # Rust Tests — Image/OCR (main/manual only; requires Tesseract)
   # ============================================================================
   rust-test-image:
     name: Rust Test (image)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -265,6 +280,7 @@ jobs:
       - rust-fmt
       - rust-clippy
       - rust-test
+      - rust-test-xlsx
       - rust-test-macos
       - rust-test-image
       - rust-build
@@ -291,6 +307,7 @@ jobs:
           # May be skipped (main-only or dependabot-skip)
           for result in "${{ needs.rust-clippy.result }}" \
                         "${{ needs.rust-test-image.result }}" \
+                        "${{ needs.rust-test-xlsx.result }}" \
                         "${{ needs.security-deny.result }}" \
                         "${{ needs.security-audit.result }}" \
                         "${{ needs.rust-test-macos.result }}" \
