@@ -4,6 +4,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
+use crate::encoding::encode_lower_hex;
 use crate::ner::NerConfig;
 
 const HF_BASE: &str =
@@ -81,7 +82,8 @@ fn download_file(
         }
         file.flush()?;
 
-        let actual_hash = format!("{:x}", hasher.finalize());
+        let hash = hasher.finalize();
+        let actual_hash = encode_lower_hex(hash.as_ref());
         if actual_hash != expected_sha256 {
             return Err(format!(
                 "SHA-256 mismatch for {url}: expected {expected_sha256}, got {actual_hash}"
