@@ -309,6 +309,12 @@ fn test_apply_hash_known_vectors() {
         "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
     );
 
+    let hash = apply_hash("test", HashAlgo::Sha512);
+    assert_eq!(
+        hash,
+        "ee26b0dd4af7e749aa1a8ee3c10ae9923f618980772e473f8819a5d4940e0db27ac185f8a0e1d5f84f88bc887fd67b143732c304cc5fa9ad8e6f57f50028a8ff"
+    );
+
     let hash = apply_hash("test", HashAlgo::Md5);
     assert_eq!(hash, "098f6bcd4621d373cade4e832627b4f6");
 }

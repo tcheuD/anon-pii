@@ -3,6 +3,7 @@ pub mod api;
 pub mod cli;
 pub mod config;
 pub mod detection;
+mod encoding;
 pub mod format;
 #[cfg(feature = "image")]
 pub mod image_redact;

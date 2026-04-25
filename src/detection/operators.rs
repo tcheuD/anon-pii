@@ -2,6 +2,8 @@ use aes::Aes128;
 use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use regex::Regex;
 
+use crate::encoding::encode_lower_hex;
+
 use super::types::{HashAlgo, MaskConfig};
 
 type Aes128CbcEnc = cbc::Encryptor<Aes128>;
@@ -40,11 +42,11 @@ pub fn apply_hash(value: &str, algo: HashAlgo) -> String {
     match algo {
         HashAlgo::Sha256 => {
             let hash = sha2::Sha256::digest(value.as_bytes());
-            format!("{:x}", hash)
+            encode_lower_hex(hash.as_ref())
         }
         HashAlgo::Sha512 => {
             let hash = sha2::Sha512::digest(value.as_bytes());
-            format!("{:x}", hash)
+            encode_lower_hex(hash.as_ref())
         }
         HashAlgo::Md5 => {
             let hash = md5::compute(value.as_bytes());

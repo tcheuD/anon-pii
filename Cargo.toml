@@ -39,7 +39,7 @@ ort = { version = "=2.0.0-rc.12", features = ["load-dynamic"], optional = true }
 tokenizers = { version = "=0.22.2", optional = true, default-features = false, features = ["fancy-regex"] }
 ndarray = { version = "0.17", optional = true }
 ureq = { version = "3", optional = true }
-sha2 = "0.10"
+sha2 = "0.11.0"
 md5 = "0.8"
 aes = "0.8.4"
 cbc = { version = "0.1.2", features = ["alloc"] }
