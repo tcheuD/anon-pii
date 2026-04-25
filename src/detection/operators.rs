@@ -1,5 +1,5 @@
-use aes::Aes128;
-use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use aes::{Aes128, Aes192, Aes256};
+use cbc::cipher::{block_padding::Pkcs7, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use regex::Regex;
 
 use crate::encoding::encode_lower_hex;
@@ -7,12 +7,12 @@ use crate::encoding::encode_lower_hex;
 use super::types::{HashAlgo, MaskConfig};
 
 type Aes128CbcEnc = cbc::Encryptor<Aes128>;
-type Aes192CbcEnc = cbc::Encryptor<aes::Aes192>;
-type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
+type Aes192CbcEnc = cbc::Encryptor<Aes192>;
+type Aes256CbcEnc = cbc::Encryptor<Aes256>;
 
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
-type Aes192CbcDec = cbc::Decryptor<aes::Aes192>;
-type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+type Aes192CbcDec = cbc::Decryptor<Aes192>;
+type Aes256CbcDec = cbc::Decryptor<Aes256>;
 
 pub fn apply_mask(value: &str, config: &MaskConfig) -> String {
     let char_count = value.chars().count();
@@ -60,12 +60,21 @@ pub fn apply_encrypt(value: &str, key: &[u8]) -> String {
     getrandom::fill(&mut iv_bytes).expect("getrandom failed");
 
     let ciphertext = match key.len() {
-        16 => Aes128CbcEnc::new(key.into(), &iv_bytes.into())
-            .encrypt_padded_vec_mut::<Pkcs7>(value.as_bytes()),
-        24 => Aes192CbcEnc::new(key.into(), &iv_bytes.into())
-            .encrypt_padded_vec_mut::<Pkcs7>(value.as_bytes()),
-        32 => Aes256CbcEnc::new(key.into(), &iv_bytes.into())
-            .encrypt_padded_vec_mut::<Pkcs7>(value.as_bytes()),
+        16 => {
+            let key_bytes: [u8; 16] = key.try_into().expect("key length validated");
+            Aes128CbcEnc::new((&key_bytes).into(), (&iv_bytes).into())
+                .encrypt_padded_vec::<Pkcs7>(value.as_bytes())
+        }
+        24 => {
+            let key_bytes: [u8; 24] = key.try_into().expect("key length validated");
+            Aes192CbcEnc::new((&key_bytes).into(), (&iv_bytes).into())
+                .encrypt_padded_vec::<Pkcs7>(value.as_bytes())
+        }
+        32 => {
+            let key_bytes: [u8; 32] = key.try_into().expect("key length validated");
+            Aes256CbcEnc::new((&key_bytes).into(), (&iv_bytes).into())
+                .encrypt_padded_vec::<Pkcs7>(value.as_bytes())
+        }
         _ => unreachable!("key length validated at CLI parse time"),
     };
 
@@ -96,17 +105,27 @@ fn decrypt_single(hex: &str, key: &[u8]) -> Option<String> {
         return None;
     }
     let (iv, ct) = raw.split_at(16);
+    let iv_bytes: [u8; 16] = iv.try_into().expect("iv length parsed from ENC token");
 
     let plaintext = match key.len() {
-        16 => Aes128CbcDec::new(key.into(), iv.into())
-            .decrypt_padded_vec_mut::<Pkcs7>(ct)
-            .ok()?,
-        24 => Aes192CbcDec::new(key.into(), iv.into())
-            .decrypt_padded_vec_mut::<Pkcs7>(ct)
-            .ok()?,
-        32 => Aes256CbcDec::new(key.into(), iv.into())
-            .decrypt_padded_vec_mut::<Pkcs7>(ct)
-            .ok()?,
+        16 => {
+            let key_bytes: [u8; 16] = key.try_into().expect("key length checked");
+            Aes128CbcDec::new((&key_bytes).into(), (&iv_bytes).into())
+                .decrypt_padded_vec::<Pkcs7>(ct)
+                .ok()?
+        }
+        24 => {
+            let key_bytes: [u8; 24] = key.try_into().expect("key length checked");
+            Aes192CbcDec::new((&key_bytes).into(), (&iv_bytes).into())
+                .decrypt_padded_vec::<Pkcs7>(ct)
+                .ok()?
+        }
+        32 => {
+            let key_bytes: [u8; 32] = key.try_into().expect("key length checked");
+            Aes256CbcDec::new((&key_bytes).into(), (&iv_bytes).into())
+                .decrypt_padded_vec::<Pkcs7>(ct)
+                .ok()?
+        }
         _ => return None,
     };
     String::from_utf8(plaintext).ok()
