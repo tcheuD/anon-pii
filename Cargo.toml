@@ -4,6 +4,21 @@ version = "0.1.0"
 edition = "2021"
 description = "Fast CLI tool to anonymize PII in debug data"
 license = "MIT"
+# Strict allowlist: anything not listed here is excluded from `cargo package`.
+# Keep negated patterns after the paths they carve out.
+include = [
+    "/src/**",
+    "/tests/**",
+    "/testdata/**",
+    "/examples/**",
+    "/docs/**",
+    "!/docs/plans/**",
+    "/README.md",
+    "/PROXY-MODE.md",
+    "/LICENSE",
+    "/SECURITY.md",
+    "/CONTRIBUTING.md",
+]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
