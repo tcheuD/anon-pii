@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lopdf::content::{Content, Operation};
-use lopdf::{dictionary, Document, Object, Stream};
+use lopdf::{Document, Object, Stream, dictionary};
 
 use super::{PdfError, RedactionRegion};
 use crate::patterns::MAX_INPUT_SIZE;
@@ -362,7 +362,7 @@ pub fn redact_pdf(
 mod tests {
     use super::*;
     use lopdf::content::{Content, Operation};
-    use lopdf::{dictionary, Object, Stream};
+    use lopdf::{Object, Stream, dictionary};
     use std::fs;
 
     // ---------------------------------------------------------------------------

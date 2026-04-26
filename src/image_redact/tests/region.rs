@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 
 use crate::detection::Detection;
+use crate::image_redact::OcrWord;
 use crate::image_redact::ocr::reconstruct_text;
 use crate::image_redact::region::map_detections;
-use crate::image_redact::OcrWord;
 
 fn word(text: &str, x: u32, y: u32, w: u32, h: u32) -> OcrWord {
     OcrWord {

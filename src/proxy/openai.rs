@@ -342,10 +342,10 @@ mod tests {
         let mut anonymizer = Anonymizer::new(0.0);
         anonymize_request(&mut body, &mut anonymizer);
 
-        let location_desc = body["tools"][0]["function"]["parameters"]["properties"]["location"]
-            ["description"]
-            .as_str()
-            .unwrap();
+        let location_desc =
+            body["tools"][0]["function"]["parameters"]["properties"]["location"]["description"]
+                .as_str()
+                .unwrap();
         assert!(
             location_desc.contains("[EMAIL_ADDRESS_"),
             "Email in parameter description should be anonymized, got: {location_desc}"

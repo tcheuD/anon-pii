@@ -11,9 +11,9 @@ use std::sync::Arc;
 use anon::cli::{Cli, Commands, Format};
 use anon::config::RecognizerConfigFile;
 use anon::detection::{
-    decrypt_encrypted, parse_encrypt_key, Anonymizer, Detection, MaskConfig, Operator,
+    Anonymizer, Detection, MaskConfig, Operator, decrypt_encrypted, parse_encrypt_key,
 };
-use anon::format::{detect_format, detect_json_indent, DetectedFormat};
+use anon::format::{DetectedFormat, detect_format, detect_json_indent};
 use anon::mapping::Mapping;
 use anon::patterns::{MAX_INPUT_SIZE, PATTERNS};
 #[cfg(feature = "proxy")]
@@ -846,7 +846,9 @@ fn main() -> io::Result<()> {
                 std::process::exit(2);
             }
             if cli.share && (cli.include_mapping || cli.mapping_stderr) {
-                eprintln!("Error: --share refuses to output mapping data (PII). Remove --include-mapping/--mapping-stderr.");
+                eprintln!(
+                    "Error: --share refuses to output mapping data (PII). Remove --include-mapping/--mapping-stderr."
+                );
                 std::process::exit(2);
             }
 
@@ -941,7 +943,9 @@ fn main() -> io::Result<()> {
                     Err(_) => {
                         eprintln!("Warning: ONNX Runtime not found.");
                         eprintln!("Install it:  brew install onnxruntime");
-                        eprintln!("Then set:    export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib");
+                        eprintln!(
+                            "Then set:    export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib"
+                        );
                         // Fall back to heuristic only
                         anonymizer.set_ner_detector(Box::new(heuristic));
                         if cli.verbose {
@@ -1257,7 +1261,7 @@ mod tests {
 
         fn create_test_pdf(path: &Path) {
             use lopdf::content::{Content, Operation};
-            use lopdf::{dictionary, Document, Object, Stream};
+            use lopdf::{Document, Object, Stream, dictionary};
 
             let mut doc = Document::with_version("1.5");
 
@@ -1319,7 +1323,7 @@ mod tests {
 
         fn create_multipage_pdf(path: &Path) {
             use lopdf::content::{Content, Operation};
-            use lopdf::{dictionary, Document, Object, Stream};
+            use lopdf::{Document, Object, Stream, dictionary};
 
             let mut doc = Document::with_version("1.5");
 
@@ -1396,7 +1400,7 @@ mod tests {
         }
 
         fn create_empty_pdf(path: &Path) {
-            use lopdf::{dictionary, Document, Object};
+            use lopdf::{Document, Object, dictionary};
 
             let mut doc = Document::with_version("1.5");
 
@@ -1426,7 +1430,7 @@ mod tests {
 
         fn create_mixed_pii_pdf(path: &Path) {
             use lopdf::content::{Content, Operation};
-            use lopdf::{dictionary, Document, Object, Stream};
+            use lopdf::{Document, Object, Stream, dictionary};
 
             let mut doc = Document::with_version("1.5");
 

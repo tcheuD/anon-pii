@@ -8,11 +8,11 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::Router;
 use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
-use axum::Router;
 use tokio::sync::Mutex;
 
 use crate::detection::Anonymizer;
@@ -40,7 +40,7 @@ impl ProxyState {
         // Auto-enable NER based on compiled features
         #[cfg(feature = "ner")]
         {
-            use crate::ner::{download::model_exists, ml::MlNerDetector, NerConfig};
+            use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
             let config = NerConfig::default();
             if model_exists(&config) {
                 match std::panic::catch_unwind(|| MlNerDetector::new(&config)) {

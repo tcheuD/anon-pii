@@ -507,7 +507,7 @@ mod tests {
 
     fn create_test_pdf(path: &Path) {
         use lopdf::content::{Content, Operation};
-        use lopdf::{dictionary, Document, Object, Stream};
+        use lopdf::{Document, Object, Stream, dictionary};
 
         let mut doc = Document::with_version("1.5");
 

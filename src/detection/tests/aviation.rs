@@ -13,9 +13,10 @@ fn test_aircraft_fr() {
 fn test_aircraft_us_with_context() {
     let mut a = Anonymizer::new(0.0);
     let (result, dets) = a.anonymize_text("aircraft N12345 ready");
-    assert!(dets
-        .iter()
-        .any(|d| d.entity_type == "AIRCRAFT_REGISTRATION"));
+    assert!(
+        dets.iter()
+            .any(|d| d.entity_type == "AIRCRAFT_REGISTRATION")
+    );
     assert!(result.contains("[AIRCRAFT_REGISTRATION_"));
 }
 
@@ -48,9 +49,11 @@ fn test_crew_code_without_context() {
 fn test_crew_code_blocklist() {
     let mut a = Anonymizer::new(0.0);
     let (_, dets) = a.anonymize_text("crew member THE");
-    assert!(!dets
-        .iter()
-        .any(|d| d.entity_type == "CREW_CODE" && d.original == "THE"));
+    assert!(
+        !dets
+            .iter()
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "THE")
+    );
 }
 
 #[test]
@@ -76,21 +79,27 @@ fn test_crew_code_blocklist_stress_test_cases() {
     let mut a = Anonymizer::new(0.0);
     // Exact cases from stress test that produced false positives
     let (_, dets) = a.anonymize_text("sensitive tokens in a URL string");
-    assert!(!dets
-        .iter()
-        .any(|d| d.entity_type == "CREW_CODE" && d.original == "URL"));
+    assert!(
+        !dets
+            .iter()
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "URL")
+    );
 
     let mut a2 = Anonymizer::new(0.0);
     let (_, dets2) = a2.anonymize_text("PII split across lines");
-    assert!(!dets2
-        .iter()
-        .any(|d| d.entity_type == "CREW_CODE" && d.original == "PII"));
+    assert!(
+        !dets2
+            .iter()
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "PII")
+    );
 
     let mut a3 = Anonymizer::new(0.0);
     let (_, dets3) = a3.anonymize_text("Auth-Token=XYZ-123");
-    assert!(!dets3
-        .iter()
-        .any(|d| d.entity_type == "CREW_CODE" && d.original == "XYZ"));
+    assert!(
+        !dets3
+            .iter()
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "XYZ")
+    );
 }
 
 #[test]

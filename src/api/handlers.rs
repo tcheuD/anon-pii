@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 
@@ -22,7 +22,7 @@ pub async fn analyze(Json(req): Json<AnalyzeRequest>) -> Response {
     // Enable NER based on compiled features
     #[cfg(feature = "ner")]
     {
-        use crate::ner::{download::model_exists, ml::MlNerDetector, NerConfig};
+        use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
         let config = NerConfig::default();
         if model_exists(&config) {
             if let Ok(Ok(det)) = std::panic::catch_unwind(|| MlNerDetector::new(&config)) {

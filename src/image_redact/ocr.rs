@@ -1,8 +1,8 @@
 use std::fmt;
 use std::path::Path;
 
-use leptess::capi::TessPageIteratorLevel_RIL_WORD;
 use leptess::LepTess;
+use leptess::capi::TessPageIteratorLevel_RIL_WORD;
 
 use super::OcrWord;
 

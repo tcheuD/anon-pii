@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::detection::{
-    apply_custom_replacement, apply_encrypt, apply_hash, apply_mask, parse_encrypt_key, HashAlgo,
-    MaskConfig,
+    HashAlgo, MaskConfig, apply_custom_replacement, apply_encrypt, apply_hash, apply_mask,
+    parse_encrypt_key,
 };
 use crate::mapping::Mapping;
 

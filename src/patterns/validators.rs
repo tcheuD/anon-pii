@@ -78,11 +78,7 @@ pub fn luhn_check(number: &str) -> bool {
         .map(|(i, &d)| {
             if i % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 {
-                    doubled - 9
-                } else {
-                    doubled
-                }
+                if doubled > 9 { doubled - 9 } else { doubled }
             } else {
                 d
             }

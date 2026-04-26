@@ -248,8 +248,7 @@ fn generate_benchmark_section_from(path: &str) -> Option<String> {
         return None;
     }
 
-    let header =
-        "| Feature | Throughput | Simple avg | Complex avg | Penalty |\n|---------|------------|------------|-------------|---------|";
+    let header = "| Feature | Throughput | Simple avg | Complex avg | Penalty |\n|---------|------------|------------|-------------|---------|";
     Some(format!("{}\n{}", header, rows.join("\n")))
 }
 

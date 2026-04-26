@@ -7,11 +7,11 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::StreamExt;
 
+use super::ProxyState;
 use super::anthropic;
 use super::generic;
 use super::openai;
 use super::sse::{self, TokenBuffer, TokenResolver};
-use super::ProxyState;
 
 /// Maximum request body size for `/v1/messages` (10 MB).
 const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024;
@@ -1451,10 +1451,10 @@ mod tests {
 
         openai::anonymize_request(&mut body, &mut anonymizer);
 
-        let config_desc = body["tools"][0]["function"]["parameters"]["properties"]["config"]
-            ["description"]
-            .as_str()
-            .unwrap();
+        let config_desc =
+            body["tools"][0]["function"]["parameters"]["properties"]["config"]["description"]
+                .as_str()
+                .unwrap();
         assert!(
             config_desc.contains("[EMAIL_ADDRESS_"),
             "OpenAI nested params: top-level description should be anonymized, got: {config_desc}"

@@ -45,9 +45,11 @@ fn test_anonymize_texts_multiple_texts() {
 
     let (anon2, dets2) = &results[2];
     assert!(anon2.contains("[FR_PHONE_NUMBER_") || anon2.contains("[PHONE_NUMBER_"));
-    assert!(dets2
-        .iter()
-        .any(|d| d.entity_type == "FR_PHONE_NUMBER" || d.entity_type == "PHONE_NUMBER"));
+    assert!(
+        dets2
+            .iter()
+            .any(|d| d.entity_type == "FR_PHONE_NUMBER" || d.entity_type == "PHONE_NUMBER")
+    );
 }
 
 // -- Consistency with sequential anonymize_text --
@@ -303,14 +305,18 @@ fn test_anonymize_texts_debug_log_lines() {
     }
 
     // Line 0: email + phone
-    assert!(batch_results[0]
-        .1
-        .iter()
-        .any(|d| d.entity_type == "EMAIL_ADDRESS"));
-    assert!(batch_results[0]
-        .1
-        .iter()
-        .any(|d| d.entity_type == "FR_PHONE_NUMBER"));
+    assert!(
+        batch_results[0]
+            .1
+            .iter()
+            .any(|d| d.entity_type == "EMAIL_ADDRESS")
+    );
+    assert!(
+        batch_results[0]
+            .1
+            .iter()
+            .any(|d| d.entity_type == "FR_PHONE_NUMBER")
+    );
 
     // Line 1: IPs
     let ip_count = batch_results[1]
@@ -333,13 +339,17 @@ fn test_anonymize_texts_csv_cells() {
     let mut a = Anonymizer::new(0.0);
     let results = a.anonymize_texts(&cells);
 
-    assert!(results[0]
-        .1
-        .iter()
-        .any(|d| d.entity_type == "EMAIL_ADDRESS"));
-    assert!(results[1]
-        .1
-        .iter()
-        .any(|d| d.entity_type == "FR_PHONE_NUMBER"));
+    assert!(
+        results[0]
+            .1
+            .iter()
+            .any(|d| d.entity_type == "EMAIL_ADDRESS")
+    );
+    assert!(
+        results[1]
+            .1
+            .iter()
+            .any(|d| d.entity_type == "FR_PHONE_NUMBER")
+    );
     assert!(results[2].1.iter().any(|d| d.entity_type == "FR_IBAN"));
 }
