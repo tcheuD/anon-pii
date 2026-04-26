@@ -1,7 +1,7 @@
 use super::*;
 use crate::image_redact::ocr::{
-    extract_text, extract_words, hybrid_reconstruct, reconstruct_text, try_hybrid_reconstruct,
-    OcrError,
+    OcrError, extract_text, extract_words, hybrid_reconstruct, reconstruct_text,
+    try_hybrid_reconstruct,
 };
 use std::path::Path;
 

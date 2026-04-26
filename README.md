@@ -1,8 +1,11 @@
-# anon
+# anon-pii
+
+[![CI](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml/badge.svg)](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Fast CLI tool to anonymize PII in debug data before sharing with AI tools.
 
-`anon` is a local data-minimization aid. It helps detect, pseudonymize, redact,
+`anon-pii` is a local data-minimization aid. It helps detect, pseudonymize, redact,
 or mask sensitive values before they leave your machine, but it is not a privacy
 compliance guarantee and it cannot prove that a payload is fully anonymized.
 Always evaluate it against your own data, policies, and risk tolerance before
@@ -11,7 +14,7 @@ production use.
 ## Security & Privacy Notice
 
 - **Mapping files contain original PII.** The default token operator saves
-  reversible token mappings to `~/.anon/mapping.json` so `anon restore` can put
+  reversible token mappings to `~/.anon/mapping.json` so `anon-pii restore` can put
   values back. Protect this file like the original data and never commit it.
 - **False negatives are possible.** Pattern and NER-based detection can miss
   unusual identifiers, domain-specific formats, non-Latin text, split secrets,
@@ -23,7 +26,29 @@ production use.
 
 ## Installation
 
+### From crates.io (once published)
+
 ```bash
+# Default (regex-only, no NER)
+cargo install anon-pii
+
+# With heuristic name detection
+cargo install anon-pii --features ner-lite
+
+# With reverse proxy + web UI + REST API
+cargo install anon-pii --features proxy
+
+# Recommended full build (heuristic NER + proxy, no ML deps)
+cargo install anon-pii --features ner-lite,proxy
+```
+
+### From source
+
+```bash
+# Clone and install
+git clone https://github.com/tcheuD/anon-pii.git
+cd anon-pii
+
 # Default (regex-only, no NER)
 cargo install --path .
 
@@ -40,7 +65,7 @@ cargo install --path . --features ner-lite,proxy
 brew install onnxruntime
 export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
 cargo install --path . --features ner
-anon download-model  # one-time, cached at ~/.anon/models/
+anon-pii download-model  # one-time, cached at ~/.anon/models/
 
 # With image redaction (requires Tesseract)
 brew install tesseract  # macOS
@@ -53,10 +78,10 @@ To make `ORT_DYLIB_PATH` persist across terminal sessions, add it to your shell 
 echo 'export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib' >> ~/.zshrc
 ```
 
-This installs to `~/.cargo/bin/anon`. If your PATH uses a different directory (e.g. `~/.local/bin`), create a symlink:
+This installs to `~/.cargo/bin/anon-pii`. If your PATH uses a different directory (e.g. `~/.local/bin`), create a symlink:
 
 ```bash
-ln -sf ~/.cargo/bin/anon ~/.local/bin/anon
+ln -sf ~/.cargo/bin/anon-pii ~/.local/bin/anon-pii
 ```
 
 To update after code changes, re-run the same `cargo install` command.
@@ -65,33 +90,33 @@ To update after code changes, re-run the same `cargo install` command.
 
 ```bash
 # Anonymize from stdin
-echo 'Error for user john@example.com on F-GRHK' | anon
+echo 'Error for user john@example.com on F-GRHK' | anon-pii
 # Output: Error for user [EMAIL_ADDRESS_1] on [AIRCRAFT_REGISTRATION_1]
 
 # Anonymize JSON (auto-detected, structure preserved)
-echo '{"email": "john@example.com", "count": 42}' | anon
+echo '{"email": "john@example.com", "count": 42}' | anon-pii
 # Output: {"count": 42, "email": "[EMAIL_ADDRESS_1]"}
 
 # Redact instead of tokenize
-echo 'User john@example.com logged in' | anon --operator redact
+echo 'User john@example.com logged in' | anon-pii --operator redact
 # Output: User [REDACTED] logged in
 
 # Mask with partial visibility
-echo 'Card: 4111111111111111' | anon --operator mask --mask-from-end
+echo 'Card: 4111111111111111' | anon-pii --operator mask --mask-from-end
 # Output: Card: ************1111
 
 # Roundtrip: anonymize, share, restore
-cat debug.json | anon > safe.json
-cat response.json | anon restore
+cat debug.json | anon-pii > safe.json
+cat response.json | anon-pii restore
 
 # Pipe through Claude
-cat debug.json | anon | claude -p "explain this error" | anon restore
+cat debug.json | anon-pii | claude -p "explain this error" | anon-pii restore
 
 # Share-ready Markdown snippet (safe to paste into issues / AI tools)
-cat debug.json | anon --share --copy
+cat debug.json | anon-pii --share --copy
 
 # Redact PII in images (OCR + fill)
-anon image screenshot.png -o redacted.png
+anon-pii image screenshot.png -o redacted.png
 ```
 
 Mapping is auto-saved to `~/.anon/mapping.json` — no need to pass `-m` manually.
@@ -138,12 +163,12 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant A as anon
+    participant A as anon-pii
     participant M as mapping.json
-    U->>A: anon < debug-data
+    U->>A: anon-pii < debug-data
     A->>M: save token->original map
     A-->>U: anonymized payload
-    U->>A: anon restore < model-response
+    U->>A: anon-pii restore < model-response
     A->>M: load map
     A-->>U: restored payload
 ```
@@ -196,14 +221,14 @@ sequenceDiagram
 
 <!-- BEGIN COMMANDS -->
 ```bash
-anon restore [INPUT_POSITIONAL] # Restore original values from anonymized data
-anon list-entities                 # List all supported entity types
-anon api                 # Start Presidio-compatible REST API server (requires `proxy` feature)
-anon ui                 # Start web UI for interactive anonymization (requires `proxy` feature)
-anon update-names <FILE>          # Import first/last names from a CSV file into ~/.anon/ for heuristic NER
-anon image <INPUT>         # Anonymize PII in images via OCR and redaction (requires `image` feature)
-anon pdf <INPUT>         # Anonymize PII in PDF documents via text extraction and redaction (requires `pdf` feature)
-anon proxy                 # Start anonymizing proxy server (requires `proxy` feature)
+anon-pii restore [INPUT_POSITIONAL] # Restore original values from anonymized data
+anon-pii list-entities                 # List all supported entity types
+anon-pii api                 # Start Presidio-compatible REST API server (requires `proxy` feature)
+anon-pii ui                 # Start web UI for interactive anonymization (requires `proxy` feature)
+anon-pii update-names <FILE>          # Import first/last names from a CSV file into ~/.anon/ for heuristic NER
+anon-pii image <INPUT>         # Anonymize PII in images via OCR and redaction (requires `image` feature)
+anon-pii pdf <INPUT>         # Anonymize PII in PDF documents via text extraction and redaction (requires `pdf` feature)
+anon-pii proxy                 # Start anonymizing proxy server (requires `proxy` feature)
 ```
 <!-- END COMMANDS -->
 
@@ -217,7 +242,7 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 
 ## Known Limitations
 
-- `anon` is optimized for developer/debug workflows, not legal de-identification
+- `anon-pii` is optimized for developer/debug workflows, not legal de-identification
   or formal anonymization.
 - Optional NER improves person detection but still depends on model coverage,
   dictionaries, local context, and post-processing heuristics.

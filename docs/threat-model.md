@@ -21,7 +21,7 @@ Method: STRIDE-lite (repo-evidence based)
 - NER model/runtime artifacts (`model.onnx`, tokenizer/config, ORT dylib).
 
 ## Trust boundaries
-- Boundary A: local caller process -> `anon` CLI/proxy/UI.
+- Boundary A: local caller process -> `anon-pii` CLI/proxy/UI.
 - Boundary B: in-memory anonymization state -> persisted mapping files.
 - Boundary C: local process -> external network (`upstream` API, model download).
 - Boundary D: browser/client -> localhost UI and proxy HTTP endpoints.

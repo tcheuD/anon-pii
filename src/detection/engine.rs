@@ -3,21 +3,21 @@ use std::borrow::Cow;
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
+use super::Anonymizer;
 use super::names::{build_byte_offset_map, extend_person_span, is_name_like_word};
 use super::normalize::{
-    collapse_newlines, decode_percent_encoding, decode_unicode_escapes, strip_diacritics,
-    MULTILINE_ENTITY_TYPES,
+    MULTILINE_ENTITY_TYPES, collapse_newlines, decode_percent_encoding, decode_unicode_escapes,
+    strip_diacritics,
 };
 use super::operators::{apply_custom_replacement, apply_encrypt, apply_hash, apply_mask};
 use super::types::{Detection, Operator};
-use super::Anonymizer;
 use crate::ner::PERSON_BLOCKLIST;
 use crate::patterns::{
-    iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare,
-    valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code,
-    valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn,
-    valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number,
-    valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn, CREW_CODE_BLOCKLIST,
+    CREW_CODE_BLOCKLIST, iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn,
+    valid_au_medicare, valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif,
+    valid_fi_identity_code, valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code, valid_kr_brn,
+    valid_kr_frn, valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso,
+    valid_si_tax_number, valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn,
 };
 
 impl Anonymizer {

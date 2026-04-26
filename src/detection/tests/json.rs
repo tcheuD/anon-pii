@@ -17,14 +17,18 @@ fn test_json_processing() {
     assert_eq!(dets.len(), 2);
     assert_eq!(result["count"], 42);
     assert_eq!(result["active"], true);
-    assert!(result["email"]
-        .as_str()
-        .unwrap()
-        .contains("[EMAIL_ADDRESS_"));
-    assert!(result["nested"]["phone"]
-        .as_str()
-        .unwrap()
-        .contains("[FR_PHONE_NUMBER_"));
+    assert!(
+        result["email"]
+            .as_str()
+            .unwrap()
+            .contains("[EMAIL_ADDRESS_")
+    );
+    assert!(
+        result["nested"]["phone"]
+            .as_str()
+            .unwrap()
+            .contains("[FR_PHONE_NUMBER_")
+    );
 }
 
 #[test]
@@ -61,10 +65,12 @@ fn test_walk_json_within_limit_anonymized() {
     let (result, dets) = a.anonymize_json_value(&value);
 
     assert_eq!(dets.len(), 1);
-    assert!(result["a"]["b"]["c"]
-        .as_str()
-        .unwrap()
-        .starts_with("[EMAIL_ADDRESS_"));
+    assert!(
+        result["a"]["b"]["c"]
+            .as_str()
+            .unwrap()
+            .starts_with("[EMAIL_ADDRESS_")
+    );
 }
 
 #[test]
@@ -111,8 +117,10 @@ fn test_json_with_phase1_entities() {
         dets.iter().any(|d| d.entity_type == "IP_ADDRESS"),
         "JSON IP not detected: {dets:?}"
     );
-    assert!(result["device_mac"]
-        .as_str()
-        .unwrap()
-        .contains("[MAC_ADDRESS_"));
+    assert!(
+        result["device_mac"]
+            .as_str()
+            .unwrap()
+            .contains("[MAC_ADDRESS_")
+    );
 }

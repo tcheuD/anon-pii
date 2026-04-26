@@ -1,9 +1,16 @@
 [package]
-name = "anon"
+name = "anon-pii"
 version = "0.1.0"
-edition = "2021"
-description = "Fast CLI tool to anonymize PII in debug data"
+edition = "2024"
+rust-version = "1.87"
+description = "Fast CLI tool to anonymize PII in debug data — regex patterns, optional NER, anonymizing reverse proxy"
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/tcheuD/anon-pii"
+homepage = "https://github.com/tcheuD/anon-pii"
+documentation = "https://docs.rs/anon-pii"
+keywords = ["pii", "anonymization", "privacy", "redaction", "cli"]
+categories = ["command-line-utilities", "text-processing"]
 # Strict allowlist: anything not listed here is excluded from `cargo package`.
 # Keep negated patterns after the paths they carve out.
 include = [
@@ -19,6 +26,14 @@ include = [
     "/SECURITY.md",
     "/CONTRIBUTING.md",
 ]
+
+[lib]
+name = "anon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "anon-pii"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

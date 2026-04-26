@@ -10,7 +10,7 @@ yt search "state: Open"   # Search issues (max 25)
 yt comments CREW-1234     # Get issue comments
 ```
 
-Requires: `anon` (with NER), `curl`, `jq`.
+Requires: `anon-pii` (with NER), `curl`, `jq`.
 
 ## Setup — macOS (Keychain)
 

@@ -106,6 +106,7 @@ fn feature_note(name: &str) -> Option<&'static str> {
 /// showing each subcommand with its description.
 fn generate_commands_section() -> String {
     let cmd = Cli::command();
+    let bin = cmd.get_name().to_string();
     let mut lines = Vec::new();
 
     for sub in cmd.get_subcommands() {
@@ -134,9 +135,9 @@ fn generate_commands_section() -> String {
 
         // Build the line with optional feature note
         let line = if let Some(note) = feature_note(name) {
-            format!("anon {}{:<16} # {} ({})", name, args_str, about, note)
+            format!("{} {}{:<16} # {} ({})", bin, name, args_str, about, note)
         } else {
-            format!("anon {}{:<16} # {}", name, args_str, about)
+            format!("{} {}{:<16} # {}", bin, name, args_str, about)
         };
 
         lines.push(line);
@@ -248,8 +249,7 @@ fn generate_benchmark_section_from(path: &str) -> Option<String> {
         return None;
     }
 
-    let header =
-        "| Feature | Throughput | Simple avg | Complex avg | Penalty |\n|---------|------------|------------|-------------|---------|";
+    let header = "| Feature | Throughput | Simple avg | Complex avg | Penalty |\n|---------|------------|------------|-------------|---------|";
     Some(format!("{}\n{}", header, rows.join("\n")))
 }
 

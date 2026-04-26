@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`anon` — Fast CLI tool to anonymize PII in debug data. Written in Rust with regex-based pattern matching, optional NER (heuristic or ML), and an anonymizing reverse proxy mode.
+`anon-pii` — Fast CLI tool to anonymize PII in debug data. Binary is `anon-pii`, library crate is `anon`. Written in Rust with regex-based pattern matching, optional NER (heuristic or ML), and an anonymizing reverse proxy mode.
 
 ## Build & Test
 
 ```bash
 # Rust (default — regex-only, no NER, no proxy)
-cargo build --release      # binary at target/release/anon
+cargo build --release      # binary at target/release/anon-pii
 cargo test                 # ~647 tests (lib + integration)
 
 # With features
@@ -34,7 +34,7 @@ cargo run --release --example benchmark
 cargo run --release --features ner-lite --example benchmark
 ```
 
-NER ML setup: `brew install onnxruntime`, then set `ORT_DYLIB_PATH` to the dylib path. Model cached at `~/.anon/models/distilbert-ner-int8/` after `anon download-model`.
+NER ML setup: `brew install onnxruntime`, then set `ORT_DYLIB_PATH` to the dylib path. Model cached at `~/.anon/models/distilbert-ner-int8/` after `anon-pii download-model`.
 
 ## Architecture
 
@@ -123,7 +123,7 @@ Sorts detections by (start ASC, span length DESC, score DESC). Earlier/longer/hi
 ### Proxy mode
 
 ```
-User → HTTP (localhost:9100) → [anon proxy] → HTTPS upstream (api.anthropic.com)
+User → HTTP (localhost:9100) → [anon-pii proxy] → HTTPS upstream (api.anthropic.com)
 ```
 
 Intercepts `/v1/messages` POST requests: anonymizes the request body, streams the response, and restores tokens in SSE chunks using `TokenBuffer` (bracket-aware buffering handles tokens split across chunks). Other endpoints pass through unchanged.

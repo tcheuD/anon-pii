@@ -870,9 +870,11 @@ mod tests {
             !spans.is_empty(),
             "ML NER should detect at least one person"
         );
-        assert!(spans
-            .iter()
-            .any(|s| s.text.contains("Jean") || s.text.contains("Dupont")));
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.text.contains("Jean") || s.text.contains("Dupont"))
+        );
     }
 
     #[test]

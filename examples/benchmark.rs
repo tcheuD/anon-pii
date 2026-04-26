@@ -30,7 +30,7 @@ fn feature_label() -> &'static str {
 fn ner_setup() -> Box<dyn Fn() -> Anonymizer> {
     #[cfg(feature = "ner")]
     {
-        use anon::ner::{download::model_exists, ml::MlNerDetector, NerConfig};
+        use anon::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
         let config = NerConfig::default();
         if !model_exists(&config) {
             eprintln!(
@@ -49,8 +49,13 @@ fn ner_setup() -> Box<dyn Fn() -> Anonymizer> {
                     a
                 });
             }
-            Ok(Err(e)) => eprintln!("warning: ML NER unavailable ({}), falling back to regex-only\n", e),
-            Err(_) => eprintln!("warning: ONNX Runtime not found, set ORT_DYLIB_PATH — falling back to regex-only\n"),
+            Ok(Err(e)) => eprintln!(
+                "warning: ML NER unavailable ({}), falling back to regex-only\n",
+                e
+            ),
+            Err(_) => eprintln!(
+                "warning: ONNX Runtime not found, set ORT_DYLIB_PATH — falling back to regex-only\n"
+            ),
         }
         return Box::new(|| Anonymizer::new(0.0));
     }

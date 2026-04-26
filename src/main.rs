@@ -11,9 +11,9 @@ use std::sync::Arc;
 use anon::cli::{Cli, Commands, Format};
 use anon::config::RecognizerConfigFile;
 use anon::detection::{
-    decrypt_encrypted, parse_encrypt_key, Anonymizer, Detection, MaskConfig, Operator,
+    Anonymizer, Detection, MaskConfig, Operator, decrypt_encrypted, parse_encrypt_key,
 };
-use anon::format::{detect_format, detect_json_indent, DetectedFormat};
+use anon::format::{DetectedFormat, detect_format, detect_json_indent};
 use anon::mapping::Mapping;
 use anon::patterns::{MAX_INPUT_SIZE, PATTERNS};
 #[cfg(feature = "proxy")]
@@ -184,7 +184,7 @@ fn render_share_markdown(result: &str, detections: &[Detection], format_name: &s
     };
 
     let mut md = String::new();
-    md.push_str("Anonymized with `anon`.\n\n");
+    md.push_str("Anonymized with `anon-pii`.\n\n");
     md.push_str(&summary);
     md.push_str("\n\n");
     md.push_str(&fence);
@@ -846,7 +846,9 @@ fn main() -> io::Result<()> {
                 std::process::exit(2);
             }
             if cli.share && (cli.include_mapping || cli.mapping_stderr) {
-                eprintln!("Error: --share refuses to output mapping data (PII). Remove --include-mapping/--mapping-stderr.");
+                eprintln!(
+                    "Error: --share refuses to output mapping data (PII). Remove --include-mapping/--mapping-stderr."
+                );
                 std::process::exit(2);
             }
 
@@ -941,7 +943,9 @@ fn main() -> io::Result<()> {
                     Err(_) => {
                         eprintln!("Warning: ONNX Runtime not found.");
                         eprintln!("Install it:  brew install onnxruntime");
-                        eprintln!("Then set:    export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib");
+                        eprintln!(
+                            "Then set:    export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib"
+                        );
                         // Fall back to heuristic only
                         anonymizer.set_ner_detector(Box::new(heuristic));
                         if cli.verbose {
@@ -1204,7 +1208,7 @@ mod tests {
         ];
 
         let md = render_share_markdown("{\"email\":\"[EMAIL_ADDRESS_1]\"}\n", &dets, "json");
-        assert!(md.contains("Anonymized with `anon`."));
+        assert!(md.contains("Anonymized with `anon-pii`."));
         assert!(md.contains("Detected 2 unique entities across 2 types"));
         assert!(md.contains("```json"));
         assert!(md.contains("{\"email\":\"[EMAIL_ADDRESS_1]\"}"));
@@ -1257,7 +1261,7 @@ mod tests {
 
         fn create_test_pdf(path: &Path) {
             use lopdf::content::{Content, Operation};
-            use lopdf::{dictionary, Document, Object, Stream};
+            use lopdf::{Document, Object, Stream, dictionary};
 
             let mut doc = Document::with_version("1.5");
 
@@ -1319,7 +1323,7 @@ mod tests {
 
         fn create_multipage_pdf(path: &Path) {
             use lopdf::content::{Content, Operation};
-            use lopdf::{dictionary, Document, Object, Stream};
+            use lopdf::{Document, Object, Stream, dictionary};
 
             let mut doc = Document::with_version("1.5");
 
@@ -1396,7 +1400,7 @@ mod tests {
         }
 
         fn create_empty_pdf(path: &Path) {
-            use lopdf::{dictionary, Document, Object};
+            use lopdf::{Document, Object, dictionary};
 
             let mut doc = Document::with_version("1.5");
 
@@ -1426,7 +1430,7 @@ mod tests {
 
         fn create_mixed_pii_pdf(path: &Path) {
             use lopdf::content::{Content, Operation};
-            use lopdf::{dictionary, Document, Object, Stream};
+            use lopdf::{Document, Object, Stream, dictionary};
 
             let mut doc = Document::with_version("1.5");
 
@@ -1511,7 +1515,7 @@ mod tests {
                 .unwrap()
                 .parent()
                 .unwrap()
-                .join("anon");
+                .join("anon-pii");
 
             // Skip if binary not built
             if !binary.exists() {
@@ -1560,7 +1564,7 @@ mod tests {
                 .unwrap()
                 .parent()
                 .unwrap()
-                .join("anon");
+                .join("anon-pii");
 
             if !binary.exists() {
                 eprintln!("Skipping: binary not found");
@@ -1604,7 +1608,7 @@ mod tests {
                 .unwrap()
                 .parent()
                 .unwrap()
-                .join("anon");
+                .join("anon-pii");
 
             if !binary.exists() {
                 eprintln!("Skipping: binary not found");
@@ -1653,7 +1657,7 @@ mod tests {
                 .unwrap()
                 .parent()
                 .unwrap()
-                .join("anon");
+                .join("anon-pii");
 
             if !binary.exists() {
                 eprintln!("Skipping: binary not found");
@@ -1699,7 +1703,7 @@ mod tests {
                 .unwrap()
                 .parent()
                 .unwrap()
-                .join("anon");
+                .join("anon-pii");
 
             if !binary.exists() {
                 eprintln!("Skipping: binary not found");
@@ -1785,7 +1789,7 @@ mod tests {
         #[test]
         fn test_batch_size_flag_exists() {
             // Verify that the --batch-size flag is recognized
-            let cli = Cli::try_parse_from(["anon", "--ner", "--batch-size", "64"]);
+            let cli = Cli::try_parse_from(["anon-pii", "--ner", "--batch-size", "64"]);
             assert!(
                 cli.is_ok(),
                 "CLI should accept --batch-size flag: {:?}",
@@ -1798,14 +1802,14 @@ mod tests {
         #[test]
         fn test_batch_size_default_value() {
             // Default batch size should be 32
-            let cli = Cli::parse_from(["anon", "--ner"]);
+            let cli = Cli::parse_from(["anon-pii", "--ner"]);
             assert_eq!(cli.batch_size, 32, "Default batch size should be 32");
         }
 
         #[test]
         fn test_batch_size_zero_disables_batching() {
             // --batch-size 0 should disable batching (process line by line)
-            let cli = Cli::parse_from(["anon", "--ner", "--batch-size", "0"]);
+            let cli = Cli::parse_from(["anon-pii", "--ner", "--batch-size", "0"]);
             assert_eq!(cli.batch_size, 0);
         }
     }

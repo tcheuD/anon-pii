@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
+use super::Anonymizer;
 use super::normalize::strip_diacritics;
 use super::types::Detection;
-use super::Anonymizer;
 use crate::ner::PERSON_BLOCKLIST;
 use crate::patterns::CREW_CODE_BLOCKLIST;
 

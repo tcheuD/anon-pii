@@ -8,7 +8,7 @@ use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{http::StatusCode, Router};
+use axum::{Router, http::StatusCode};
 
 const MAX_ALLOWED_HOSTS: &[&str] = &["127.0.0.1", "localhost", "[::1]"];
 
@@ -257,15 +257,17 @@ mod tests {
             .unwrap();
         let data: types::AnonymizeResponse = serde_json::from_slice(&bytes).unwrap();
         // Phone should be redacted (empty)
-        assert!(data
-            .items
-            .iter()
-            .any(|i| i.operator == "redact" && i.entity_type == "PHONE_NUMBER"));
+        assert!(
+            data.items
+                .iter()
+                .any(|i| i.operator == "redact" && i.entity_type == "PHONE_NUMBER")
+        );
         // Email should be masked
-        assert!(data
-            .items
-            .iter()
-            .any(|i| i.operator == "mask" && i.entity_type == "EMAIL_ADDRESS"));
+        assert!(
+            data.items
+                .iter()
+                .any(|i| i.operator == "mask" && i.entity_type == "EMAIL_ADDRESS")
+        );
         assert!(!data.text.contains("john@example.com"));
         assert!(!data.text.contains("202-555-0123"));
     }

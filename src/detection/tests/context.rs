@@ -53,7 +53,8 @@ fn test_tabular_crew_codes_with_login_context() {
     assert!(
         dets.iter().any(|d| d.entity_type == "CREW_CODE"),
         "Crew codes (JDU, MMA, BRN) should be detected with 'Login' context.\nDetections: {:?}\nResult: {}",
-        dets, result
+        dets,
+        result
     );
     assert!(!result.contains("JDU"), "JDU should be anonymized");
     assert!(!result.contains("MMA"), "MMA should be anonymized");

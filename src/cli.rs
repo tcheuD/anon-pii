@@ -1,4 +1,4 @@
-//! CLI argument definitions for the `anon` tool.
+//! CLI argument definitions for the `anon-pii` tool.
 //!
 //! This module provides the `Cli` struct, `Commands` enum, and `Format` enum
 //! that define the command-line interface. These are exported from the library
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use crate::detection::{HashAlgo, Operator};
 
 #[derive(Parser)]
-#[command(name = "anon")]
+#[command(name = "anon-pii")]
 #[command(about = "Fast CLI tool to anonymize PII in debug data")]
 #[command(version)]
 pub struct Cli {

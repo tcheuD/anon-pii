@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use axum::extract::Request;
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -13,7 +13,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::detection::Anonymizer;
-use crate::format::{detect_format, detect_json_indent, DetectedFormat};
+use crate::format::{DetectedFormat, detect_format, detect_json_indent};
 use crate::mapping::Mapping;
 use crate::patterns::MAX_INPUT_SIZE;
 
@@ -24,7 +24,7 @@ use crate::patterns::MAX_INPUT_SIZE;
 fn probe_ml_ner() -> bool {
     #[cfg(feature = "ner")]
     {
-        use crate::ner::{download::model_exists, ml::MlNerDetector, NerConfig};
+        use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
         let config = NerConfig::default();
         if !model_exists(&config) {
             eprintln!("warning: NER model not downloaded, run `anon download-model`");
@@ -56,7 +56,7 @@ fn make_anonymizer(
     match ner_mode {
         #[cfg(feature = "ner")]
         "ml" if ml_available => {
-            use crate::ner::{ml::MlNerDetector, NerConfig};
+            use crate::ner::{NerConfig, ml::MlNerDetector};
             let config = NerConfig::default();
             if let Ok(Ok(det)) = std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
                 anonymizer.set_ner_detector(Box::new(det));
