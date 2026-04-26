@@ -1,5 +1,8 @@
 # anon
 
+[![CI](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml/badge.svg)](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Fast CLI tool to anonymize PII in debug data before sharing with AI tools.
 
 `anon` is a local data-minimization aid. It helps detect, pseudonymize, redact,
@@ -23,7 +26,29 @@ production use.
 
 ## Installation
 
+### From crates.io (once published)
+
 ```bash
+# Default (regex-only, no NER)
+cargo install anon-pii
+
+# With heuristic name detection
+cargo install anon-pii --features ner-lite
+
+# With reverse proxy + web UI + REST API
+cargo install anon-pii --features proxy
+
+# Recommended full build (heuristic NER + proxy, no ML deps)
+cargo install anon-pii --features ner-lite,proxy
+```
+
+### From source
+
+```bash
+# Clone and install
+git clone https://github.com/tcheuD/anon-pii.git
+cd anon-pii
+
 # Default (regex-only, no NER)
 cargo install --path .
 
