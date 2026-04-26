@@ -23,7 +23,7 @@ pub fn map_detections(
                 .spans
                 .iter()
                 .enumerate()
-                .filter(|(_, &(ws, we))| ws < det.end && we > det.start)
+                .filter(|&(_, &(ws, we))| ws < det.end && we > det.start)
                 .map(|(i, _)| &words[i])
                 .collect();
 

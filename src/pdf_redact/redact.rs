@@ -150,7 +150,7 @@ fn remove_overlapping_annotations(
     regions: &[&RedactionRegion],
 ) {
     // Get the page dictionary
-    let Ok(Object::Dictionary(ref page_dict)) = doc.get_object(page_id) else {
+    let Ok(Object::Dictionary(page_dict)) = doc.get_object(page_id) else {
         return;
     };
 
@@ -182,7 +182,7 @@ fn remove_overlapping_annotations(
         };
 
         // Get the annotation dictionary
-        let Ok(Object::Dictionary(ref annot_dict)) = doc.get_object((ref_id.0, ref_id.1)) else {
+        let Ok(Object::Dictionary(annot_dict)) = doc.get_object((ref_id.0, ref_id.1)) else {
             kept_annots.push(annot_ref.clone());
             continue;
         };
@@ -220,7 +220,7 @@ fn remove_overlapping_annotations(
     }
 
     // Update the page's Annots array
-    if let Ok(Object::Dictionary(ref mut page_dict_mut)) = doc.get_object_mut(page_id) {
+    if let Ok(Object::Dictionary(page_dict_mut)) = doc.get_object_mut(page_id) {
         if kept_annots.is_empty() {
             // Remove the Annots key entirely if no annotations remain
             page_dict_mut.remove(b"Annots");
@@ -341,7 +341,7 @@ pub fn redact_pdf(
         let new_content_id = doc.add_object(Stream::new(dictionary! {}, encoded));
 
         // Update page to point to new content
-        if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
+        if let Ok(Object::Dictionary(page_dict)) = doc.get_object_mut(page_id) {
             page_dict.set("Contents", Object::Reference(new_content_id));
         }
 
