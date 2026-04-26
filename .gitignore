@@ -19,8 +19,14 @@ wheels/
 .installed.cfg
 *.egg
 .env
+.env.*
 .venv
+.venv/
+.venv*/
+venv*/
 venv/
+env/
+env*/
 ENV/
 .mypy_cache/
 .ruff_cache/
@@ -58,6 +64,13 @@ mapping.json
 *.anon-mapping.json
 anonymized.txt
 redacted.png
+redacted.jpg
+redacted.jpeg
+redacted.pdf
+*redacted*.png
+*redacted*.jpg
+*redacted*.jpeg
+*redacted*.pdf
 
 # Optional local Python environments used by benchmark helpers
 .bench-venv/
