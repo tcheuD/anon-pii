@@ -32,7 +32,7 @@ name = "anon"
 path = "src/lib.rs"
 
 [[bin]]
-name = "anon"
+name = "anon-pii"
 path = "src/main.rs"
 
 [dependencies]
