@@ -45,6 +45,9 @@ sequenceDiagram
     P-->>C: Restored response
 ```
 
+The final dump step only runs when `--persist-mapping` is enabled; otherwise the
+mapping remains in process memory.
+
 ## Safety controls
 
 ```mermaid
@@ -92,6 +95,10 @@ OPENAI_API_BASE=http://127.0.0.1:9100 your-tool
 
 All prompts are anonymized before reaching the API. Responses have tokens restored automatically.
 
+By default, proxy mappings are kept in memory and discarded when the process exits.
+Use `--persist-mapping` only when you need an on-disk session mapping for debugging
+or manual restore workflows.
+
 ## Options
 
 | Option | Short | Default | Description |
@@ -99,7 +106,8 @@ All prompts are anonymized before reaching the API. Responses have tokens restor
 | `--port` | `-p` | `9100` | Port to listen on |
 | `--upstream` | `-u` | `https://api.anthropic.com` | Upstream API URL |
 | `--threshold` | | `0.5` | Minimum confidence score (0.0-1.0) |
-| `--session-dir` | | `/tmp/anon-proxy-<random>` | Directory for mapping files |
+| `--session-dir` | | `/tmp/anon-proxy-<random>` | Directory for mapping files when persistence is enabled |
+| `--persist-mapping` | | `false` | Write reversible session mappings to disk |
 | `--provider` | | `anthropic` | API provider: `anthropic`, `openai`, or `generic` |
 
 ## Testing without an API key
@@ -133,6 +141,8 @@ curl -s http://127.0.0.1:9100/v1/messages \
 The echo server prints the anonymized body — `[EMAIL_ADDRESS_a1b2c3d4]` instead of `john@secret.com`.
 
 ## Monitoring
+
+This section applies only when `--persist-mapping` is enabled.
 
 The mapping file is written after each request and on shutdown. The session directory path is printed at startup:
 
@@ -229,5 +239,7 @@ curl -s http://127.0.0.1:9100/v1/chat/completions \
 
 - Binds to `127.0.0.1` only — not accessible from the network
 - Host header validation blocks DNS rebinding attacks
-- Mapping file contains original PII — treat it as sensitive
+- Mapping persistence is off by default; if enabled, the mapping file contains original PII and must be treated as sensitive
+- There is no local bearer-token auth yet. Use only on a trusted single-user workstation and do not expose the listener through tunnels, containers, or port forwards.
 - API keys are forwarded but never logged or stored
+- Pattern and NER detection can miss unusual, domain-specific, split, or ambiguous identifiers; review high-risk payloads before relying on proxy output.

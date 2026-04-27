@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -111,6 +111,17 @@ const MAX_ALLOWED_HOSTS: &[&str] = &["127.0.0.1", "localhost", "[::1]"];
 
 /// Cached result of ML NER probe (tested once at first use).
 static ML_NER_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+#[derive(Clone)]
+struct UiState {
+    persist_mapping: bool,
+}
+
+impl UiState {
+    fn new(persist_mapping: bool) -> Self {
+        Self { persist_mapping }
+    }
+}
 
 fn is_ml_available() -> bool {
     *ML_NER_AVAILABLE.get_or_init(probe_ml_ner)
@@ -254,7 +265,7 @@ async fn index() -> impl IntoResponse {
     )
 }
 
-async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
+async fn anonymize(State(state): State<UiState>, Json(req): Json<AnonymizeRequest>) -> Response {
     if req.text.len() as u64 > MAX_INPUT_SIZE {
         return (StatusCode::PAYLOAD_TOO_LARGE, "Input too large").into_response();
     }
@@ -312,9 +323,13 @@ async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
         .collect();
 
     // Persist mapping to ~/.anon-pii/mapping.json (same as CLI)
-    let io_start = Instant::now();
-    save_mapping(&anonymizer.mapping);
-    let io_time_ms = io_start.elapsed().as_secs_f64() * 1000.0;
+    let io_time_ms = if state.persist_mapping {
+        let io_start = Instant::now();
+        save_mapping(&anonymizer.mapping);
+        io_start.elapsed().as_secs_f64() * 1000.0
+    } else {
+        0.0
+    };
 
     let server_time_ms = server_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -330,7 +345,7 @@ async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
     .into_response()
 }
 
-async fn restore(Json(req): Json<RestoreRequest>) -> Response {
+async fn restore(State(state): State<UiState>, Json(req): Json<RestoreRequest>) -> Response {
     if req.text.len() as u64 > MAX_INPUT_SIZE {
         return (StatusCode::PAYLOAD_TOO_LARGE, "Input too large").into_response();
     }
@@ -339,10 +354,18 @@ async fn restore(Json(req): Json<RestoreRequest>) -> Response {
     let mut mapping = Mapping::new();
     if let Some(m) = req.mapping {
         mapping.mappings = m;
-    } else if let Some(saved) = load_mapping() {
-        mapping = saved;
+    } else if state.persist_mapping {
+        if let Some(saved) = load_mapping() {
+            mapping = saved;
+        } else {
+            return (StatusCode::BAD_REQUEST, "Aucune correspondance disponible").into_response();
+        }
     } else {
-        return (StatusCode::BAD_REQUEST, "Aucune correspondance disponible").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "No mapping provided; server-side mapping persistence is disabled",
+        )
+            .into_response();
     }
     mapping.rebuild_caches();
     let result = mapping.restore(&req.text);
@@ -350,7 +373,15 @@ async fn restore(Json(req): Json<RestoreRequest>) -> Response {
     Json(RestoreResponse { result }).into_response()
 }
 
-async fn get_mapping() -> Response {
+async fn get_mapping(State(state): State<UiState>) -> Response {
+    if !state.persist_mapping {
+        return (
+            StatusCode::NOT_FOUND,
+            "Server-side mapping persistence is disabled",
+        )
+            .into_response();
+    }
+
     match load_mapping() {
         Some(m) => Json(MappingResponse {
             mapping: m.mappings,
@@ -393,17 +424,27 @@ async fn validate_host(req: Request, next: Next) -> Response {
 
 // ─── Server ──────────────────────────────────────────────────────────────────
 
-pub async fn run(port: u16) -> std::io::Result<()> {
-    let app = Router::new()
+fn router(persist_mapping: bool) -> Router {
+    Router::new()
         .route("/", get(index))
         .route("/api/anonymize", post(anonymize))
         .route("/api/restore", post(restore))
         .route("/api/mapping", get(get_mapping))
         .route("/api/capabilities", get(capabilities))
-        .layer(middleware::from_fn(validate_host));
+        .layer(middleware::from_fn(validate_host))
+        .with_state(UiState::new(persist_mapping))
+}
+
+pub async fn run(port: u16, persist_mapping: bool) -> std::io::Result<()> {
+    let app = router(persist_mapping);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     eprintln!("anon ui listening on http://{addr}");
+    if persist_mapping {
+        eprintln!("mapping persistence: enabled");
+    } else {
+        eprintln!("mapping persistence: disabled");
+    }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
@@ -433,12 +474,17 @@ mod tests {
     }
 
     fn app() -> Router {
+        app_with_persistence(false)
+    }
+
+    fn app_with_persistence(persist_mapping: bool) -> Router {
         Router::new()
             .route("/", get(index))
             .route("/api/anonymize", post(anonymize))
             .route("/api/restore", post(restore))
             .route("/api/mapping", get(get_mapping))
             .route("/api/capabilities", get(capabilities))
+            .with_state(UiState::new(persist_mapping))
     }
 
     #[tokio::test]
@@ -539,15 +585,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_restore_without_mapping_rejected_when_persistence_disabled() {
+        let body = serde_json::json!({
+            "text": "[TOKEN_test]"
+        });
+
+        let resp = app()
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/api/restore")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn test_restore_without_mapping_uses_saved() {
-        // Anonymize first (saves mapping to disk)
+        // Anonymize first with explicit server-side persistence enabled.
         let body = serde_json::json!({
             "text": "email: saved@example.org",
             "format": "text",
             "threshold": 0.0
         });
 
-        let resp = app()
+        let resp = app_with_persistence(true)
             .oneshot(
                 HttpRequest::builder()
                     .method("POST")
@@ -575,7 +642,7 @@ mod tests {
             "text": anon_data.result
         });
 
-        let resp = app()
+        let resp = app_with_persistence(true)
             .oneshot(
                 HttpRequest::builder()
                     .method("POST")
