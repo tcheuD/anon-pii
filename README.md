@@ -14,7 +14,7 @@ production use.
 ## Security & Privacy Notice
 
 - **Mapping files contain original PII.** The default token operator saves
-  reversible token mappings to `~/.anon/mapping.json` so `anon-pii restore` can put
+  reversible token mappings to `~/.anon-pii/mapping.json` so `anon-pii restore` can put
   values back. Protect this file like the original data and never commit it.
 - **False negatives are possible.** Pattern and NER-based detection can miss
   unusual identifiers, domain-specific formats, non-Latin text, split secrets,
@@ -65,7 +65,7 @@ cargo install --path . --features ner-lite,proxy
 brew install onnxruntime
 export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
 cargo install --path . --features ner
-anon-pii download-model  # one-time, cached at ~/.anon/models/
+anon-pii download-model  # one-time, cached at ~/.anon-pii/models/
 
 # With image redaction (requires Tesseract)
 brew install tesseract  # macOS
@@ -119,7 +119,7 @@ cat debug.json | anon-pii --share --copy
 anon-pii image screenshot.png -o redacted.png
 ```
 
-Mapping is auto-saved to `~/.anon/mapping.json` — no need to pass `-m` manually.
+Mapping is auto-saved to `~/.anon-pii/mapping.json` — no need to pass `-m` manually.
 
 ## How It Works
 
@@ -137,7 +137,7 @@ flowchart LR
     E --> G
     F --> G
     G --> H[Generate stable random tokens]
-    H --> I[Write mapping to ~/.anon/mapping.json]
+    H --> I[Write mapping to ~/.anon-pii/mapping.json]
     H --> J[Return anonymized output]
 ```
 
@@ -212,7 +212,7 @@ sequenceDiagram
 |--------|-------|---------|-------------|
 | `INPUT_POSITIONAL` |  |  | Input file (positional, optional) |
 | `--input` | `-i` |  | Input file (flag, optional — overrides positional) |
-| `--mapping` | `-m` |  | Mapping file (defaults to ~/.anon/mapping.json) |
+| `--mapping` | `-m` |  | Mapping file (defaults to ~/.anon-pii/mapping.json) |
 | `--output` | `-o` |  | Output file (writes to stdout if not provided) |
 | `--decrypt-key` |  |  | AES decryption key, hex-encoded (decrypts ENC[...] tokens) Must be 32 (128-bit), 48 (192-bit), or 64 (256-bit) hex characters |
 <!-- END CLI_RESTORE -->
@@ -225,7 +225,7 @@ anon-pii restore [INPUT_POSITIONAL] # Restore original values from anonymized da
 anon-pii list-entities                 # List all supported entity types
 anon-pii api                 # Start Presidio-compatible REST API server (requires `proxy` feature)
 anon-pii ui                 # Start web UI for interactive anonymization (requires `proxy` feature)
-anon-pii update-names <FILE>          # Import first/last names from a CSV file into ~/.anon/ for heuristic NER
+anon-pii update-names <FILE>          # Import first/last names from a CSV file into ~/.anon-pii/ for heuristic NER
 anon-pii image <INPUT>         # Anonymize PII in images via OCR and redaction (requires `image` feature)
 anon-pii pdf <INPUT>         # Anonymize PII in PDF documents via text extraction and redaction (requires `pdf` feature)
 anon-pii proxy                 # Start anonymizing proxy server (requires `proxy` feature)

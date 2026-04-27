@@ -24,7 +24,7 @@ use anon_pii::proxy;
 fn default_mapping_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".anon")
+        .join(".anon-pii")
 }
 
 fn default_mapping_path() -> PathBuf {
@@ -76,7 +76,7 @@ fn share_event_log_path() -> PathBuf {
 }
 
 /// Best-effort local event logging for measurement.
-/// Never includes PII; appends JSON lines under ~/.anon/events.jsonl.
+/// Never includes PII; appends JSON lines under ~/.anon-pii/events.jsonl.
 fn append_share_event(event: &str, props: serde_json::Value) {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1101,6 +1101,27 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_default_mapping_dir_uses_anon_pii() {
+        // The default mapping directory should be ~/.anon-pii/ (not ~/.anon/)
+        // to match the package rename from #144
+        let dir = default_mapping_dir();
+        let dir_name = dir.file_name().unwrap().to_str().unwrap();
+        assert_eq!(dir_name, ".anon-pii", "config dir should be .anon-pii");
+    }
+
+    #[test]
+    fn test_default_mapping_path_uses_anon_pii() {
+        // The default mapping path should be ~/.anon-pii/mapping.json
+        let path = default_mapping_path();
+        let components: Vec<_> = path.components().collect();
+        let dir_component = components[components.len() - 2];
+        assert!(
+            dir_component.as_os_str().to_str().unwrap() == ".anon-pii",
+            "mapping path should be under .anon-pii/"
+        );
+    }
 
     #[test]
     fn test_write_mapping_file_creates_new() {

@@ -121,7 +121,7 @@ fn is_ml_available() -> bool {
 fn mapping_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".anon")
+        .join(".anon-pii")
 }
 
 fn mapping_path() -> PathBuf {
@@ -311,7 +311,7 @@ async fn anonymize(Json(req): Json<AnonymizeRequest>) -> Response {
         })
         .collect();
 
-    // Persist mapping to ~/.anon/mapping.json (same as CLI)
+    // Persist mapping to ~/.anon-pii/mapping.json (same as CLI)
     let io_start = Instant::now();
     save_mapping(&anonymizer.mapping);
     let io_time_ms = io_start.elapsed().as_secs_f64() * 1000.0;
@@ -422,6 +422,15 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request as HttpRequest;
     use tower::ServiceExt;
+
+    #[test]
+    fn test_mapping_dir_uses_anon_pii() {
+        // UI mapping_dir should use ~/.anon-pii/ (not ~/.anon/)
+        // to match the package rename from #144
+        let dir = mapping_dir();
+        let dir_name = dir.file_name().unwrap().to_str().unwrap();
+        assert_eq!(dir_name, ".anon-pii", "UI mapping dir should be .anon-pii");
+    }
 
     fn app() -> Router {
         Router::new()
