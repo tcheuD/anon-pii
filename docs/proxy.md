@@ -23,7 +23,7 @@ Anonymizing reverse proxy that sits between AI coding tools and LLM APIs. PII is
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant P as anon proxy
+    participant P as anon-pii proxy
     participant A as LLM API
     participant F as mapping.json
 
@@ -63,18 +63,18 @@ flowchart TD
 
 ```bash
 # Anthropic (default)
-anon proxy
-# anon proxy listening on http://127.0.0.1:9100
+anon-pii proxy
+# anon-pii proxy listening on http://127.0.0.1:9100
 # upstream: https://api.anthropic.com
 
 # OpenAI
-anon proxy --provider openai --upstream https://api.openai.com
-# anon proxy listening on http://127.0.0.1:9100
+anon-pii proxy --provider openai --upstream https://api.openai.com
+# anon-pii proxy listening on http://127.0.0.1:9100
 # upstream: https://api.openai.com
 
 # Generic (any LLM API)
-anon proxy --provider generic --upstream http://localhost:11434
-# anon proxy listening on http://127.0.0.1:9100
+anon-pii proxy --provider generic --upstream http://localhost:11434
+# anon-pii proxy listening on http://127.0.0.1:9100
 # upstream: http://localhost:11434
 ```
 
@@ -122,7 +122,7 @@ http.server.HTTPServer(('127.0.0.1',8888),H).serve_forever()
 "
 
 # Terminal 2 — proxy pointing at echo server
-anon proxy --upstream http://127.0.0.1:8888
+anon-pii proxy --upstream http://127.0.0.1:8888
 
 # Terminal 3 — send a request
 curl -s http://127.0.0.1:9100/v1/messages \
@@ -130,7 +130,7 @@ curl -s http://127.0.0.1:9100/v1/messages \
   -d '{"messages":[{"role":"user","content":"Email me at john@secret.com"}]}' | jq .
 ```
 
-The echo server prints the anonymized body — `[EMAIL_ADDRESS_1]` instead of `john@secret.com`.
+The echo server prints the anonymized body — `[EMAIL_ADDRESS_a1b2c3d4]` instead of `john@secret.com`.
 
 ## Monitoring
 
@@ -141,7 +141,7 @@ The mapping file is written after each request and on shutdown. The session dire
 watch -n1 'jq . /tmp/anon-proxy-*/mapping.json 2>/dev/null'
 
 # Or use a fixed session dir
-anon proxy --session-dir /tmp/my-session
+anon-pii proxy --session-dir /tmp/my-session
 watch -n1 'jq . /tmp/my-session/mapping.json'
 ```
 
@@ -182,7 +182,7 @@ curl -s --no-buffer http://127.0.0.1:9100/v1/messages \
 
 ```bash
 # Start proxy with OpenAI provider
-anon proxy --provider openai --upstream https://api.openai.com
+anon-pii proxy --provider openai --upstream https://api.openai.com
 
 # Non-streaming
 curl -s http://127.0.0.1:9100/v1/chat/completions \
@@ -212,7 +212,7 @@ curl -s --no-buffer http://127.0.0.1:9100/v1/chat/completions \
 
 ```bash
 # Start proxy with generic provider pointing to Ollama
-anon proxy --provider generic --upstream http://localhost:11434
+anon-pii proxy --provider generic --upstream http://localhost:11434
 
 # Works with any endpoint that Ollama supports
 curl -s http://127.0.0.1:9100/v1/chat/completions \

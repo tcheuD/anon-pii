@@ -52,7 +52,7 @@ impl ProxyState {
                     Err(_) => eprintln!("warning: ONNX Runtime not found, set ORT_DYLIB_PATH"),
                 }
             } else {
-                eprintln!("warning: NER model not downloaded, run `anon download-model`");
+                eprintln!("warning: NER model not downloaded, run `anon-pii download-model`");
             }
         }
         #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
@@ -220,7 +220,7 @@ pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
         .with_state(state.clone());
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    eprintln!("anon proxy listening on http://{addr}");
+    eprintln!("anon-pii proxy listening on http://{addr}");
     eprintln!("upstream: {}", state.upstream);
     eprintln!("session dir: {}", state.session_dir.display());
 

@@ -2,7 +2,7 @@
 
 [Back to README](../README.md)
 
-Shell script that fetches YouTrack issues, anonymizes them through `anon --ner`, and lets you review before sending to stdout. Human stays in the loop — nothing reaches the LLM without your approval.
+Shell script that fetches YouTrack issues, anonymizes them through `anon-pii --ner`, and lets you review before sending to stdout. Human stays in the loop — nothing reaches the LLM without your approval.
 
 ```bash
 yt get CREW-1234          # Fetch issue by ID

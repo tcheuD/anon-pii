@@ -432,8 +432,8 @@ mod tests {
     #[test]
     fn test_generate_commands_section() {
         let section = generate_commands_section();
-        assert!(section.contains("anon list-entities"));
-        assert!(section.contains("anon restore"));
+        assert!(section.contains("anon-pii list-entities"));
+        assert!(section.contains("anon-pii restore"));
         assert!(section.starts_with("```bash\n"));
         assert!(section.ends_with("\n```"));
     }

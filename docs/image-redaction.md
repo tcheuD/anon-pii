@@ -36,16 +36,16 @@ cargo install --path . --features image
 
 ```bash
 # Basic redaction
-anon image photo.png -o redacted.png
+anon-pii image photo.png -o redacted.png
 
 # Custom fill color and threshold
-anon image screenshot.png -o safe.png --fill-color red --threshold 0.8
+anon-pii image screenshot.png -o safe.png --fill-color red --threshold 0.8
 
 # Extra padding around detections
-anon image scan.jpg -o clean.jpg --padding 5
+anon-pii image scan.jpg -o clean.jpg --padding 5
 
 # Hex color
-anon image doc.png -o out.png --fill-color '#FF0000'
+anon-pii image doc.png -o out.png --fill-color '#FF0000'
 ```
 
 ## Options

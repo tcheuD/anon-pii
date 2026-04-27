@@ -34,7 +34,7 @@ fn ner_setup() -> Box<dyn Fn() -> Anonymizer> {
         let config = NerConfig::default();
         if !model_exists(&config) {
             eprintln!(
-                "warning: model not downloaded, run `anon download-model` for ML NER benchmark\n"
+                "warning: model not downloaded, run `anon-pii download-model` for ML NER benchmark\n"
             );
             return Box::new(|| Anonymizer::new(0.0));
         }

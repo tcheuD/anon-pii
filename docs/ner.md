@@ -8,7 +8,7 @@ Person names aren't reliably detectable with regex. The `--ner` flag enables NER
 
 ```mermaid
 flowchart TD
-    A[`anon --ner`] --> B{Compiled features}
+    A[`anon-pii --ner`] --> B{Compiled features}
     B -->|ner + model + ONNX runtime| C[Use ML detector]
     B -->|ner but ML init fails| D[Fallback to heuristic detector]
     B -->|ner-lite only| D
@@ -25,8 +25,8 @@ Zero dependencies. Detects names using title patterns (M., Mme, Dr, Captain...) 
 ```bash
 cargo install --path . --features ner-lite
 
-echo "M. Dupont est pilote, Dr Martin en copilote" | anon --ner
-# M. [PERSON_2] est pilote, Dr [PERSON_1] en copilote
+echo "M. Dupont est pilote, Dr Martin en copilote" | anon-pii --ner
+# M. [PERSON_a1b2c3d4] est pilote, Dr [PERSON_b2c3d4e5] en copilote
 ```
 
 ## ML (`ner`)
@@ -43,11 +43,11 @@ export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
 cargo install --path . --features ner
 
 # 3. Download model (~130MB, cached at ~/.anon-pii/models/)
-anon download-model
+anon-pii download-model
 
 # 4. Use
-echo "Jean Dupont called from Paris" | anon --ner
-# [PERSON_1] called from Paris
+echo "Jean Dupont called from Paris" | anon-pii --ner
+# [PERSON_c3d4e5f6] called from Paris
 ```
 
 The ML backend detects names in French, English, German, Spanish, Portuguese, Dutch, Arabic, and Chinese without any keyword context.

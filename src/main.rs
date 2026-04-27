@@ -934,7 +934,7 @@ fn main() -> io::Result<()> {
                     }
                     Ok(Err(e)) => {
                         eprintln!("Warning: ML NER init failed: {e}");
-                        eprintln!("Hint: run `anon download-model` first");
+                        eprintln!("Hint: run `anon-pii download-model` first");
                         // Fall back to heuristic only
                         anonymizer.set_ner_detector(Box::new(heuristic));
                         if cli.verbose {
@@ -1229,11 +1229,11 @@ mod tests {
             },
         ];
 
-        let md = render_share_markdown("{\"email\":\"[EMAIL_ADDRESS_1]\"}\n", &dets, "json");
+        let md = render_share_markdown("{\"email\":\"[EMAIL_ADDRESS_a1b2c3d4]\"}\n", &dets, "json");
         assert!(md.contains("Anonymized with `anon-pii`."));
         assert!(md.contains("Detected 2 unique entities across 2 types"));
         assert!(md.contains("```json"));
-        assert!(md.contains("{\"email\":\"[EMAIL_ADDRESS_1]\"}"));
+        assert!(md.contains("{\"email\":\"[EMAIL_ADDRESS_a1b2c3d4]\"}"));
         assert!(md.trim_end().ends_with("```"));
     }
 

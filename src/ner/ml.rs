@@ -111,7 +111,7 @@ impl MlNerDetector {
 
         if !model_path.exists() {
             return Err(format!(
-                "Model not found at {:?}. Run `anon download-model` first.",
+                "Model not found at {:?}. Run `anon-pii download-model` first.",
                 config.model_dir
             )
             .into());
