@@ -591,9 +591,12 @@ fn main() -> io::Result<()> {
             rt.block_on(anon_pii::api::run(port))?;
         }
         #[cfg(feature = "proxy")]
-        Some(Commands::Ui { port }) => {
+        Some(Commands::Ui {
+            port,
+            persist_mapping,
+        }) => {
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(anon_pii::ui::run(port))?;
+            rt.block_on(anon_pii::ui::run(port, persist_mapping))?;
         }
         #[cfg(feature = "proxy")]
         Some(Commands::Proxy {
@@ -601,23 +604,32 @@ fn main() -> io::Result<()> {
             upstream,
             threshold,
             session_dir,
+            persist_mapping,
             provider,
         }) => {
-            let session_dir = session_dir.unwrap_or_else(|| {
-                let suffix = anon_pii::mapping::crypto_random_hex(8);
-                std::env::temp_dir().join(format!("anon-proxy-{suffix}"))
-            });
+            let session_dir = match session_dir {
+                Some(dir) => {
+                    if !persist_mapping {
+                        eprintln!(
+                            "Warning: --session-dir is ignored unless --persist-mapping is enabled"
+                        );
+                    }
+                    dir
+                }
+                None => {
+                    let suffix = anon_pii::mapping::crypto_random_hex(8);
+                    std::env::temp_dir().join(format!("anon-proxy-{suffix}"))
+                }
+            };
 
             let provider: proxy::Provider = provider
                 .parse()
                 .map_err(|e: String| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-            let state = Arc::new(proxy::ProxyState::new(
-                upstream,
-                threshold,
-                session_dir,
-                provider,
-            ));
+            let state = Arc::new(
+                proxy::ProxyState::new(upstream, threshold, session_dir, provider)
+                    .with_mapping_persistence(persist_mapping),
+            );
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(proxy::run(state, port))?;

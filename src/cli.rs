@@ -162,6 +162,10 @@ pub enum Commands {
         /// Port to listen on
         #[arg(short, long, default_value = "9200")]
         port: u16,
+
+        /// Persist reversible mappings on disk instead of keeping them in memory only
+        #[arg(long)]
+        persist_mapping: bool,
     },
     /// Import first/last names from a CSV file into ~/.anon-pii/ for heuristic NER
     UpdateNames {
@@ -234,9 +238,13 @@ pub enum Commands {
         #[arg(long, default_value = "0.5")]
         threshold: f64,
 
-        /// Directory to store session data (mapping files)
+        /// Directory to store session data when --persist-mapping is enabled
         #[arg(long)]
         session_dir: Option<PathBuf>,
+
+        /// Persist reversible mappings on disk instead of keeping them in memory only
+        #[arg(long)]
+        persist_mapping: bool,
 
         /// API provider (anthropic, openai, generic)
         #[arg(long, default_value = "anthropic")]

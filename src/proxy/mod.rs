@@ -28,6 +28,7 @@ pub struct ProxyState {
     pub upstream: String,
     pub session_dir: PathBuf,
     pub provider: Provider,
+    pub persist_mapping: bool,
 }
 
 impl ProxyState {
@@ -68,12 +69,22 @@ impl ProxyState {
             upstream,
             session_dir,
             provider,
+            persist_mapping: false,
         }
+    }
+
+    pub fn with_mapping_persistence(mut self, persist_mapping: bool) -> Self {
+        self.persist_mapping = persist_mapping;
+        self
     }
 
     /// Dump mapping to disk atomically via temp-file-then-rename.
     /// Uses a unique temp file per call to prevent concurrent dump races.
     pub async fn dump_mapping(&self) -> std::io::Result<()> {
+        if !self.persist_mapping {
+            return Ok(());
+        }
+
         // Hold lock only for serialization, then drop before I/O
         let mapping_json = {
             let anonymizer = self.anonymizer.lock().await;
@@ -186,32 +197,34 @@ fn build_router(provider: Provider) -> Router<Arc<ProxyState>> {
 }
 
 pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
-    // Ensure session dir exists with restricted permissions
-    // Use create_dir (not create_dir_all) so it fails if the path already
-    // exists — prevents symlink race where an attacker pre-creates the path.
-    match tokio::fs::create_dir(&state.session_dir).await {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            // If the user explicitly passed --session-dir, allow reuse
-            // but verify it's actually a directory (not a symlink to elsewhere).
-            let meta = tokio::fs::symlink_metadata(&state.session_dir).await?;
-            if !meta.is_dir() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::AlreadyExists,
-                    format!(
-                        "session dir {:?} exists but is not a directory",
-                        state.session_dir
-                    ),
-                ));
+    if state.persist_mapping {
+        // Ensure session dir exists with restricted permissions
+        // Use create_dir (not create_dir_all) so it fails if the path already
+        // exists — prevents symlink race where an attacker pre-creates the path.
+        match tokio::fs::create_dir(&state.session_dir).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // If the user explicitly passed --session-dir, allow reuse
+                // but verify it's actually a directory (not a symlink to elsewhere).
+                let meta = tokio::fs::symlink_metadata(&state.session_dir).await?;
+                if !meta.is_dir() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        format!(
+                            "session dir {:?} exists but is not a directory",
+                            state.session_dir
+                        ),
+                    ));
+                }
             }
+            Err(e) => return Err(e),
         }
-        Err(e) => return Err(e),
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&state.session_dir, std::fs::Permissions::from_mode(0o700))
-            .await?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::set_permissions(&state.session_dir, std::fs::Permissions::from_mode(0o700))
+                .await?;
+        }
     }
 
     let app = build_router(state.provider)
@@ -222,7 +235,11 @@ pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     eprintln!("anon-pii proxy listening on http://{addr}");
     eprintln!("upstream: {}", state.upstream);
-    eprintln!("session dir: {}", state.session_dir.display());
+    if state.persist_mapping {
+        eprintln!("session dir: {}", state.session_dir.display());
+    } else {
+        eprintln!("mapping persistence: disabled");
+    }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
@@ -232,6 +249,10 @@ pub async fn run(state: Arc<ProxyState>, port: u16) -> std::io::Result<()> {
         .with_graceful_shutdown(async move {
             tokio::signal::ctrl_c().await.ok();
             eprintln!("\nShutting down proxy...");
+            if !state_shutdown.persist_mapping {
+                eprintln!("Mapping persistence disabled; in-memory mapping discarded.");
+                return;
+            }
             if let Err(e) = state_shutdown.dump_mapping().await {
                 eprintln!("Warning: failed to save final mapping: {e}");
             } else {

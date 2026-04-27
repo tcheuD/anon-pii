@@ -136,7 +136,8 @@ fn readme_explains_mapping_persistence_and_risk() {
         "`--mapping-stderr`",
         "`--include-mapping`",
         "owner-only permissions",
-        "Proxy sessions write a separate mapping file",
+        "Proxy and UI modes keep mappings in memory by default",
+        "`--persist-mapping`",
     ] {
         assert!(readme.contains(snippet), "README should mention {snippet}");
     }

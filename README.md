@@ -21,6 +21,9 @@ production use.
   or ambiguous names.
 - **False positives are possible.** Context-aware patterns and name detection can
   redact benign data, especially in logs with dense identifiers.
+- **Local HTTP modes trust the local user session.** Proxy, UI, and REST API
+  bind to loopback and validate Host headers, but they do not provide bearer-token
+  authentication yet. Do not expose them through tunnels, containers, or port forwards.
 - **High-risk workflows need review.** Medical, legal, financial, HR,
   education, and government data should use additional controls and human review.
 
@@ -153,8 +156,9 @@ original values back after an AI round trip. Use `--mapping` to choose a
 different file, `--mapping-stderr` for review pipelines, or `--include-mapping`
 only when you intentionally want the sensitive map embedded in supported output.
 Mapping files are written atomically with owner-only permissions where the
-platform supports them. Proxy sessions write a separate mapping file under the
-session directory printed at startup.
+platform supports them. Proxy and UI modes keep mappings in memory by default;
+pass `--persist-mapping` when you intentionally need server-side mappings on
+disk for debugging or manual restore workflows.
 
 Mapping is auto-saved to `~/.anon-pii/mapping.json` — no need to pass `-m` manually.
 
