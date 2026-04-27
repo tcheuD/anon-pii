@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::process;
 
-use anon::cli::Cli;
-use anon::patterns::PATTERNS;
+use anon_pii::cli::Cli;
+use anon_pii::patterns::PATTERNS;
 use clap::CommandFactory;
 
 /// Known 2-letter country prefixes for entity types.

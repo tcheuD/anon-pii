@@ -127,7 +127,7 @@ pub enum Commands {
         #[arg(short, long)]
         input: Option<PathBuf>,
 
-        /// Mapping file (defaults to ~/.anon/mapping.json)
+        /// Mapping file (defaults to ~/.anon-pii/mapping.json)
         #[arg(short, long)]
         mapping: Option<PathBuf>,
 
@@ -163,7 +163,7 @@ pub enum Commands {
         #[arg(short, long, default_value = "9200")]
         port: u16,
     },
-    /// Import first/last names from a CSV file into ~/.anon/ for heuristic NER
+    /// Import first/last names from a CSV file into ~/.anon-pii/ for heuristic NER
     UpdateNames {
         /// CSV file with firstname,lastname columns (one pair per row)
         #[arg(value_name = "FILE")]

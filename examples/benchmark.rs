@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::time::{Duration, Instant};
 
-use anon::detection::Anonymizer;
+use anon_pii::detection::Anonymizer;
 
 const SIMPLE_LOG: &str = "2024-03-15 10:00:00 [INFO] User logged in successfully. IP: 192.168.1.1";
 
@@ -30,7 +30,7 @@ fn feature_label() -> &'static str {
 fn ner_setup() -> Box<dyn Fn() -> Anonymizer> {
     #[cfg(feature = "ner")]
     {
-        use anon::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
+        use anon_pii::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
         let config = NerConfig::default();
         if !model_exists(&config) {
             eprintln!(
@@ -62,7 +62,7 @@ fn ner_setup() -> Box<dyn Fn() -> Anonymizer> {
 
     #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
     {
-        use anon::ner::heuristic::HeuristicNerDetector;
+        use anon_pii::ner::heuristic::HeuristicNerDetector;
         return Box::new(|| {
             let mut a = Anonymizer::new(0.0);
             a.set_ner_detector(Box::new(HeuristicNerDetector::new()));

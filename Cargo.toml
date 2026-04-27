@@ -27,10 +27,6 @@ include = [
     "/CONTRIBUTING.md",
 ]
 
-[lib]
-name = "anon"
-path = "src/lib.rs"
-
 [[bin]]
 name = "anon-pii"
 path = "src/main.rs"

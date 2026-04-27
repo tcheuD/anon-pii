@@ -8,23 +8,23 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "proxy")]
 use std::sync::Arc;
 
-use anon::cli::{Cli, Commands, Format};
-use anon::config::RecognizerConfigFile;
-use anon::detection::{
+use anon_pii::cli::{Cli, Commands, Format};
+use anon_pii::config::RecognizerConfigFile;
+use anon_pii::detection::{
     Anonymizer, Detection, MaskConfig, Operator, decrypt_encrypted, parse_encrypt_key,
 };
-use anon::format::{DetectedFormat, detect_format, detect_json_indent};
-use anon::mapping::Mapping;
-use anon::patterns::{MAX_INPUT_SIZE, PATTERNS};
+use anon_pii::format::{DetectedFormat, detect_format, detect_json_indent};
+use anon_pii::mapping::Mapping;
+use anon_pii::patterns::{MAX_INPUT_SIZE, PATTERNS};
 #[cfg(feature = "proxy")]
-use anon::proxy;
+use anon_pii::proxy;
 
 // ─── Default mapping path ────────────────────────────────────────────────────
 
 fn default_mapping_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".anon")
+        .join(".anon-pii")
 }
 
 fn default_mapping_path() -> PathBuf {
@@ -76,7 +76,7 @@ fn share_event_log_path() -> PathBuf {
 }
 
 /// Best-effort local event logging for measurement.
-/// Never includes PII; appends JSON lines under ~/.anon/events.jsonl.
+/// Never includes PII; appends JSON lines under ~/.anon-pii/events.jsonl.
 fn append_share_event(event: &str, props: serde_json::Value) {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -487,12 +487,12 @@ fn main() -> io::Result<()> {
         }
         #[cfg(feature = "ner")]
         Some(Commands::DownloadModel { model_dir }) => {
-            let mut config = anon::ner::NerConfig::default();
+            let mut config = anon_pii::ner::NerConfig::default();
             if let Some(dir) = model_dir {
                 config.model_dir = dir;
             }
             eprintln!("Downloading NER model...");
-            if let Err(e) = anon::ner::download::download_model(&config) {
+            if let Err(e) = anon_pii::ner::download::download_model(&config) {
                 eprintln!("Error downloading model: {e}");
                 std::process::exit(1);
             }
@@ -588,12 +588,12 @@ fn main() -> io::Result<()> {
         #[cfg(feature = "proxy")]
         Some(Commands::Api { port }) => {
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(anon::api::run(port))?;
+            rt.block_on(anon_pii::api::run(port))?;
         }
         #[cfg(feature = "proxy")]
         Some(Commands::Ui { port }) => {
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(anon::ui::run(port))?;
+            rt.block_on(anon_pii::ui::run(port))?;
         }
         #[cfg(feature = "proxy")]
         Some(Commands::Proxy {
@@ -604,7 +604,7 @@ fn main() -> io::Result<()> {
             provider,
         }) => {
             let session_dir = session_dir.unwrap_or_else(|| {
-                let suffix = anon::mapping::crypto_random_hex(8);
+                let suffix = anon_pii::mapping::crypto_random_hex(8);
                 std::env::temp_dir().join(format!("anon-proxy-{suffix}"))
             });
 
@@ -631,7 +631,7 @@ fn main() -> io::Result<()> {
             padding,
         }) => {
             // 1. OCR: extract words with bounding boxes
-            let words = match anon::image_redact::ocr::extract_words(&input, "eng") {
+            let words = match anon_pii::image_redact::ocr::extract_words(&input, "eng") {
                 Ok(w) => w,
                 Err(e) => {
                     eprintln!("Error: {e}");
@@ -642,7 +642,7 @@ fn main() -> io::Result<()> {
             if words.is_empty() {
                 eprintln!("No text detected in image, copying as-is");
                 if let Err(e) =
-                    anon::image_redact::redact::redact_image(&input, &output, &[], &fill_color)
+                    anon_pii::image_redact::redact::redact_image(&input, &output, &[], &fill_color)
                 {
                     eprintln!("Error: {e}");
                     std::process::exit(1);
@@ -651,15 +651,16 @@ fn main() -> io::Result<()> {
             }
 
             // 2. Hybrid OCR: full-page text aligned with word boxes
-            let full_text = anon::image_redact::ocr::extract_text(&input, "eng");
-            let reconstructed = anon::image_redact::ocr::try_hybrid_reconstruct(full_text, &words);
+            let full_text = anon_pii::image_redact::ocr::extract_text(&input, "eng");
+            let reconstructed =
+                anon_pii::image_redact::ocr::try_hybrid_reconstruct(full_text, &words);
 
             // 3. Run PII detection on extracted text
             let mut anonymizer = Anonymizer::new(threshold);
             let detections = anonymizer.analyze(&reconstructed.text);
 
             // 4. Map text detections to pixel regions
-            let regions = anon::image_redact::region::map_detections(
+            let regions = anon_pii::image_redact::region::map_detections(
                 &words,
                 &reconstructed,
                 &detections,
@@ -668,7 +669,7 @@ fn main() -> io::Result<()> {
 
             // 5. Render redaction
             if let Err(e) =
-                anon::image_redact::redact::redact_image(&input, &output, &regions, &fill_color)
+                anon_pii::image_redact::redact::redact_image(&input, &output, &regions, &fill_color)
             {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
@@ -689,7 +690,7 @@ fn main() -> io::Result<()> {
             padding,
         }) => {
             // 1. Extract words with bounding boxes from PDF
-            let words = match anon::pdf_redact::extract::extract_words(&input) {
+            let words = match anon_pii::pdf_redact::extract::extract_words(&input) {
                 Ok(w) => w,
                 Err(e) => {
                     eprintln!("Error: {e}");
@@ -700,7 +701,7 @@ fn main() -> io::Result<()> {
             if words.is_empty() {
                 eprintln!("No text detected in PDF, copying as-is");
                 if let Err(e) =
-                    anon::pdf_redact::redact::redact_pdf(&input, &output, &[], &fill_color)
+                    anon_pii::pdf_redact::redact::redact_pdf(&input, &output, &[], &fill_color)
                 {
                     eprintln!("Error: {e}");
                     std::process::exit(1);
@@ -710,14 +711,14 @@ fn main() -> io::Result<()> {
             }
 
             // 2. Reconstruct text with byte-span mapping
-            let reconstructed = anon::pdf_redact::extract::reconstruct_text(&words);
+            let reconstructed = anon_pii::pdf_redact::extract::reconstruct_text(&words);
 
             // 3. Run PII detection on reconstructed text
             let mut anonymizer = Anonymizer::new(threshold);
             let detections = anonymizer.analyze(&reconstructed.text);
 
             // 4. Map text detections to PDF page-coordinate regions
-            let regions = anon::pdf_redact::region::map_detections(
+            let regions = anon_pii::pdf_redact::region::map_detections(
                 &words,
                 &reconstructed,
                 &detections,
@@ -726,7 +727,7 @@ fn main() -> io::Result<()> {
 
             // 5. Render redaction
             if let Err(e) =
-                anon::pdf_redact::redact::redact_pdf(&input, &output, &regions, &fill_color)
+                anon_pii::pdf_redact::redact::redact_pdf(&input, &output, &regions, &fill_color)
             {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
@@ -915,14 +916,14 @@ fn main() -> io::Result<()> {
             // Wire up NER detector if requested (ML + heuristic combined)
             #[cfg(feature = "ner")]
             if cli.ner {
-                let config = anon::ner::NerConfig::default();
-                let heuristic = anon::ner::heuristic::HeuristicNerDetector::new();
+                let config = anon_pii::ner::NerConfig::default();
+                let heuristic = anon_pii::ner::heuristic::HeuristicNerDetector::new();
                 // ort panics if libonnxruntime is not found; catch that gracefully
                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    anon::ner::ml::MlNerDetector::new(&config)
+                    anon_pii::ner::ml::MlNerDetector::new(&config)
                 })) {
                     Ok(Ok(ml_detector)) => {
-                        let combined = anon::ner::CombinedNerDetector::new(vec![
+                        let combined = anon_pii::ner::CombinedNerDetector::new(vec![
                             Box::new(ml_detector),
                             Box::new(heuristic),
                         ]);
@@ -956,7 +957,7 @@ fn main() -> io::Result<()> {
             }
             #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
             if cli.ner {
-                let detector = anon::ner::heuristic::HeuristicNerDetector::new();
+                let detector = anon_pii::ner::heuristic::HeuristicNerDetector::new();
                 anonymizer.set_ner_detector(Box::new(detector));
                 if cli.verbose {
                     eprintln!("NER: heuristic backend enabled");
@@ -1102,6 +1103,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_default_mapping_dir_uses_anon_pii() {
+        // The default mapping directory should be ~/.anon-pii/ (not ~/.anon/)
+        // to match the package rename from #144
+        let dir = default_mapping_dir();
+        let dir_name = dir.file_name().unwrap().to_str().unwrap();
+        assert_eq!(dir_name, ".anon-pii", "config dir should be .anon-pii");
+    }
+
+    #[test]
+    fn test_default_mapping_path_uses_anon_pii() {
+        // The default mapping path should be ~/.anon-pii/mapping.json
+        let path = default_mapping_path();
+        let components: Vec<_> = path.components().collect();
+        let dir_component = components[components.len() - 2];
+        assert!(
+            dir_component.as_os_str().to_str().unwrap() == ".anon-pii",
+            "mapping path should be under .anon-pii/"
+        );
+    }
+
+    #[test]
     fn test_write_mapping_file_creates_new() {
         let dir = std::env::temp_dir().join("anon-test-toctou-new");
         let _ = fs::remove_dir_all(&dir);
@@ -1225,7 +1247,7 @@ mod tests {
     #[test]
     fn test_default_session_dir_has_random_suffix() {
         // Simulate what the proxy command does: generate a random session dir name
-        let suffix = anon::mapping::crypto_random_hex(8);
+        let suffix = anon_pii::mapping::crypto_random_hex(8);
         let dir = std::env::temp_dir().join(format!("anon-proxy-{suffix}"));
         let name = dir.file_name().unwrap().to_str().unwrap();
         assert!(
@@ -1242,7 +1264,7 @@ mod tests {
     fn test_default_session_dir_is_unique() {
         let dirs: std::collections::HashSet<String> = (0..50)
             .map(|_| {
-                let suffix = anon::mapping::crypto_random_hex(8);
+                let suffix = anon_pii::mapping::crypto_random_hex(8);
                 format!("anon-proxy-{suffix}")
             })
             .collect();
@@ -1783,7 +1805,7 @@ mod tests {
 
     #[cfg(any(feature = "ner", feature = "ner-lite"))]
     mod batch_cli_tests {
-        use anon::cli::Cli;
+        use anon_pii::cli::Cli;
         use clap::Parser;
 
         #[test]
