@@ -355,9 +355,9 @@ impl HeuristicNerDetector {
 
         let mut last_names: HashSet<String> = HashSet::new();
 
-        // Load custom names from ~/.anon/firstnames.txt and ~/.anon/lastnames.txt
+        // Load custom names from ~/.anon-pii/firstnames.txt and ~/.anon-pii/lastnames.txt
         if let Some(home) = dirs::home_dir() {
-            let anon_dir = home.join(".anon");
+            let anon_dir = home.join(".anon-pii");
             if let Ok(content) = std::fs::read_to_string(anon_dir.join("firstnames.txt")) {
                 for line in content.lines() {
                     let name = line.trim();

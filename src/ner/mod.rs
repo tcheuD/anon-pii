@@ -118,7 +118,7 @@ impl Default for NerConfig {
     fn default() -> Self {
         let model_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(".anon")
+            .join(".anon-pii")
             .join("models")
             .join("distilbert-ner-int8");
         Self {
@@ -143,6 +143,24 @@ impl NerDetector for MockNerDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ner_config_default_uses_anon_pii_dir() {
+        // NerConfig model_dir should be under ~/.anon-pii/ (not ~/.anon/)
+        // to match the package rename from #144
+        let config = NerConfig::default();
+        let path_str = config.model_dir.to_string_lossy();
+        assert!(
+            path_str.contains(".anon-pii"),
+            "NerConfig model_dir should use .anon-pii, got: {}",
+            path_str
+        );
+        assert!(
+            !path_str.contains("/.anon/"),
+            "NerConfig model_dir should not use old .anon dir, got: {}",
+            path_str
+        );
+    }
 
     #[test]
     fn test_detect_persons_batch_default_fallback() {

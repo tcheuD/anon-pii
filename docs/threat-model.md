@@ -15,7 +15,7 @@ Method: STRIDE-lite (repo-evidence based)
 
 ## Assets
 - Raw input content with PII.
-- `~/.anon/mapping.json` and proxy session mapping files.
+- `~/.anon-pii/mapping.json` and proxy session mapping files.
 - API credentials forwarded by proxy headers.
 - Anonymized output sent to upstream services.
 - NER model/runtime artifacts (`model.onnx`, tokenizer/config, ORT dylib).

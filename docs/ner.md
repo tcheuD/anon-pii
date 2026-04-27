@@ -42,7 +42,7 @@ export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
 # 2. Install with ner feature
 cargo install --path . --features ner
 
-# 3. Download model (~130MB, cached at ~/.anon/models/)
+# 3. Download model (~130MB, cached at ~/.anon-pii/models/)
 anon download-model
 
 # 4. Use
