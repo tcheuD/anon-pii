@@ -1,0 +1,17 @@
+# CODEOWNERS for anon-pii
+#
+# These owners are automatically requested for review on pull requests
+# touching the matching paths. See:
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-policies/about-code-owners
+#
+# The last matching pattern takes precedence.
+
+# Default owner for everything in the repo
+*                   @tcheuD
+
+# Security-sensitive areas
+/SECURITY.md        @tcheuD
+/.github/           @tcheuD
+/src/proxy/         @tcheuD
+/src/mapping.rs     @tcheuD
+/src/patterns/      @tcheuD
