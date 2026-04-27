@@ -38,6 +38,15 @@ cargo install anon-pii --features ner-lite
 # With reverse proxy + web UI + REST API
 cargo install anon-pii --features proxy
 
+# With image redaction (requires Tesseract)
+cargo install anon-pii --features image
+
+# With PDF redaction
+cargo install anon-pii --features pdf
+
+# With XLSX format detection scaffold
+cargo install anon-pii --features xlsx
+
 # Recommended full build (heuristic NER + proxy, no ML deps)
 cargo install anon-pii --features ner-lite,proxy
 ```
@@ -70,6 +79,12 @@ anon-pii download-model  # one-time, cached at ~/.anon-pii/models/
 # With image redaction (requires Tesseract)
 brew install tesseract  # macOS
 cargo install --path . --features image
+
+# With PDF redaction
+cargo install --path . --features pdf
+
+# With XLSX format detection scaffold
+cargo install --path . --features xlsx
 ```
 
 To make `ORT_DYLIB_PATH` persist across terminal sessions, add it to your shell profile:
@@ -86,16 +101,28 @@ ln -sf ~/.cargo/bin/anon-pii ~/.local/bin/anon-pii
 
 To update after code changes, re-run the same `cargo install` command.
 
+## Feature Flags
+
+| Feature | Enables | Extra requirements |
+|---------|---------|--------------------|
+| default | Regex, checksum, context, JSON, CSV, SQL, and text anonymization | None |
+| `ner-lite` | Heuristic PERSON detection with `--ner` | None |
+| `ner` | ML PERSON detection with ONNX Runtime, plus `ner-lite` fallback | ONNX Runtime and `ORT_DYLIB_PATH` |
+| `proxy` | Reverse proxy, web UI, and Presidio-compatible REST API | None |
+| `image` | OCR-backed image redaction | Tesseract and language data |
+| `pdf` | Text-based PDF redaction | None beyond Rust dependencies |
+| `xlsx` | XLSX format detection scaffold | Full workbook anonymization is not implemented yet |
+
 ## Quick Start
 
 ```bash
 # Anonymize from stdin
 echo 'Error for user john@example.com on F-GRHK' | anon-pii
-# Output: Error for user [EMAIL_ADDRESS_1] on [AIRCRAFT_REGISTRATION_1]
+# Output: Error for user [EMAIL_ADDRESS_a1b2c3d4] on [AIRCRAFT_REGISTRATION_b2c3d4e5]
 
 # Anonymize JSON (auto-detected, structure preserved)
 echo '{"email": "john@example.com", "count": 42}' | anon-pii
-# Output: {"count": 42, "email": "[EMAIL_ADDRESS_1]"}
+# Output: {"count": 42, "email": "[EMAIL_ADDRESS_c3d4e5f6]"}
 
 # Redact instead of tokenize
 echo 'User john@example.com logged in' | anon-pii --operator redact
@@ -119,6 +146,16 @@ cat debug.json | anon-pii --share --copy
 anon-pii image screenshot.png -o redacted.png
 ```
 
+## Mapping Persistence
+
+Default token mode persists a reversible mapping so `anon-pii restore` can put
+original values back after an AI round trip. Use `--mapping` to choose a
+different file, `--mapping-stderr` for review pipelines, or `--include-mapping`
+only when you intentionally want the sensitive map embedded in supported output.
+Mapping files are written atomically with owner-only permissions where the
+platform supports them. Proxy sessions write a separate mapping file under the
+session directory printed at startup.
+
 Mapping is auto-saved to `~/.anon-pii/mapping.json` — no need to pass `-m` manually.
 
 ## How It Works
@@ -136,7 +173,7 @@ flowchart LR
     D --> G
     E --> G
     F --> G
-    G --> H[Generate stable random tokens]
+    G --> H[Generate stable random-hex tokens]
     H --> I[Write mapping to ~/.anon-pii/mapping.json]
     H --> J[Return anonymized output]
 ```
@@ -258,12 +295,15 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 | Guide | Description |
 |-------|-------------|
 | [Entity types](docs/entities.md) | All 63 entity types, scores, context-aware detection |
-| [Proxy mode](docs/proxy.md) | Anonymizing reverse proxy for the Anthropic API |
+| [Proxy mode](docs/proxy.md) | Anonymizing reverse proxy for Anthropic, OpenAI, and generic LLM APIs |
+| [REST API](docs/api.md) | Local Presidio-compatible HTTP API |
 | [NER setup](docs/ner.md) | Person name detection — heuristic and ML backends |
 | [REST API spec](docs/openapi.yaml) | OpenAPI 3.0 specification (Swagger) |
 | [Threat model](docs/threat-model.md) | Security threat model and mitigations |
 | [YouTrack integration](docs/youtrack.md) | `scripts/yt` — fetch issues with human review |
 | [Image redaction](docs/image-redaction.md) | OCR-based image PII redaction |
+| [PDF redaction](docs/pdf-redaction.md) | Text-based PDF PII redaction |
+| [XLSX feature](docs/xlsx.md) | XLSX detection scaffold and current CSV workaround |
 
 ## Responsible Disclosure
 
@@ -286,11 +326,11 @@ The README is auto-updated by a pre-commit hook when `.rs` or `.toml` files chan
 
 ```bash
 # Update README from current code
-cargo run --features ner-lite,proxy,image,pdf --example update_readme
+cargo run --features ner-lite,proxy,image,pdf,xlsx --example update_readme
 
 # Update benchmark numbers first, then README
 cargo run --release --example benchmark  # writes bench-results.json
-cargo run --features ner-lite,proxy,image,pdf --example update_readme
+cargo run --features ner-lite,proxy,image,pdf,xlsx --example update_readme
 ```
 
 ### Tests
@@ -298,6 +338,11 @@ cargo run --features ner-lite,proxy,image,pdf --example update_readme
 ```bash
 # Run tests (default — regex-only, no NER)
 cargo test
+
+# Check formatting and lints
+cargo fmt --all --check
+cargo clippy -- -D warnings
+cargo clippy --features ner-lite,proxy -- -D warnings
 
 # Run tests including NER heuristic + proxy tests (matches CI)
 cargo test --features ner-lite,proxy
@@ -308,6 +353,12 @@ cargo test --features ner-lite
 # Run tests including image tests (requires Tesseract)
 cargo test --features image
 cargo test --features image -- --ignored  # end-to-end OCR tests
+
+# Run PDF redaction tests
+cargo test --features pdf
+
+# Run XLSX detection scaffold tests
+cargo test --features xlsx
 
 # Build release binary
 cargo build --release

@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: anon — Presidio-compatible PII API
+  title: anon-pii Presidio-compatible PII API
   description: >-
     Drop-in replacement for Microsoft Presidio's /analyze and /anonymize
     endpoints. Detects and anonymizes PII using regex patterns, validators,
@@ -11,7 +11,7 @@ info:
 
 servers:
   - url: http://localhost:8080
-    description: Local API server (anon api --port 8080)
+    description: Local API server (anon-pii api --port 8080)
 
 paths:
   /analyze:

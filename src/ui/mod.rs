@@ -27,7 +27,7 @@ fn probe_ml_ner() -> bool {
         use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
         let config = NerConfig::default();
         if !model_exists(&config) {
-            eprintln!("warning: NER model not downloaded, run `anon download-model`");
+            eprintln!("warning: NER model not downloaded, run `anon-pii download-model`");
             return false;
         }
         match std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
