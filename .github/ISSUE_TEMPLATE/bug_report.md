@@ -31,7 +31,7 @@ Minimal steps with synthetic input. Include the exact command line.
 
 ```bash
 # Example
-echo 'contact: alice@example.com' | anon-pii anonymize -
+echo 'contact: alice@example.com' | anon-pii
 ```
 
 ## Expected behavior
