@@ -17,7 +17,6 @@ Generated assets such as `hero.gif`, terminal casts, temporary maps, and
 intermediate anonymized files are ignored. Recreate them when needed:
 
 ```bash
-cargo build
 demo/record.sh
 vhs demo/hero.tape
 ```

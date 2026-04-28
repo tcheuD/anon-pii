@@ -1,6 +1,7 @@
 use regex::Regex;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 fn read_doc(path: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
@@ -39,6 +40,16 @@ fn public_demo_text_paths() -> &'static [&'static str] {
         "testdata/debug-log.txt",
         "testdata/queries.sql",
     ]
+}
+
+fn git_tracks_path(repo: &Path, path: &str) -> Option<bool> {
+    let output = Command::new("git")
+        .args(["ls-files", "--error-unmatch", path])
+        .current_dir(repo)
+        .output()
+        .ok()?;
+
+    Some(output.status.success())
 }
 
 #[test]
@@ -81,10 +92,12 @@ fn public_demo_assets_are_portable_and_fictional() {
     }
 
     for generated in ["demo/hero.cast", "demo/hero.gif"] {
-        assert!(
-            !repo.join(generated).exists(),
-            "{generated} is generated output and should not be committed"
-        );
+        if let Some(is_tracked) = git_tracks_path(repo, generated) {
+            assert!(
+                !is_tracked,
+                "{generated} is generated output and should not be committed"
+            );
+        }
     }
 
     let gitignore = read_doc(".gitignore");
@@ -94,6 +107,12 @@ fn public_demo_assets_are_portable_and_fictional() {
             ".gitignore should ignore generated demo artifact pattern {pattern}"
         );
     }
+
+    let record_script = read_doc("demo/record.sh");
+    assert!(
+        !record_script.contains("target/debug/anon-pii"),
+        "demo/record.sh should not assume Cargo's default target directory"
+    );
 
     let local_path = Regex::new(r"(?i)(/Users/|/home/[^[:space:]]+)").unwrap();
     let private_fixture = Regex::new(

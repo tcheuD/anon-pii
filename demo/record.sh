@@ -4,8 +4,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-cargo build --quiet
-anon_pii="${ANON_PII_BIN:-$repo_root/target/debug/anon-pii}"
+if [[ -n "${ANON_PII_BIN:-}" ]]; then
+    anon_pii=("$ANON_PII_BIN")
+else
+    anon_pii=(cargo run --quiet --)
+fi
 sleep_seconds="${DEMO_STEP_SLEEP:-0.4}"
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/anon-pii-demo.XXXXXX")"
@@ -24,8 +27,8 @@ cat demo/samples/support-ticket.txt
 sleep "$sleep_seconds"
 
 show "anon-pii -i demo/samples/support-ticket.txt --mapping <temp>/demo-map.json"
-"$anon_pii" -i demo/samples/support-ticket.txt --mapping "$map_file" | tee "$anonymized"
+"${anon_pii[@]}" -i demo/samples/support-ticket.txt --mapping "$map_file" | tee "$anonymized"
 sleep "$sleep_seconds"
 
 show "anon-pii restore -i <anonymized-output> --mapping <same map>"
-"$anon_pii" restore -i "$anonymized" --mapping "$map_file"
+"${anon_pii[@]}" restore -i "$anonymized" --mapping "$map_file"
