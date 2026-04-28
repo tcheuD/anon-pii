@@ -3,7 +3,7 @@
 // operators), which is essential for extracting text with bounding-box positions.
 // `pdf-extract` only yields plain text without coordinates; `pdf` (pdf-rs) is
 // less mature and has fewer downstream users. `lopdf` also supports PDF
-// modification, needed later for writing redaction rectangles.
+// modification, needed here for writing visual masking rectangles.
 
 use std::fmt;
 

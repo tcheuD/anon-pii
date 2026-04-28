@@ -20,6 +20,7 @@ fn public_doc_paths() -> &'static [&'static str] {
         "docs/proxy.md",
         "docs/ner.md",
         "docs/image-redaction.md",
+        "docs/pdf-redaction.md",
         "docs/youtrack.md",
         "docs/openapi.yaml",
     ]
@@ -299,6 +300,64 @@ fn user_facing_source_messages_use_current_binary_name() {
     assert!(
         offenders.is_empty(),
         "user-facing source messages still use the old `anon` command name:\n{}",
+        offenders.join("\n")
+    );
+}
+
+#[test]
+fn public_pdf_docs_label_overlay_mode_as_visual_masking() {
+    let readme = read_doc("README.md");
+    let pdf_guide = read_doc("docs/pdf-redaction.md");
+
+    for (path, doc) in [
+        ("README.md", readme.as_str()),
+        ("docs/pdf-redaction.md", pdf_guide.as_str()),
+    ] {
+        assert!(
+            doc.contains("PDF visual masking"),
+            "{path} should label the current overlay-only PDF mode as visual masking"
+        );
+        assert!(
+            doc.contains("not destructive redaction"),
+            "{path} should state that the current PDF mode is not destructive redaction"
+        );
+        assert!(
+            doc.contains("underlying PDF text/content may remain extractable"),
+            "{path} should warn that underlying PDF text/content may remain extractable"
+        );
+    }
+
+    for required_limit in ["OCR layers", "metadata", "attachments", "annotations"] {
+        assert!(
+            pdf_guide.contains(required_limit),
+            "PDF guide should explicitly document limitation: {required_limit}"
+        );
+    }
+
+    let misleading_phrases = [
+        "With PDF redaction",
+        "Text-based PDF redaction",
+        "Text-based PDF PII redaction",
+        "Basic redaction",
+        "report-redacted.pdf",
+        "PDF Redaction",
+    ];
+    let mut offenders = Vec::new();
+
+    for (path, doc) in [
+        ("README.md", readme.as_str()),
+        ("docs/pdf-redaction.md", pdf_guide.as_str()),
+    ] {
+        for phrase in misleading_phrases {
+            if doc.contains(phrase) {
+                offenders.push(format!("{path}: {phrase}"));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "public PDF docs still imply destructive redaction:\n{}",
         offenders.join("\n")
     );
 }

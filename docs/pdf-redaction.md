@@ -1,10 +1,12 @@
-# PDF Redaction
+# PDF Visual Masking
 
 [Back to README](../README.md)
 
-`anon-pii pdf` anonymizes text-based PDF files by extracting words and
-coordinates, running the normal PII detector, and drawing filled rectangles over
-detected regions in a new PDF.
+`anon-pii pdf` provides PDF visual masking for text-based PDF files by
+extracting words and coordinates, running the normal PII detector, and drawing
+filled rectangles over detected regions in a new PDF. This mode is not destructive redaction:
+underlying PDF text/content may remain extractable by copy/paste, search, PDF
+parsers, or forensic tooling.
 
 ## Install
 
@@ -21,8 +23,8 @@ cargo install --path . --features pdf
 ## Usage
 
 ```bash
-# Basic redaction
-anon-pii pdf report.pdf -o report-redacted.pdf
+# Basic visual masking
+anon-pii pdf report.pdf -o report-masked.pdf
 
 # Custom fill color and threshold
 anon-pii pdf report.pdf -o safe.pdf --fill-color white --threshold 0.8
@@ -47,7 +49,11 @@ anon-pii pdf report.pdf -o safe.pdf --fill-color '#000000'
 ## Limitations
 
 - Works best on PDFs with extractable text.
-- Scanned PDFs need OCR before this command can redact their text.
-- Redaction is region-based: visually inspect output before sharing.
-- Links and annotations that overlap redacted regions are removed or neutralized
+- Scanned PDFs need OCR before this command can detect and mask visible text.
+- Visual masking is region-based: visually inspect output before sharing.
+- Underlying PDF text/content may remain extractable because this mode is not
+  destructive redaction.
+- OCR layers, metadata, attachments, non-overlapping annotations, form fields,
+  outlines/bookmarks, actions, and embedded files may retain original PII.
+- Links and annotations that overlap masked regions are removed or neutralized
   where the current implementation can identify them.
