@@ -1,0 +1,10 @@
+Fictional support ticket ST-1007
+
+Reporter: Avery Example <avery.reporter@example.invalid>
+Callback: +1 202-555-0142
+Source IP: 192.0.2.42
+
+The passenger Casey Traveler reported a payment retry failure for booking
+BK-98234. Test card 4111 1111 1111 1111 was declined during checkout. Send the
+follow-up to casey.traveler@example.invalid and keep the case reference
+CASE-2042 in the response.

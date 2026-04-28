@@ -12,14 +12,6 @@ Set Theme "Catppuccin Mocha"
 
 Set TypingSpeed 0ms
 
-Type "cat testdata/queries.sql"
+Type "demo/record.sh"
 Enter
-Sleep 3s
-
-Type "cat testdata/queries.sql | anon"
-Enter
-Sleep 4s
-
-Type "cat testdata/queries.sql | anon | claude -p 'explain those queries' | anon restore"
-Enter
-Sleep 6s
+Sleep 8s
