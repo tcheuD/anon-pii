@@ -9,7 +9,7 @@
 #   - context_required: If true, context keywords are required for a match
 #
 # Usage:
-#   anon --config custom-recognizers.yaml input.txt
+#   anon-pii --config custom-recognizers.yaml -i input.txt
 
 recognizers:
   # French license plate (new format since 2009: AA-123-BB)

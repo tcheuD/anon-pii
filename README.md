@@ -149,6 +149,8 @@ cat debug.json | anon-pii --share --copy
 anon-pii image screenshot.png -o redacted.png
 ```
 
+More runnable examples are in [demo/README.md](demo/README.md).
+
 ## Mapping Persistence
 
 Default token mode persists a reversible mapping so `anon-pii restore` can put

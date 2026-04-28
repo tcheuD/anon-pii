@@ -72,6 +72,11 @@ redacted.pdf
 *redacted*.jpeg
 *redacted*.pdf
 
+# Demo recording outputs.
+demo/*.cast
+demo/*.gif
+demo/tmp/
+
 # Optional local Python environments used by benchmark helpers
 .bench-venv/
 .venv-bench/

@@ -1,6 +1,7 @@
 use regex::Regex;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 fn read_doc(path: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
@@ -22,6 +23,33 @@ fn public_doc_paths() -> &'static [&'static str] {
         "docs/youtrack.md",
         "docs/openapi.yaml",
     ]
+}
+
+fn public_demo_text_paths() -> &'static [&'static str] {
+    &[
+        "demo/README.md",
+        "demo/record.sh",
+        "demo/hero.tape",
+        "demo/samples/support-ticket.txt",
+        "demo/samples/incident-log.txt",
+        "demo/samples/queries.sql",
+        "demo/samples/passengers.csv",
+        "testdata/api-error.json",
+        "testdata/crew-roster.csv",
+        "testdata/custom-recognizers.yaml",
+        "testdata/debug-log.txt",
+        "testdata/queries.sql",
+    ]
+}
+
+fn git_tracks_path(repo: &Path, path: &str) -> Option<bool> {
+    let output = Command::new("git")
+        .args(["ls-files", "--error-unmatch", path])
+        .current_dir(repo)
+        .output()
+        .ok()?;
+
+    Some(output.status.success())
 }
 
 #[test]
@@ -53,6 +81,69 @@ fn ci_covers_documented_public_feature_set() {
             "CI should document feature-gate exclusion: {phrase}"
         );
     }
+}
+
+#[test]
+fn public_demo_assets_are_portable_and_fictional() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    for path in public_demo_text_paths() {
+        assert!(repo.join(path).exists(), "{path} should exist");
+    }
+
+    for generated in ["demo/hero.cast", "demo/hero.gif"] {
+        if let Some(is_tracked) = git_tracks_path(repo, generated) {
+            assert!(
+                !is_tracked,
+                "{generated} is generated output and should not be committed"
+            );
+        }
+    }
+
+    let gitignore = read_doc(".gitignore");
+    for pattern in ["demo/*.cast", "demo/*.gif", "demo/tmp/"] {
+        assert!(
+            gitignore.contains(pattern),
+            ".gitignore should ignore generated demo artifact pattern {pattern}"
+        );
+    }
+
+    let record_script = read_doc("demo/record.sh");
+    assert!(
+        !record_script.contains("target/debug/anon-pii"),
+        "demo/record.sh should not assume Cargo's default target directory"
+    );
+
+    let local_path = Regex::new(r"(?i)(/Users/|/home/[^[:space:]]+)").unwrap();
+    let private_fixture = Regex::new(
+        r"(?i)(fly[a]melia|reg[o]urd|jean\.dupont|marie\.martin|pierre\.bernard|sophie\.lambert)",
+    )
+    .unwrap();
+    let stale_anon_command = Regex::new(r#"(^|[\s'"|])anon($|[\s|;&'"<>])"#).unwrap();
+    let external_llm_command = Regex::new(r#"(^|[\s'"|])claude($|[\s|;&'"<>])"#).unwrap();
+    let stale_testdata_demo = Regex::new(r"testdata/queries\.sql").unwrap();
+    let mut offenders = Vec::new();
+
+    for path in public_demo_text_paths() {
+        let doc = read_doc(path);
+        for (name, re) in [
+            ("local path", &local_path),
+            ("private fixture", &private_fixture),
+            ("old anon command", &stale_anon_command),
+            ("external LLM command", &external_llm_command),
+            ("testdata-backed demo", &stale_testdata_demo),
+        ] {
+            for mat in re.find_iter(&doc) {
+                offenders.push(format!("{path}: {name}: {}", mat.as_str()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "public demo assets are not portable/generic:\n{}",
+        offenders.join("\n")
+    );
 }
 
 #[test]

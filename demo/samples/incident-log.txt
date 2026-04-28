@@ -1,0 +1,5 @@
+2026-02-12T09:14:05Z [WARN] Fictional incident CASE-2042 assigned to Morgan Sample
+2026-02-12T09:14:06Z [INFO] Contact email morgan.support@example.invalid, phone +1 202-555-0178
+2026-02-12T09:14:10Z [DEBUG] client_ip=198.51.100.24 session_ip=203.0.113.8
+2026-02-12T09:14:12Z [ERROR] Payment processor rejected test card 4000 0000 0000 0002
+2026-02-12T09:15:30Z [INFO] Escalation owner Riley Demo <riley.agent@example.invalid> for CASE-2042
