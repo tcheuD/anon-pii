@@ -28,7 +28,7 @@ env:
 
 # Public feature coverage policy:
 # - Required PR gate: default, ner-lite+proxy, xlsx, and pdf tests.
-# - Main/manual only: image OCR tests, because they require Tesseract packages.
+# - Main/manual only: macOS, image OCR, and security checks.
 # - Excluded from required CI: ML ner, because it requires ONNX Runtime and ORT_DYLIB_PATH.
 #   These exclusions are not part of the required PR gate.
 
@@ -111,7 +111,7 @@ jobs:
 
   rust-test-macos:
     name: Rust Test macOS (${{ matrix.features || 'default' }})
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -234,7 +234,7 @@ jobs:
 
   rust-build-macos:
     name: Rust Build macOS
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -256,7 +256,7 @@ jobs:
   # ============================================================================
   security-deny:
     name: Security (cargo-deny)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -284,7 +284,7 @@ jobs:
   # ============================================================================
   security-audit:
     name: Security (cargo-audit)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -56,6 +56,29 @@ fn ci_covers_documented_public_feature_set() {
 }
 
 #[test]
+fn manual_ci_runs_release_readiness_jobs() {
+    let ci = read_workflow(".github/workflows/ci.yml");
+    let release_doc = read_doc("docs/release.md");
+
+    assert!(
+        release_doc.contains("Main branch or manual checks additionally run"),
+        "release checklist should describe main/manual release-readiness checks"
+    );
+
+    for snippet in [
+        "if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')",
+        "rust-test-macos:",
+        "security-deny:",
+        "security-audit:",
+    ] {
+        assert!(
+            ci.contains(snippet),
+            "manual CI should run release-readiness job condition `{snippet}`"
+        );
+    }
+}
+
+#[test]
 fn release_workflow_packages_current_binary_name() {
     let release = read_workflow(".github/workflows/release.yml");
     let benchmark = read_workflow(".github/workflows/bench.yml");
