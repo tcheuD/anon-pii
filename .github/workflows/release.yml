@@ -22,13 +22,13 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: anon-linux-x86_64
+            artifact: anon-pii-linux-x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: anon-macos-x86_64
+            artifact: anon-pii-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: anon-macos-aarch64
+            artifact: anon-pii-macos-aarch64
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -44,7 +44,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/anon dist/ 2>/dev/null || true
+          cp target/${{ matrix.target }}/release/anon-pii dist/
           cp README.md LICENSE dist/ 2>/dev/null || true
           cd dist && tar -czvf ../${{ matrix.artifact }}.tar.gz *
 

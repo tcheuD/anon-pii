@@ -26,6 +26,12 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Public feature coverage policy:
+# - Required PR gate: default, ner-lite+proxy, xlsx, and pdf tests.
+# - Main/manual only: image OCR tests, because they require Tesseract packages.
+# - Excluded from required CI: ML ner, because it requires ONNX Runtime and ORT_DYLIB_PATH.
+#   These exclusions are not part of the required PR gate.
+
 jobs:
   # ============================================================================
   # Rust Format Check
@@ -133,11 +139,10 @@ jobs:
           fi
 
   # ============================================================================
-  # Rust Tests — XLSX (main/manual only)
+  # Rust Tests — XLSX
   # ============================================================================
   rust-test-xlsx:
     name: Rust Test (xlsx)
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -154,6 +159,28 @@ jobs:
 
       - name: Run tests (xlsx)
         run: cargo test --features xlsx
+
+  # ============================================================================
+  # Rust Tests — PDF
+  # ============================================================================
+  rust-test-pdf:
+    name: Rust Test (pdf)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: v1-test
+          shared-key: pdf
+
+      - name: Run tests (pdf)
+        run: cargo test --features pdf
 
   # ============================================================================
   # Rust Tests — Image/OCR (main/manual only; requires Tesseract)
@@ -281,6 +308,7 @@ jobs:
       - rust-clippy
       - rust-test
       - rust-test-xlsx
+      - rust-test-pdf
       - rust-test-macos
       - rust-test-image
       - rust-build
@@ -293,10 +321,12 @@ jobs:
       - name: Check all jobs
         run: |
           # Always required
-          for job in rust-fmt rust-test rust-build; do
+          for job in rust-fmt rust-test rust-test-xlsx rust-test-pdf rust-build; do
             result="${{ needs.rust-fmt.result }}"
             case "$job" in
               rust-test) result="${{ needs.rust-test.result }}" ;;
+              rust-test-xlsx) result="${{ needs.rust-test-xlsx.result }}" ;;
+              rust-test-pdf) result="${{ needs.rust-test-pdf.result }}" ;;
               rust-build) result="${{ needs.rust-build.result }}" ;;
             esac
             if [[ "$result" != "success" ]]; then
@@ -307,7 +337,6 @@ jobs:
           # May be skipped (main-only or dependabot-skip)
           for result in "${{ needs.rust-clippy.result }}" \
                         "${{ needs.rust-test-image.result }}" \
-                        "${{ needs.rust-test-xlsx.result }}" \
                         "${{ needs.security-deny.result }}" \
                         "${{ needs.security-audit.result }}" \
                         "${{ needs.rust-test-macos.result }}" \

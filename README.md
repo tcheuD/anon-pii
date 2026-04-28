@@ -308,6 +308,7 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 | [Image redaction](docs/image-redaction.md) | OCR-based image PII redaction |
 | [PDF redaction](docs/pdf-redaction.md) | Text-based PDF PII redaction |
 | [XLSX feature](docs/xlsx.md) | XLSX detection scaffold and current CSV workaround |
+| [Release process](docs/release.md) | CI support matrix and first release checklist |
 
 ## Responsible Disclosure
 
