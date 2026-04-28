@@ -8,6 +8,10 @@ fn read_doc(path: &str) -> String {
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
 }
 
+fn read_workflow(path: &str) -> String {
+    read_doc(path)
+}
+
 fn public_doc_paths() -> &'static [&'static str] {
     &[
         "README.md",
@@ -18,6 +22,125 @@ fn public_doc_paths() -> &'static [&'static str] {
         "docs/youtrack.md",
         "docs/openapi.yaml",
     ]
+}
+
+#[test]
+fn ci_covers_documented_public_feature_set() {
+    let ci = read_workflow(".github/workflows/ci.yml");
+
+    assert!(
+        ci.contains("features: ['', 'ner-lite,proxy']"),
+        "CI should include the default and ner-lite,proxy test matrix"
+    );
+
+    for command in [
+        "cargo test",
+        "cargo test --features xlsx",
+        "cargo test --features pdf",
+        "cargo test --features image",
+        "cargo test --features image -- --ignored",
+    ] {
+        assert!(ci.contains(command), "CI should run `{command}`");
+    }
+
+    for phrase in [
+        "requires Tesseract",
+        "requires ONNX Runtime",
+        "not part of the required PR gate",
+    ] {
+        assert!(
+            ci.contains(phrase),
+            "CI should document feature-gate exclusion: {phrase}"
+        );
+    }
+}
+
+#[test]
+fn manual_ci_runs_release_readiness_jobs() {
+    let ci = read_workflow(".github/workflows/ci.yml");
+    let release_doc = read_doc("docs/release.md");
+
+    assert!(
+        release_doc.contains("Main branch or manual checks additionally run"),
+        "release checklist should describe main/manual release-readiness checks"
+    );
+
+    for snippet in [
+        "if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')",
+        "rust-test-macos:",
+        "security-deny:",
+        "security-audit:",
+    ] {
+        assert!(
+            ci.contains(snippet),
+            "manual CI should run release-readiness job condition `{snippet}`"
+        );
+    }
+}
+
+#[test]
+fn release_workflow_packages_current_binary_name() {
+    let release = read_workflow(".github/workflows/release.yml");
+    let benchmark = read_workflow(".github/workflows/bench.yml");
+
+    for workflow in [release.as_str(), benchmark.as_str()] {
+        assert!(
+            !workflow.contains("target/release/anon ")
+                && !workflow.contains("release/anon dist/")
+                && !workflow.contains("artifact: anon-linux")
+                && !workflow.contains("artifact: anon-macos"),
+            "workflows should not package or benchmark the old `anon` binary name"
+        );
+    }
+
+    for snippet in [
+        "artifact: anon-pii-linux-x86_64",
+        "artifact: anon-pii-macos-x86_64",
+        "artifact: anon-pii-macos-aarch64",
+        "target/${{ matrix.target }}/release/anon-pii",
+    ] {
+        assert!(
+            release.contains(snippet),
+            "release workflow should contain `{snippet}`"
+        );
+    }
+}
+
+#[test]
+fn first_release_checklist_is_documented() {
+    let readme = read_doc("README.md");
+    let contributing = read_doc("CONTRIBUTING.md");
+    let release_doc_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/release.md");
+
+    assert!(
+        readme.contains("docs/release.md"),
+        "README should link the release checklist"
+    );
+    assert!(
+        contributing.contains("docs/release.md"),
+        "CONTRIBUTING should link the release checklist"
+    );
+    assert!(release_doc_path.exists(), "docs/release.md should exist");
+
+    let release_doc = read_doc("docs/release.md");
+    for phrase in [
+        "First Release Checklist",
+        "cargo package --allow-dirty --no-verify",
+        "cargo audit",
+        "cargo deny check",
+        "Linux x86_64",
+        "macOS x86_64",
+        "macOS aarch64",
+        "Windows",
+        "Linux aarch64",
+        "changelog",
+        "release notes",
+    ] {
+        assert!(
+            release_doc.contains(phrase),
+            "release checklist should mention {phrase}"
+        );
+    }
 }
 
 fn user_facing_source_paths() -> &'static [&'static str] {

@@ -30,9 +30,9 @@ jobs:
       - name: Build release variants
         run: |
           cargo build --release
-          cp target/release/anon target/release/anon-default 2>/dev/null || echo "Binary not found, skipping"
+          cp target/release/anon-pii target/release/anon_pii_default
           cargo build --release --features ner-lite
-          cp target/release/anon target/release/anon-ner-lite 2>/dev/null || echo "Binary not found, skipping"
+          cp target/release/anon-pii target/release/anon_pii_ner_lite
 
       - name: Run benchmark
         run: |
@@ -46,7 +46,7 @@ jobs:
           test_input = 'User john.doe@example.com from 192.168.1.1 called\n' * 10000
 
           results = []
-          for name, binary in [('default', 'target/release/anon-default'), ('ner-lite', 'target/release/anon-ner-lite')]:
+          for name, binary in [('default', 'target/release/anon_pii_default'), ('ner-lite', 'target/release/anon_pii_ner_lite')]:
               try:
                   start = time.perf_counter()
                   proc = subprocess.run([binary], input=test_input, capture_output=True, text=True, timeout=60)

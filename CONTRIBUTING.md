@@ -119,6 +119,9 @@ For changes touching detection, mappings, restore, proxying, OCR/PDF redaction, 
 4. Write tests for new functionality
 5. Update documentation if needed
 
+For release-bound changes, follow the support matrix and checklist in
+[docs/release.md](docs/release.md).
+
 ### PR Expectations
 
 - Keep PRs focused on a single change
