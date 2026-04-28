@@ -44,7 +44,7 @@ cargo install anon-pii --features proxy
 # With image redaction (requires Tesseract)
 cargo install anon-pii --features image
 
-# With PDF redaction
+# With PDF visual masking
 cargo install anon-pii --features pdf
 
 # With XLSX format detection scaffold
@@ -83,7 +83,7 @@ anon-pii download-model  # one-time, cached at ~/.anon-pii/models/
 brew install tesseract  # macOS
 cargo install --path . --features image
 
-# With PDF redaction
+# With PDF visual masking
 cargo install --path . --features pdf
 
 # With XLSX format detection scaffold
@@ -113,7 +113,7 @@ To update after code changes, re-run the same `cargo install` command.
 | `ner` | ML PERSON detection with ONNX Runtime, plus `ner-lite` fallback | ONNX Runtime and `ORT_DYLIB_PATH` |
 | `proxy` | Reverse proxy, web UI, and Presidio-compatible REST API | None |
 | `image` | OCR-backed image redaction | Tesseract and language data |
-| `pdf` | Text-based PDF redaction | None beyond Rust dependencies |
+| `pdf` | Text-based PDF visual masking | None beyond Rust dependencies |
 | `xlsx` | XLSX format detection scaffold | Full workbook anonymization is not implemented yet |
 
 ## Quick Start
@@ -270,7 +270,7 @@ anon-pii api                 # Start Presidio-compatible REST API server (requir
 anon-pii ui                 # Start web UI for interactive anonymization (requires `proxy` feature)
 anon-pii update-names <FILE>          # Import first/last names from a CSV file into ~/.anon-pii/ for heuristic NER
 anon-pii image <INPUT>         # Anonymize PII in images via OCR and redaction (requires `image` feature)
-anon-pii pdf <INPUT>         # Anonymize PII in PDF documents via text extraction and redaction (requires `pdf` feature)
+anon-pii pdf <INPUT>         # Anonymize PII in PDF documents via text extraction and visual masking (requires `pdf` feature)
 anon-pii proxy                 # Start anonymizing proxy server (requires `proxy` feature)
 ```
 <!-- END COMMANDS -->
@@ -289,8 +289,9 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
   or formal anonymization.
 - Optional NER improves person detection but still depends on model coverage,
   dictionaries, local context, and post-processing heuristics.
-- Image and PDF redaction rely on text extraction/OCR quality. Always visually
-  inspect redacted documents before sharing.
+- Image redaction and PDF visual masking rely on text extraction/OCR quality.
+  PDF visual masking is not destructive redaction; underlying PDF text/content may remain extractable
+  after sharing.
 - Proxy mode trusts local callers on the same machine. Do not expose it on a
   network interface.
 - Custom recognizers can introduce catastrophic false positives or false
@@ -308,7 +309,7 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 | [Threat model](docs/threat-model.md) | Security threat model and mitigations |
 | [YouTrack integration](docs/youtrack.md) | `scripts/yt` — fetch issues with human review |
 | [Image redaction](docs/image-redaction.md) | OCR-based image PII redaction |
-| [PDF redaction](docs/pdf-redaction.md) | Text-based PDF PII redaction |
+| [PDF visual masking](docs/pdf-redaction.md) | Text-based PDF PII visual masking |
 | [XLSX feature](docs/xlsx.md) | XLSX detection scaffold and current CSV workaround |
 | [Release process](docs/release.md) | CI support matrix and first release checklist |
 
@@ -361,7 +362,7 @@ cargo test --features ner-lite
 cargo test --features image
 cargo test --features image -- --ignored  # end-to-end OCR tests
 
-# Run PDF redaction tests
+# Run PDF visual masking tests
 cargo test --features pdf
 
 # Run XLSX detection scaffold tests

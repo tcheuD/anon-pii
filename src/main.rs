@@ -711,14 +711,14 @@ fn main() -> io::Result<()> {
             };
 
             if words.is_empty() {
-                eprintln!("No text detected in PDF, copying as-is");
+                eprintln!("No text detected in PDF, copying as-is without visual masking");
                 if let Err(e) =
                     anon_pii::pdf_redact::redact::redact_pdf(&input, &output, &[], &fill_color)
                 {
                     eprintln!("Error: {e}");
                     std::process::exit(1);
                 }
-                eprintln!("Redacted 0 region(s) → {}", output.display());
+                eprintln!("Visually masked 0 region(s) → {}", output.display());
                 return Ok(());
             }
 
@@ -737,7 +737,7 @@ fn main() -> io::Result<()> {
                 padding,
             );
 
-            // 5. Render redaction
+            // 5. Render visual masking
             if let Err(e) =
                 anon_pii::pdf_redact::redact::redact_pdf(&input, &output, &regions, &fill_color)
             {
@@ -746,7 +746,7 @@ fn main() -> io::Result<()> {
             }
 
             eprintln!(
-                "Redacted {} region(s) → {}",
+                "Visually masked {} region(s) → {}",
                 regions.len(),
                 output.display()
             );
@@ -1291,6 +1291,7 @@ mod tests {
     #[cfg(feature = "pdf")]
     mod pdf_cli_tests {
         use super::*;
+        use clap::CommandFactory;
         use std::process::Command;
 
         fn create_test_pdf(path: &Path) {
@@ -1529,6 +1530,24 @@ mod tests {
             doc.save(path).expect("failed to save test PDF");
         }
 
+        #[test]
+        fn test_pdf_cli_help_labels_current_mode_as_visual_masking() {
+            let mut cmd = Cli::command();
+            let pdf = cmd
+                .find_subcommand_mut("pdf")
+                .expect("pdf subcommand should be available with pdf feature");
+            let help = pdf.render_long_help().to_string();
+
+            assert!(
+                help.contains("visual masking"),
+                "pdf help should describe the current overlay-only mode as visual masking:\n{help}"
+            );
+            assert!(
+                !help.contains("redaction"),
+                "pdf help should avoid implying destructive redaction:\n{help}"
+            );
+        }
+
         fn test_dir(name: &str) -> PathBuf {
             let dir = std::env::temp_dir()
                 .join(format!("anon_pdf_cli_test_{}_{name}", std::process::id()));
@@ -1574,11 +1593,11 @@ mod tests {
             );
             assert!(output.exists(), "output PDF should be created");
 
-            // Verify stderr reports redacted regions
+            // Verify stderr reports visually masked regions
             let stderr = String::from_utf8_lossy(&result.stderr);
             assert!(
-                stderr.contains("Redacted") || stderr.contains("region"),
-                "stderr should report redaction: {}",
+                stderr.contains("Visually masked") || stderr.contains("region"),
+                "stderr should report visual masking: {}",
                 stderr
             );
 

@@ -230,11 +230,12 @@ fn remove_overlapping_annotations(
     }
 }
 
-/// Redact regions of a PDF by drawing opaque rectangles over them.
+/// Visually mask regions of a PDF by drawing opaque rectangles over them.
 ///
 /// Opens the input PDF, draws filled rectangles over each region on the
 /// appropriate page, removes overlapping annotations, and saves to the output
 /// path. Preserves the original layout, page count, and non-PII content.
+/// This does not destructively rewrite PDF text content streams.
 pub fn redact_pdf(
     input: &Path,
     output: &Path,
@@ -282,7 +283,7 @@ pub fn redact_pdf(
 
     let pages = doc.get_pages();
 
-    // For each page with regions, append redaction rectangles to the content stream
+    // For each page with regions, append visual masking rectangles to the content stream
     for (page_num, page_regions) in &regions_by_page {
         let Some(&page_id) = pages.get(page_num) else {
             continue; // Skip regions for non-existent pages
@@ -299,7 +300,7 @@ pub fn redact_pdf(
             })?
         };
 
-        // Add redaction rectangles
+        // Add visual masking rectangles
         // Save graphics state
         content.operations.push(Operation::new("q", vec![]));
 
@@ -345,7 +346,7 @@ pub fn redact_pdf(
             page_dict.set("Contents", Object::Reference(new_content_id));
         }
 
-        // Remove annotations that overlap with redaction regions
+        // Remove annotations that overlap with masked regions
         remove_overlapping_annotations(&mut doc, page_id, page_regions);
     }
 
