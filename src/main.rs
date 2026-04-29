@@ -258,13 +258,93 @@ fn copy_to_clipboard_best_effort(text: &str) -> Result<(), String> {
 
 /// Create directory with mode 0o700 (owner-only) on Unix.
 fn create_private_dir(dir: &Path) -> io::Result<()> {
-    fs::create_dir_all(dir)?;
+    match fs::symlink_metadata(dir) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("private directory must not be a symlink: {}", dir.display()),
+            ));
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("private path is not a directory: {}", dir.display()),
+            ));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => fs::create_dir_all(dir)?,
+        Err(e) => return Err(e),
+    }
+    validate_existing_dir(dir)?;
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
+}
+
+fn validate_existing_dir(dir: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(dir)?;
+    if metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("mapping parent must not be a symlink: {}", dir.display()),
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("mapping parent is not a directory: {}", dir.display()),
+        ));
+    }
+    Ok(())
+}
+
+fn prepare_mapping_parent(path: &Path, private_parent: bool) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "mapping path has no parent directory",
+        )
+    })?;
+
+    if private_parent {
+        create_private_dir(parent)
+    } else {
+        match fs::symlink_metadata(parent) {
+            Ok(_) => validate_existing_dir(parent),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => create_private_dir(parent),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+fn create_mapping_temp_file(dir: &Path) -> io::Result<(PathBuf, fs::File)> {
+    for _ in 0..16 {
+        let suffix = anon_pii::mapping::crypto_random_hex(16);
+        let tmp_path = dir.join(format!(".mapping.{suffix}.tmp"));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+
+        match options.open(&tmp_path) {
+            Ok(file) => return Ok((tmp_path, file)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not create a unique mapping temp file",
+    ))
 }
 
 /// Write mapping file atomically via temp-file-then-rename.
@@ -279,28 +359,22 @@ fn write_mapping_file(path: &PathBuf, content: &str) -> io::Result<()> {
         )
     })?;
 
-    // Write to a temp file in the same directory (same filesystem = atomic rename)
-    let tmp_path = dir.join(".mapping.json.tmp");
+    let (tmp_path, mut file) = create_mapping_temp_file(dir)?;
+    let write_result = file
+        .write_all(content.as_bytes())
+        .and_then(|_| file.sync_all());
+    drop(file);
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp_path)?;
-        file.write_all(content.as_bytes())?;
-        file.sync_all()?;
-    }
-    #[cfg(not(unix))]
-    {
-        fs::write(&tmp_path, content)?;
+    if let Err(e) = write_result {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e);
     }
 
     // Atomic rename — replaces target directory entry, never follows symlinks
-    fs::rename(&tmp_path, path)?;
+    if let Err(e) = fs::rename(&tmp_path, path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -1101,10 +1175,11 @@ fn main() -> io::Result<()> {
             }
 
             // Save mapping file (contains original PII — restrict permissions)
-            let mapping_path = cli.mapping.unwrap_or_else(default_mapping_path);
-            if let Some(parent) = mapping_path.parent() {
-                create_private_dir(parent)?;
-            }
+            let (mapping_path, private_parent) = match cli.mapping {
+                Some(path) => (path, false),
+                None => (default_mapping_path(), true),
+            };
+            prepare_mapping_parent(&mapping_path, private_parent)?;
             let mapping_json = serde_json::to_string_pretty(&anonymizer.mapping)?;
             write_mapping_file(&mapping_path, &mapping_json)?;
             if cli.verbose {
