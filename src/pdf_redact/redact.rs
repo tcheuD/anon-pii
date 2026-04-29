@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lopdf::content::{Content, Operation};
-use lopdf::{Document, Object, Stream, dictionary};
+use lopdf::{Document, Encoding, Object, Stream, dictionary};
 
 use super::{PdfError, RedactionRegion};
 use crate::patterns::MAX_INPUT_SIZE;
@@ -15,6 +15,7 @@ pub enum RedactError {
     InvalidColor(String),
     PdfLoad { path: PathBuf, source: String },
     PdfSave { path: PathBuf, source: String },
+    UnmappedText { page: u32, entity_type: String },
 }
 
 impl fmt::Display for RedactError {
@@ -27,6 +28,10 @@ impl fmt::Display for RedactError {
             RedactError::PdfSave { path, source } => {
                 write!(f, "failed to save PDF {}: {source}", path.display())
             }
+            RedactError::UnmappedText { page, entity_type } => write!(
+                f,
+                "redaction region for {entity_type} on page {page} could not be mapped to removable PDF text"
+            ),
         }
     }
 }
@@ -230,17 +235,466 @@ fn remove_overlapping_annotations(
     }
 }
 
-/// Visually mask regions of a PDF by drawing opaque rectangles over them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PdfRedactionMode {
+    Destructive,
+    VisualOnly,
+}
+
+#[derive(Clone, Copy)]
+struct TextMatrix {
+    a: f64,
+    b: f64,
+    c: f64,
+    d: f64,
+    e: f64,
+    f: f64,
+}
+
+impl TextMatrix {
+    fn identity() -> Self {
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: 0.0,
+            f: 0.0,
+        }
+    }
+
+    fn position(&self) -> (f64, f64) {
+        (self.e, self.f)
+    }
+
+    fn translate(&mut self, tx: f64, ty: f64) {
+        self.e += self.a * tx + self.c * ty;
+        self.f += self.b * tx + self.d * ty;
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TextState {
+    font_size: f64,
+    char_spacing: f64,
+    word_spacing: f64,
+    horizontal_scaling: f64,
+    leading: f64,
+}
+
+impl TextState {
+    fn new() -> Self {
+        Self {
+            font_size: 12.0,
+            char_spacing: 0.0,
+            word_spacing: 0.0,
+            horizontal_scaling: 1.0,
+            leading: 0.0,
+        }
+    }
+
+    fn glyph_width(&self) -> f64 {
+        self.font_size * 0.6 * self.horizontal_scaling
+    }
+
+    fn glyph_advance(&self, ch: char) -> f64 {
+        let word_spacing = if ch == ' ' { self.word_spacing } else { 0.0 };
+        (self.font_size * 0.6 + self.char_spacing + word_spacing) * self.horizontal_scaling
+    }
+
+    fn tj_adjustment(&self, value: f64) -> f64 {
+        -(value / 1000.0) * self.font_size * self.horizontal_scaling
+    }
+}
+
+fn object_to_f64(obj: &Object) -> Option<f64> {
+    match obj {
+        Object::Integer(i) => Some(*i as f64),
+        Object::Real(r) => Some(*r as f64),
+        _ => None,
+    }
+}
+
+fn region_overlaps_box(region: &RedactionRegion, x: f64, y: f64, width: f64, height: f64) -> bool {
+    let region_right = region.x + region.width;
+    let region_top = region.y + region.height;
+    let box_right = x + width;
+    let box_top = y + height;
+
+    region.x < box_right && region_right > x && region.y < box_top && region_top > y
+}
+
+fn redact_text_showing_operation(
+    op: &mut Operation,
+    encoding: &Encoding,
+    text_matrix: &TextMatrix,
+    text_state: TextState,
+    page_regions: &[(usize, &RedactionRegion)],
+) -> TextRewriteResult {
+    let (x, y) = text_matrix.position();
+
+    let mut text_run = TextRunState {
+        x,
+        y,
+        text_state,
+        advance: 0.0,
+        current_word_has_chars: false,
+        current_word_regions: Vec::new(),
+        completed_regions: Vec::new(),
+        incomplete_regions: Vec::new(),
+    };
+    for operand in &mut op.operands {
+        redact_operand_text_by_region(encoding, operand, &mut text_run, page_regions);
+    }
+    text_run.finish_word();
+
+    TextRewriteResult {
+        advance: text_run.advance,
+        completed_regions: text_run.completed_regions,
+        incomplete_regions: text_run.incomplete_regions,
+    }
+}
+
+struct TextRewriteResult {
+    advance: f64,
+    completed_regions: Vec<usize>,
+    incomplete_regions: Vec<usize>,
+}
+
+struct TextRunState {
+    x: f64,
+    y: f64,
+    text_state: TextState,
+    advance: f64,
+    current_word_has_chars: bool,
+    current_word_regions: Vec<(usize, bool)>,
+    completed_regions: Vec<usize>,
+    incomplete_regions: Vec<usize>,
+}
+
+impl TextRunState {
+    fn record_word_char(&mut self, char_matches: &[usize]) {
+        for (idx, fully_matched) in &mut self.current_word_regions {
+            if !char_matches.contains(idx) {
+                *fully_matched = false;
+            }
+        }
+
+        for idx in char_matches {
+            if !self
+                .current_word_regions
+                .iter()
+                .any(|(existing, _)| existing == idx)
+            {
+                self.current_word_regions
+                    .push((*idx, !self.current_word_has_chars));
+            }
+        }
+
+        self.current_word_has_chars = true;
+    }
+
+    fn finish_word(&mut self) {
+        if !self.current_word_has_chars {
+            return;
+        }
+
+        for (idx, fully_matched) in self.current_word_regions.drain(..) {
+            if fully_matched {
+                self.completed_regions.push(idx);
+            } else {
+                self.incomplete_regions.push(idx);
+            }
+        }
+        self.current_word_has_chars = false;
+    }
+}
+
+fn redact_operand_text_by_region(
+    encoding: &Encoding,
+    object: &mut Object,
+    text_run: &mut TextRunState,
+    page_regions: &[(usize, &RedactionRegion)],
+) {
+    match object {
+        Object::String(bytes, _) => {
+            let Ok(decoded) = Document::decode_text(encoding, bytes) else {
+                return;
+            };
+            let char_width = text_run.text_state.glyph_width();
+            let mut replacement = String::with_capacity(decoded.len());
+            let mut changed = false;
+
+            for ch in decoded.chars() {
+                let char_x = text_run.x + text_run.advance;
+                if ch.is_whitespace() {
+                    text_run.finish_word();
+                    replacement.push(ch);
+                } else {
+                    let char_matches: Vec<usize> = page_regions
+                        .iter()
+                        .filter_map(|(idx, region)| {
+                            region_overlaps_box(
+                                region,
+                                char_x,
+                                text_run.y,
+                                char_width,
+                                text_run.text_state.font_size,
+                            )
+                            .then_some(*idx)
+                        })
+                        .collect();
+
+                    if !char_matches.is_empty() {
+                        replacement.push('X');
+                        changed = true;
+                    } else {
+                        replacement.push(ch);
+                    }
+                    text_run.record_word_char(&char_matches);
+                }
+                text_run.advance += text_run.text_state.glyph_advance(ch);
+            }
+
+            if changed {
+                *bytes = Document::encode_text(encoding, &replacement);
+            }
+        }
+        Object::Array(items) => {
+            for item in items {
+                match item {
+                    Object::Integer(i) => {
+                        if *i < -100 {
+                            text_run.finish_word();
+                        }
+                        text_run.advance += text_run.text_state.tj_adjustment(*i as f64);
+                    }
+                    Object::Real(r) => {
+                        if *r < -100.0 {
+                            text_run.finish_word();
+                        }
+                        text_run.advance += text_run.text_state.tj_adjustment(*r as f64);
+                    }
+                    _ => redact_operand_text_by_region(encoding, item, text_run, page_regions),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_page_text_operands(
+    doc: &Document,
+    input: &Path,
+    page_id: (u32, u16),
+    content: &mut Content,
+    page_regions: &[(usize, &RedactionRegion)],
+) -> Result<Vec<usize>, RedactError> {
+    let fonts = doc
+        .get_page_fonts(page_id)
+        .map_err(|e| RedactError::PdfLoad {
+            path: input.to_path_buf(),
+            source: format!("failed to read page fonts: {e}"),
+        })?;
+    let encodings: BTreeMap<Vec<u8>, Encoding> = fonts
+        .into_iter()
+        .filter_map(|(name, font)| match font.get_font_encoding(doc) {
+            Ok(enc) => Some((name, enc)),
+            Err(_) => None,
+        })
+        .collect();
+
+    let mut completed_regions = Vec::new();
+    let mut incomplete_regions = Vec::new();
+    let mut text_matrix = TextMatrix::identity();
+    let mut line_matrix = TextMatrix::identity();
+    let mut current_encoding = None;
+    let mut text_state = TextState::new();
+
+    for op in &mut content.operations {
+        match op.operator.as_str() {
+            "BT" => {
+                text_matrix = TextMatrix::identity();
+                line_matrix = TextMatrix::identity();
+            }
+            "Tf" => {
+                if let Some(Object::Name(font_name)) = op.operands.first() {
+                    current_encoding = encodings.get(font_name);
+                }
+                if let Some(size) = op.operands.get(1) {
+                    text_state.font_size = object_to_f64(size).unwrap_or(12.0).abs();
+                }
+            }
+            "Tc" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.char_spacing = value;
+                }
+            }
+            "Tw" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.word_spacing = value;
+                }
+            }
+            "Tz" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.horizontal_scaling = value / 100.0;
+                }
+            }
+            "TL" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.leading = value;
+                }
+            }
+            "Tm" => {
+                if op.operands.len() >= 6 {
+                    let matrix = TextMatrix {
+                        a: object_to_f64(&op.operands[0]).unwrap_or(1.0),
+                        b: object_to_f64(&op.operands[1]).unwrap_or(0.0),
+                        c: object_to_f64(&op.operands[2]).unwrap_or(0.0),
+                        d: object_to_f64(&op.operands[3]).unwrap_or(1.0),
+                        e: object_to_f64(&op.operands[4]).unwrap_or(0.0),
+                        f: object_to_f64(&op.operands[5]).unwrap_or(0.0),
+                    };
+                    text_matrix = matrix;
+                    line_matrix = matrix;
+                }
+            }
+            "Td" | "TD" => {
+                if op.operands.len() >= 2 {
+                    let tx = object_to_f64(&op.operands[0]).unwrap_or(0.0);
+                    let ty = object_to_f64(&op.operands[1]).unwrap_or(0.0);
+                    if op.operator == "TD" {
+                        text_state.leading = -ty;
+                    }
+                    line_matrix.translate(tx, ty);
+                    text_matrix = line_matrix;
+                }
+            }
+            "T*" => {
+                line_matrix.translate(0.0, -text_state.leading);
+                text_matrix = line_matrix;
+            }
+            "Tj" | "TJ" => {
+                if let Some(encoding) = current_encoding {
+                    let result = redact_text_showing_operation(
+                        op,
+                        encoding,
+                        &text_matrix,
+                        text_state,
+                        page_regions,
+                    );
+                    completed_regions.extend(result.completed_regions);
+                    incomplete_regions.extend(result.incomplete_regions);
+                    text_matrix.translate(result.advance, 0.0);
+                }
+            }
+            "'" | "\"" => {
+                if op.operator == "\"" && op.operands.len() >= 3 {
+                    if let Some(word_spacing) = op.operands.first().and_then(object_to_f64) {
+                        text_state.word_spacing = word_spacing;
+                    }
+                    if let Some(char_spacing) = op.operands.get(1).and_then(object_to_f64) {
+                        text_state.char_spacing = char_spacing;
+                    }
+                }
+                line_matrix.translate(0.0, -text_state.leading);
+                text_matrix = line_matrix;
+                if let Some(encoding) = current_encoding {
+                    let result = redact_text_showing_operation(
+                        op,
+                        encoding,
+                        &text_matrix,
+                        text_state,
+                        page_regions,
+                    );
+                    completed_regions.extend(result.completed_regions);
+                    incomplete_regions.extend(result.incomplete_regions);
+                    text_matrix.translate(result.advance, 0.0);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    completed_regions.retain(|idx| !incomplete_regions.contains(idx));
+    Ok(completed_regions)
+}
+
+fn append_visual_mask_operations(
+    content: &mut Content,
+    page_regions: &[&RedactionRegion],
+    r: f64,
+    g: f64,
+    b: f64,
+) {
+    content.operations.push(Operation::new("q", vec![]));
+    content.operations.push(Operation::new(
+        "rg",
+        vec![
+            Object::Real(r as f32),
+            Object::Real(g as f32),
+            Object::Real(b as f32),
+        ],
+    ));
+
+    for region in page_regions {
+        content.operations.push(Operation::new(
+            "re",
+            vec![
+                Object::Real(region.x as f32),
+                Object::Real(region.y as f32),
+                Object::Real(region.width as f32),
+                Object::Real(region.height as f32),
+            ],
+        ));
+        content.operations.push(Operation::new("f", vec![]));
+    }
+
+    content.operations.push(Operation::new("Q", vec![]));
+}
+
+/// Destructively redact supported text regions of a PDF and draw opaque rectangles over them.
 ///
 /// Opens the input PDF, draws filled rectangles over each region on the
 /// appropriate page, removes overlapping annotations, and saves to the output
 /// path. Preserves the original layout, page count, and non-PII content.
-/// This does not destructively rewrite PDF text content streams.
 pub fn redact_pdf(
     input: &Path,
     output: &Path,
     regions: &[RedactionRegion],
     fill_color: &str,
+) -> Result<(), RedactError> {
+    redact_pdf_with_mode(
+        input,
+        output,
+        regions,
+        fill_color,
+        PdfRedactionMode::Destructive,
+    )
+}
+
+/// Visually mask regions of a PDF by drawing opaque rectangles without rewriting text streams.
+pub fn visual_mask_pdf(
+    input: &Path,
+    output: &Path,
+    regions: &[RedactionRegion],
+    fill_color: &str,
+) -> Result<(), RedactError> {
+    redact_pdf_with_mode(
+        input,
+        output,
+        regions,
+        fill_color,
+        PdfRedactionMode::VisualOnly,
+    )
+}
+
+fn redact_pdf_with_mode(
+    input: &Path,
+    output: &Path,
+    regions: &[RedactionRegion],
+    fill_color: &str,
+    mode: PdfRedactionMode,
 ) -> Result<(), RedactError> {
     let (r, g, b) = parse_fill_color(fill_color)?;
 
@@ -276,17 +730,21 @@ pub fn redact_pdf(
     })?;
 
     // Group regions by page number
-    let mut regions_by_page: BTreeMap<u32, Vec<&RedactionRegion>> = BTreeMap::new();
-    for region in regions {
-        regions_by_page.entry(region.page).or_default().push(region);
+    let mut regions_by_page: BTreeMap<u32, Vec<(usize, &RedactionRegion)>> = BTreeMap::new();
+    for (idx, region) in regions.iter().enumerate() {
+        regions_by_page
+            .entry(region.page)
+            .or_default()
+            .push((idx, region));
     }
 
     let pages = doc.get_pages();
+    let mut mapped_regions = vec![mode == PdfRedactionMode::VisualOnly; regions.len()];
 
-    // For each page with regions, append visual masking rectangles to the content stream
+    // For each page with regions, rewrite supported text then append visual masking rectangles.
     for (page_num, page_regions) in &regions_by_page {
         let Some(&page_id) = pages.get(page_num) else {
-            continue; // Skip regions for non-existent pages
+            continue;
         };
 
         // Get existing content
@@ -300,37 +758,18 @@ pub fn redact_pdf(
             })?
         };
 
-        // Add visual masking rectangles
-        // Save graphics state
-        content.operations.push(Operation::new("q", vec![]));
-
-        // Set fill color (rg = RGB fill color)
-        content.operations.push(Operation::new(
-            "rg",
-            vec![
-                Object::Real(r as f32),
-                Object::Real(g as f32),
-                Object::Real(b as f32),
-            ],
-        ));
-
-        for region in page_regions {
-            // Draw rectangle: x y width height re
-            content.operations.push(Operation::new(
-                "re",
-                vec![
-                    Object::Real(region.x as f32),
-                    Object::Real(region.y as f32),
-                    Object::Real(region.width as f32),
-                    Object::Real(region.height as f32),
-                ],
-            ));
-            // Fill the rectangle
-            content.operations.push(Operation::new("f", vec![]));
+        if mode == PdfRedactionMode::Destructive {
+            for idx in rewrite_page_text_operands(&doc, input, page_id, &mut content, page_regions)?
+            {
+                if let Some(mapped) = mapped_regions.get_mut(idx) {
+                    *mapped = true;
+                }
+            }
         }
 
-        // Restore graphics state
-        content.operations.push(Operation::new("Q", vec![]));
+        let page_region_refs: Vec<&RedactionRegion> =
+            page_regions.iter().map(|(_, region)| *region).collect();
+        append_visual_mask_operations(&mut content, &page_region_refs, r, g, b);
 
         // Encode and update the page content
         let encoded = content.encode().map_err(|e| RedactError::PdfSave {
@@ -347,7 +786,21 @@ pub fn redact_pdf(
         }
 
         // Remove annotations that overlap with masked regions
-        remove_overlapping_annotations(&mut doc, page_id, page_regions);
+        remove_overlapping_annotations(&mut doc, page_id, &page_region_refs);
+    }
+
+    if mode == PdfRedactionMode::Destructive {
+        if let Some((idx, _)) = mapped_regions
+            .iter()
+            .enumerate()
+            .find(|(_, mapped)| !**mapped)
+        {
+            let region = &regions[idx];
+            return Err(RedactError::UnmappedText {
+                page: region.page,
+                entity_type: region.entity_type.clone(),
+            });
+        }
     }
 
     // Save the modified PDF
@@ -568,6 +1021,28 @@ mod tests {
         dir
     }
 
+    fn content_text_operands(content: &Content) -> String {
+        let mut text = String::new();
+        for op in &content.operations {
+            for operand in &op.operands {
+                append_operand_text(operand, &mut text);
+            }
+        }
+        text
+    }
+
+    fn append_operand_text(object: &Object, output: &mut String) {
+        match object {
+            Object::String(bytes, _) => output.push_str(&String::from_utf8_lossy(bytes)),
+            Object::Array(items) => {
+                for item in items {
+                    append_operand_text(item, output);
+                }
+            }
+            _ => {}
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // PDF redaction tests
     // ---------------------------------------------------------------------------
@@ -581,9 +1056,9 @@ mod tests {
 
         let regions = vec![RedactionRegion {
             page: 1,
-            x: 72.0,
-            y: 700.0,
-            width: 100.0,
+            x: 122.0,
+            y: 696.0,
+            width: 160.0,
             height: 20.0,
             entity_type: "EMAIL_ADDRESS".to_string(),
         }];
@@ -609,18 +1084,18 @@ mod tests {
         let regions = vec![
             RedactionRegion {
                 page: 1,
-                x: 72.0,
-                y: 700.0,
-                width: 50.0,
-                height: 15.0,
+                x: 122.0,
+                y: 696.0,
+                width: 160.0,
+                height: 20.0,
                 entity_type: "EMAIL_ADDRESS".to_string(),
             },
             RedactionRegion {
                 page: 1,
-                x: 72.0,
-                y: 680.0,
-                width: 80.0,
-                height: 15.0,
+                x: 122.0,
+                y: 676.0,
+                width: 120.0,
+                height: 20.0,
                 entity_type: "PHONE_NUMBER".to_string(),
             },
         ];
@@ -645,18 +1120,18 @@ mod tests {
         let regions = vec![
             RedactionRegion {
                 page: 1,
-                x: 72.0,
-                y: 700.0,
-                width: 100.0,
-                height: 15.0,
+                x: 122.0,
+                y: 696.0,
+                width: 160.0,
+                height: 20.0,
                 entity_type: "EMAIL_ADDRESS".to_string(),
             },
             RedactionRegion {
                 page: 3,
-                x: 72.0,
-                y: 700.0,
-                width: 80.0,
-                height: 15.0,
+                x: 108.0,
+                y: 696.0,
+                width: 85.0,
+                height: 20.0,
                 entity_type: "US_SSN".to_string(),
             },
         ];
@@ -680,9 +1155,9 @@ mod tests {
         // Redact only on page 3 to verify multi-page targeting works
         let regions = vec![RedactionRegion {
             page: 3,
-            x: 72.0,
-            y: 700.0,
-            width: 100.0,
+            x: 108.0,
+            y: 696.0,
+            width: 85.0,
             height: 20.0,
             entity_type: "US_SSN".to_string(),
         }];
@@ -705,9 +1180,9 @@ mod tests {
 
         let regions = vec![RedactionRegion {
             page: 1,
-            x: 72.0,
-            y: 700.0,
-            width: 100.0,
+            x: 122.0,
+            y: 696.0,
+            width: 160.0,
             height: 20.0,
             entity_type: "EMAIL_ADDRESS".to_string(),
         }];
@@ -730,9 +1205,9 @@ mod tests {
 
         let regions = vec![RedactionRegion {
             page: 1,
-            x: 72.0,
-            y: 700.0,
-            width: 100.0,
+            x: 122.0,
+            y: 696.0,
+            width: 160.0,
             height: 20.0,
             entity_type: "EMAIL_ADDRESS".to_string(),
         }];
@@ -816,10 +1291,10 @@ mod tests {
 
         let regions = vec![RedactionRegion {
             page: 1,
-            x: 72.0,
-            y: 700.0,
-            width: 50.0,
-            height: 15.0,
+            x: 122.0,
+            y: 696.0,
+            width: 160.0,
+            height: 20.0,
             entity_type: "EMAIL_ADDRESS".to_string(),
         }];
 
@@ -848,9 +1323,9 @@ mod tests {
 
         let regions = vec![RedactionRegion {
             page: 1,
-            x: 72.0,
-            y: 700.0,
-            width: 100.0,
+            x: 122.0,
+            y: 696.0,
+            width: 160.0,
             height: 20.0,
             entity_type: "EMAIL_ADDRESS".to_string(),
         }];
@@ -871,6 +1346,318 @@ mod tests {
 
         assert!(has_rect, "output should contain rectangle operation (re)");
         assert!(has_fill, "output should contain fill operation (f)");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_removes_extractable_pii_from_pdf_text_streams() {
+        let dir = test_dir("destructive_text_removal");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf(&input);
+
+        let original_text = crate::pdf_redact::extract::reconstruct_text(
+            &crate::pdf_redact::extract::extract_words(&input).unwrap(),
+        )
+        .text;
+        assert!(original_text.contains("john.smith@example.com"));
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 70.0,
+            y: 696.0,
+            width: 230.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let redacted_text = crate::pdf_redact::extract::reconstruct_text(
+            &crate::pdf_redact::extract::extract_words(&output).unwrap(),
+        )
+        .text;
+        assert!(
+            !redacted_text.contains("john.smith@example.com"),
+            "PII should not be recoverable through project PDF extraction: {redacted_text}"
+        );
+
+        let doc = Document::load(&output).unwrap();
+        let pages = doc.get_pages();
+        let page1_id = pages.get(&1).unwrap();
+        let content_data = doc.get_page_content(*page1_id).unwrap();
+        let content = Content::decode(&content_data).unwrap();
+        let text_operands = content_text_operands(&content);
+
+        assert!(
+            !text_operands.contains("john.smith@example.com"),
+            "PII should not remain in decoded PDF text operands: {text_operands}"
+        );
+        assert!(
+            content.operations.iter().any(|op| op.operator == "re"),
+            "visual masking rectangles should still be drawn"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_preserves_unmatched_text_in_same_pdf_text_operation() {
+        let dir = test_dir("preserve_unmatched_text");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf(&input);
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 122.0,
+            y: 696.0,
+            width: 160.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let doc = Document::load(&output).unwrap();
+        let pages = doc.get_pages();
+        let page1_id = pages.get(&1).unwrap();
+        let content_data = doc.get_page_content(*page1_id).unwrap();
+        let content = Content::decode(&content_data).unwrap();
+        let text_operands = content_text_operands(&content);
+
+        assert!(
+            text_operands.contains("Email:"),
+            "redaction should preserve text outside the selected region: {text_operands}"
+        );
+        assert!(
+            !text_operands.contains("john.smith@example.com"),
+            "redaction should remove the selected PII text: {text_operands}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_fails_closed_when_region_only_partially_rewrites_text_token() {
+        let dir = test_dir("partial_token_overlap");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf(&input);
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 72.0,
+            y: 696.0,
+            width: 60.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        let err = redact_pdf(&input, &output, &regions, "black")
+            .expect_err("partial token rewrite should fail closed");
+        assert!(
+            err.to_string().contains("could not be mapped"),
+            "error should explain the fail-closed mapping problem: {err}"
+        );
+        assert!(
+            !output.exists(),
+            "partial token rewrite should not produce a redacted output"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_advances_text_matrix_with_pdf_text_state_spacing() {
+        let dir = test_dir("text_state_spacing");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Courier",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => font_id,
+            },
+        });
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Tc", vec![5.into()]),
+                Operation::new("Tw", vec![20.into()]),
+                Operation::new("Tz", vec![150.into()]),
+                Operation::new("Td", vec![72.into(), 720.into()]),
+                Operation::new(
+                    "TJ",
+                    vec![Object::Array(vec![
+                        Object::string_literal("Reference"),
+                        Object::Integer(-3000),
+                        Object::string_literal(" code "),
+                    ])],
+                ),
+                Operation::new("Tj", vec![Object::string_literal("bob@example.com")]),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+        });
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1,
+            "Resources" => resources_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(&input).expect("failed to save spacing test PDF");
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 450.0,
+            y: 716.0,
+            width: 280.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let redacted_doc = Document::load(&output).unwrap();
+        let pages = redacted_doc.get_pages();
+        let page1_id = pages.get(&1).unwrap();
+        let content_data = redacted_doc.get_page_content(*page1_id).unwrap();
+        let content = Content::decode(&content_data).unwrap();
+        let text_operands = content_text_operands(&content);
+
+        assert!(
+            !text_operands.contains("bob@example.com"),
+            "later text runs should be matched after applying Tc/Tw/Tz/TJ displacement: {text_operands}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_uses_text_leading_for_next_line_operator() {
+        let dir = test_dir("text_leading");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Courier",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => font_id,
+            },
+        });
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Td", vec![72.into(), 720.into()]),
+                Operation::new("Tj", vec![Object::string_literal("Header")]),
+                Operation::new("TD", vec![0.into(), (-36).into()]),
+                Operation::new("Tj", vec![Object::string_literal("alice@example.com")]),
+                Operation::new("T*", vec![]),
+                Operation::new("Tj", vec![Object::string_literal("bob@example.com")]),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+        });
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1,
+            "Resources" => resources_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(&input).expect("failed to save leading test PDF");
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 70.0,
+            y: 644.0,
+            width: 125.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let redacted_doc = Document::load(&output).unwrap();
+        let pages = redacted_doc.get_pages();
+        let page1_id = pages.get(&1).unwrap();
+        let content_data = redacted_doc.get_page_content(*page1_id).unwrap();
+        let content = Content::decode(&content_data).unwrap();
+        let text_operands = content_text_operands(&content);
+
+        assert!(
+            !text_operands.contains("bob@example.com"),
+            "T* should redact using TD-set leading, not font size: {text_operands}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_fails_closed_when_region_cannot_be_mapped_to_text() {
+        let dir = test_dir("unmapped_text_region");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf(&input);
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 500.0,
+            y: 500.0,
+            width: 20.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        let err = redact_pdf(&input, &output, &regions, "black")
+            .expect_err("unmapped text redaction should fail closed");
+        assert!(
+            err.to_string().contains("could not be mapped"),
+            "error should explain the fail-closed mapping problem: {err}"
+        );
+        assert!(
+            !output.exists(),
+            "fail-closed redaction should not write an overlay-only PDF"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1211,9 +1998,9 @@ mod tests {
         // Redact the email region (overlaps with the link annotation rect)
         let regions = vec![RedactionRegion {
             page: 1,
-            x: 72.0,
-            y: 690.0,
-            width: 150.0,
+            x: 70.0,
+            y: 688.0,
+            width: 170.0,
             height: 30.0,
             entity_type: "EMAIL_ADDRESS".to_string(),
         }];
@@ -1287,10 +2074,10 @@ mod tests {
         // Redact only the email region (overlaps annot1, not annot2)
         let regions = vec![RedactionRegion {
             page: 1,
-            x: 100.0,
-            y: 690.0,
+            x: 122.0,
+            y: 696.0,
             width: 120.0,
-            height: 25.0,
+            height: 20.0,
             entity_type: "EMAIL_ADDRESS".to_string(),
         }];
 
@@ -1326,7 +2113,7 @@ mod tests {
             entity_type: "EMAIL_ADDRESS".to_string(),
         }];
 
-        redact_pdf(&input, &output, &regions, "black").unwrap();
+        visual_mask_pdf(&input, &output, &regions, "black").unwrap();
 
         // Any overlap should remove the annotation
         let output_doc = Document::load(&output).unwrap();
@@ -1358,7 +2145,7 @@ mod tests {
             entity_type: "OTHER".to_string(),
         }];
 
-        redact_pdf(&input, &output, &regions, "black").unwrap();
+        visual_mask_pdf(&input, &output, &regions, "black").unwrap();
 
         // Annotation should be preserved
         let output_doc = Document::load(&output).unwrap();

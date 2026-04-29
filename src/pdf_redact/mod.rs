@@ -1,4 +1,4 @@
-// Crate choice: `lopdf` (0.39.0) — chosen over `pdf-extract` and `pdf` (pdf-rs)
+// Crate choice: `lopdf` (0.40.0) — chosen over `pdf-extract` and `pdf` (pdf-rs)
 // because it provides direct access to PDF content streams (Tm/Td/Tj/TJ text
 // operators), which is essential for extracting text with bounding-box positions.
 // `pdf-extract` only yields plain text without coordinates; `pdf` (pdf-rs) is

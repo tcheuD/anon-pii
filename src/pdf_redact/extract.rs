@@ -66,25 +66,47 @@ fn extract_words_from_page(
 
     let mut words = Vec::new();
     let mut text_matrix = TextMatrix::identity();
+    let mut line_matrix = TextMatrix::identity();
     let mut current_encoding = None;
-    let mut font_size: f64 = 12.0;
+    let mut text_state = TextState::new();
 
     for op in &content.operations {
         match op.operator.as_str() {
             "BT" => {
                 text_matrix = TextMatrix::identity();
+                line_matrix = TextMatrix::identity();
             }
             "Tf" => {
                 if let Some(Object::Name(font_name)) = op.operands.first() {
                     current_encoding = encodings.get(font_name);
                 }
                 if let Some(size) = op.operands.get(1) {
-                    font_size = object_to_f64(size).unwrap_or(12.0).abs();
+                    text_state.font_size = object_to_f64(size).unwrap_or(12.0).abs();
+                }
+            }
+            "Tc" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.char_spacing = value;
+                }
+            }
+            "Tw" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.word_spacing = value;
+                }
+            }
+            "Tz" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.horizontal_scaling = value / 100.0;
+                }
+            }
+            "TL" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.leading = value;
                 }
             }
             "Tm" => {
                 if op.operands.len() >= 6 {
-                    text_matrix = TextMatrix {
+                    let matrix = TextMatrix {
                         a: object_to_f64(&op.operands[0]).unwrap_or(1.0),
                         b: object_to_f64(&op.operands[1]).unwrap_or(0.0),
                         c: object_to_f64(&op.operands[2]).unwrap_or(0.0),
@@ -92,53 +114,63 @@ fn extract_words_from_page(
                         e: object_to_f64(&op.operands[4]).unwrap_or(0.0),
                         f: object_to_f64(&op.operands[5]).unwrap_or(0.0),
                     };
+                    text_matrix = matrix;
+                    line_matrix = matrix;
                 }
             }
             "Td" | "TD" => {
                 if op.operands.len() >= 2 {
                     let tx = object_to_f64(&op.operands[0]).unwrap_or(0.0);
                     let ty = object_to_f64(&op.operands[1]).unwrap_or(0.0);
-                    text_matrix.translate(tx, ty);
+                    if op.operator == "TD" {
+                        text_state.leading = -ty;
+                    }
+                    line_matrix.translate(tx, ty);
+                    text_matrix = line_matrix;
                 }
             }
             "T*" => {
-                text_matrix.translate(0.0, -font_size);
+                line_matrix.translate(0.0, -text_state.leading);
+                text_matrix = line_matrix;
             }
             "Tj" | "TJ" => {
                 if let Some(encoding) = current_encoding {
-                    let text = collect_text_from_operands(encoding, &op.operands);
-                    if !text.is_empty() {
-                        let (x, y) = text_matrix.position();
-                        let width = estimate_text_width(&text, font_size);
-                        words.push(PdfWord {
-                            text,
-                            page: page_num,
-                            x,
-                            y,
-                            width,
-                            height: font_size,
-                        });
-                        text_matrix.translate(width, 0.0);
-                    }
+                    let (x, y) = text_matrix.position();
+                    let advance = push_words_from_operands(
+                        &mut words,
+                        encoding,
+                        &op.operands,
+                        page_num,
+                        x,
+                        y,
+                        text_state,
+                    );
+                    text_matrix.translate(advance, 0.0);
                 }
             }
             "'" | "\"" => {
-                text_matrix.translate(0.0, -font_size);
-                if let Some(encoding) = current_encoding {
-                    let text = collect_text_from_operands(encoding, &op.operands);
-                    if !text.is_empty() {
-                        let (x, y) = text_matrix.position();
-                        let width = estimate_text_width(&text, font_size);
-                        words.push(PdfWord {
-                            text,
-                            page: page_num,
-                            x,
-                            y,
-                            width,
-                            height: font_size,
-                        });
-                        text_matrix.translate(width, 0.0);
+                if op.operator == "\"" && op.operands.len() >= 3 {
+                    if let Some(word_spacing) = op.operands.first().and_then(object_to_f64) {
+                        text_state.word_spacing = word_spacing;
                     }
+                    if let Some(char_spacing) = op.operands.get(1).and_then(object_to_f64) {
+                        text_state.char_spacing = char_spacing;
+                    }
+                }
+                line_matrix.translate(0.0, -text_state.leading);
+                text_matrix = line_matrix;
+                if let Some(encoding) = current_encoding {
+                    let (x, y) = text_matrix.position();
+                    let advance = push_words_from_operands(
+                        &mut words,
+                        encoding,
+                        &op.operands,
+                        page_num,
+                        x,
+                        y,
+                        text_state,
+                    );
+                    text_matrix.translate(advance, 0.0);
                 }
             }
             _ => {}
@@ -148,6 +180,112 @@ fn extract_words_from_page(
     Ok(words)
 }
 
+fn push_words_from_operands(
+    words: &mut Vec<PdfWord>,
+    encoding: &Encoding,
+    operands: &[Object],
+    page: u32,
+    x: f64,
+    y: f64,
+    text_state: TextState,
+) -> f64 {
+    let mut text_run = ExtractedTextRun {
+        words,
+        page,
+        x,
+        y,
+        text_state,
+        current: String::new(),
+        current_x: x,
+        current_width: 0.0,
+        advance: 0.0,
+    };
+
+    for operand in operands {
+        push_words_from_operand(encoding, operand, &mut text_run);
+    }
+
+    text_run.finish_word();
+    text_run.advance
+}
+
+struct ExtractedTextRun<'a> {
+    words: &'a mut Vec<PdfWord>,
+    page: u32,
+    x: f64,
+    y: f64,
+    text_state: TextState,
+    current: String,
+    current_x: f64,
+    current_width: f64,
+    advance: f64,
+}
+
+impl ExtractedTextRun<'_> {
+    fn push_text(&mut self, text: &str) {
+        for ch in text.chars() {
+            self.push_char(ch);
+        }
+    }
+
+    fn push_char(&mut self, ch: char) {
+        if ch.is_whitespace() {
+            self.finish_word();
+        } else {
+            if self.current.is_empty() {
+                self.current_x = self.x + self.advance;
+            }
+            self.current.push(ch);
+            self.current_width += self.text_state.glyph_advance(ch);
+        }
+        self.advance += self.text_state.glyph_advance(ch);
+    }
+
+    fn apply_tj_adjustment(&mut self, value: f64) {
+        if value < -100.0 {
+            self.finish_word();
+        }
+        self.advance += self.text_state.tj_adjustment(value);
+    }
+
+    fn finish_word(&mut self) {
+        if self.current.is_empty() {
+            return;
+        }
+
+        self.words.push(PdfWord {
+            text: std::mem::take(&mut self.current),
+            page: self.page,
+            x: self.current_x,
+            y: self.y,
+            width: self.current_width,
+            height: self.text_state.font_size,
+        });
+        self.current_width = 0.0;
+    }
+}
+
+fn push_words_from_operand(encoding: &Encoding, operand: &Object, text_run: &mut ExtractedTextRun) {
+    match operand {
+        Object::String(bytes, _) => {
+            if let Ok(decoded) = Document::decode_text(encoding, bytes) {
+                text_run.push_text(&decoded);
+            }
+        }
+        Object::Array(items) => {
+            for item in items {
+                match item {
+                    Object::Integer(i) => text_run.apply_tj_adjustment(*i as f64),
+                    Object::Real(r) => text_run.apply_tj_adjustment(*r as f64),
+                    _ => push_words_from_operand(encoding, item, text_run),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[derive(Clone, Copy)]
 struct TextMatrix {
     a: f64,
     b: f64,
@@ -179,46 +317,42 @@ impl TextMatrix {
     }
 }
 
+#[derive(Clone, Copy)]
+struct TextState {
+    font_size: f64,
+    char_spacing: f64,
+    word_spacing: f64,
+    horizontal_scaling: f64,
+    leading: f64,
+}
+
+impl TextState {
+    fn new() -> Self {
+        Self {
+            font_size: 12.0,
+            char_spacing: 0.0,
+            word_spacing: 0.0,
+            horizontal_scaling: 1.0,
+            leading: 0.0,
+        }
+    }
+
+    fn glyph_advance(&self, ch: char) -> f64 {
+        let word_spacing = if ch == ' ' { self.word_spacing } else { 0.0 };
+        (self.font_size * 0.6 + self.char_spacing + word_spacing) * self.horizontal_scaling
+    }
+
+    fn tj_adjustment(&self, value: f64) -> f64 {
+        -(value / 1000.0) * self.font_size * self.horizontal_scaling
+    }
+}
+
 fn object_to_f64(obj: &Object) -> Option<f64> {
     match obj {
         Object::Integer(i) => Some(*i as f64),
         Object::Real(r) => Some(*r as f64),
         _ => None,
     }
-}
-
-fn collect_text_from_operands(encoding: &Encoding, operands: &[Object]) -> String {
-    let mut text = String::new();
-    for op in operands {
-        match op {
-            Object::String(bytes, _) => {
-                if let Ok(decoded) = Document::decode_text(encoding, bytes) {
-                    text.push_str(&decoded);
-                }
-            }
-            Object::Array(arr) => {
-                for item in arr {
-                    match item {
-                        Object::String(bytes, _) => {
-                            if let Ok(decoded) = Document::decode_text(encoding, bytes) {
-                                text.push_str(&decoded);
-                            }
-                        }
-                        Object::Integer(i) if *i < -100 => {
-                            text.push(' ');
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    text.trim().to_string()
-}
-
-fn estimate_text_width(text: &str, font_size: f64) -> f64 {
-    text.chars().count() as f64 * font_size * 0.6
 }
 
 pub fn reconstruct_text(words: &[PdfWord]) -> ReconstructedPdfText {
@@ -603,6 +737,105 @@ mod tests {
         assert!(
             text.contains("john.smith@example.com"),
             "extracted text should contain email"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_words_splits_text_showing_operations_into_words() {
+        let dir = std::env::temp_dir().join("anon-test-pdf-word-split");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let pdf_path = dir.join("test.pdf");
+        create_test_pdf(&pdf_path);
+
+        let words = extract_words(&pdf_path).expect("should extract words from test PDF");
+        let label = words
+            .iter()
+            .find(|word| word.text == "Email:")
+            .expect("label should be its own extracted word");
+        let email = words
+            .iter()
+            .find(|word| word.text == "john.smith@example.com")
+            .expect("email should be its own extracted word");
+
+        assert_eq!(label.page, email.page);
+        assert!(
+            email.x > label.x + label.width,
+            "email should have a tighter box after the label: label={label:?} email={email:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_words_uses_text_leading_for_next_line_operator() {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{Document, Object, Stream, dictionary};
+
+        let dir = std::env::temp_dir().join("anon-test-pdf-leading");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let pdf_path = dir.join("test.pdf");
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Courier",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => font_id,
+            },
+        });
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Td", vec![72.into(), 720.into()]),
+                Operation::new("Tj", vec![Object::string_literal("Header")]),
+                Operation::new("TD", vec![0.into(), (-36).into()]),
+                Operation::new("Tj", vec![Object::string_literal("alice@example.com")]),
+                Operation::new("T*", vec![]),
+                Operation::new("Tj", vec![Object::string_literal("bob@example.com")]),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+        });
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1,
+            "Resources" => resources_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(&pdf_path)
+            .expect("failed to save leading test PDF");
+
+        let words = extract_words(&pdf_path).expect("should extract words from test PDF");
+        let bob = words
+            .iter()
+            .find(|word| word.text == "bob@example.com")
+            .expect("second-line email should be extracted");
+
+        assert!(
+            (bob.y - 648.0).abs() < 0.01,
+            "T* should move by TD-set leading, not font size: {bob:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
