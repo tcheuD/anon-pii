@@ -112,7 +112,7 @@ pub async fn handle_messages(
     // Parse request body as JSON
     let parse_result: Result<serde_json::Value, _> = serde_json::from_slice(&body);
 
-    // For generic mode, non-JSON bodies are passed through without anonymization
+    // Requests must be valid JSON so the proxy can anonymize before forwarding.
     let (anonymized_body, is_streaming) = match parse_result {
         Ok(mut body_json) => {
             let is_streaming = body_json
@@ -148,16 +148,7 @@ pub async fn handle_messages(
             (serialized, is_streaming)
         }
         Err(e) => {
-            // Non-JSON body: only allowed for generic provider
-            if state.provider == Provider::Generic {
-                eprintln!(
-                    "Warning: non-JSON request body passed through without anonymization: {e}"
-                );
-                // Pass through without anonymization, assume non-streaming
-                (body.to_vec(), false)
-            } else {
-                return (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response();
-            }
+            return (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response();
         }
     };
 
@@ -499,6 +490,11 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
         return (StatusCode::FORBIDDEN, "Forbidden: unknown API path").into_response();
     }
 
+    if state.provider == Provider::Generic {
+        let headers = req.headers().clone();
+        return handle_messages(State(state), headers, req).await;
+    }
+
     let headers: HeaderMap = req.headers().clone();
 
     let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
@@ -551,6 +547,30 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
 mod tests {
     use super::*;
     use axum::body::to_bytes;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    async fn spawn_counting_upstream(
+        calls: Arc<AtomicUsize>,
+        captured_body: Arc<tokio::sync::Mutex<Vec<u8>>>,
+    ) -> String {
+        let app = axum::Router::new().fallback(axum::routing::any(move |body: Bytes| {
+            let calls = Arc::clone(&calls);
+            let captured_body = Arc::clone(&captured_body);
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                *captured_body.lock().await = body.to_vec();
+                (StatusCode::OK, r#"{"message":"ok"}"#)
+            }
+        }));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        format!("http://{addr}")
+    }
 
     #[test]
     fn test_allowed_upstream_headers_allowlist() {
@@ -1137,9 +1157,9 @@ mod tests {
         assert!(text.contains("[EMAIL_ADDRESS_"));
     }
 
-    /// Test that generic mode passes through non-JSON request bodies
+    /// Test that generic mode rejects non-JSON request bodies
     #[tokio::test]
-    async fn test_generic_non_json_passthrough() {
+    async fn test_generic_non_json_rejected() {
         let state = Arc::new(ProxyState::new(
             "http://localhost:0".to_string(),
             0.0,
@@ -1157,12 +1177,154 @@ mod tests {
 
         let resp = handle_messages(State(state), HeaderMap::new(), req).await;
 
-        // Should NOT return 400 Bad Request for non-JSON in generic mode
-        // Will return 502 (upstream unreachable), but that's OK for this test
-        assert_ne!(
+        assert_eq!(
             resp.status(),
             StatusCode::BAD_REQUEST,
-            "Generic mode should accept non-JSON bodies"
+            "Generic mode should reject non-JSON bodies"
+        );
+    }
+
+    /// Test that rejected generic non-JSON bodies are not forwarded upstream
+    #[tokio::test]
+    async fn test_generic_non_json_rejected_without_upstream_call() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(ProxyState::new(
+            upstream,
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-non-json-not-forwarded"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/generate")
+            .body(Body::from("plain text with john@example.com"))
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "Rejected generic request must not be forwarded upstream"
+        );
+        assert!(captured_body.lock().await.is_empty());
+    }
+
+    /// Test that valid generic JSON is still anonymized before forwarding
+    #[tokio::test]
+    async fn test_generic_json_forwarded_anonymized() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(ProxyState::new(
+            upstream,
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-json-anonymized"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/generate")
+            .body(Body::from(
+                r#"{"prompt":"Contact john@example.com","stream":false}"#,
+            ))
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let forwarded_body = captured_body.lock().await.clone();
+        let forwarded_json: serde_json::Value = serde_json::from_slice(&forwarded_body).unwrap();
+        let prompt = forwarded_json["prompt"].as_str().unwrap();
+        assert!(
+            prompt.contains("[EMAIL_ADDRESS_"),
+            "Generic JSON should anonymize before forwarding, got: {prompt}"
+        );
+        assert!(
+            !prompt.contains("john@example.com"),
+            "Generic JSON forwarded original PII"
+        );
+    }
+
+    /// Test that generic fallback paths also reject non-JSON bodies
+    #[tokio::test]
+    async fn test_generic_passthrough_non_json_rejected_without_upstream_call() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(ProxyState::new(
+            upstream,
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-passthrough-non-json"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/generate")
+            .body(Body::from("plain text with john@example.com"))
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "Rejected generic fallback request must not be forwarded upstream"
+        );
+        assert!(captured_body.lock().await.is_empty());
+    }
+
+    /// Test that generic fallback paths anonymize valid JSON before forwarding
+    #[tokio::test]
+    async fn test_generic_passthrough_json_forwarded_anonymized() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(ProxyState::new(
+            upstream,
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-passthrough-json"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/generate")
+            .body(Body::from(r#"{"prompt":"Contact john@example.com"}"#))
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let forwarded_body = captured_body.lock().await.clone();
+        let forwarded_json: serde_json::Value = serde_json::from_slice(&forwarded_body).unwrap();
+        let prompt = forwarded_json["prompt"].as_str().unwrap();
+        assert!(
+            prompt.contains("[EMAIL_ADDRESS_"),
+            "Generic fallback JSON should anonymize before forwarding, got: {prompt}"
+        );
+        assert!(
+            !prompt.contains("john@example.com"),
+            "Generic fallback forwarded original PII"
         );
     }
 
@@ -1758,9 +1920,9 @@ mod tests {
         );
     }
 
-    /// Test empty body handling for Generic provider (should pass through)
+    /// Test empty body handling for Generic provider
     #[tokio::test]
-    async fn test_generic_empty_body_passes_through() {
+    async fn test_generic_empty_body_returns_error() {
         let state = Arc::new(ProxyState::new(
             "http://localhost:0".to_string(),
             0.0,
@@ -1776,12 +1938,35 @@ mod tests {
 
         let resp = handle_messages(State(state), HeaderMap::new(), req).await;
 
-        // Generic provider should pass through empty bodies (will fail at upstream connect)
-        // NOT return 400 Bad Request
-        assert_ne!(
+        assert_eq!(
             resp.status(),
             StatusCode::BAD_REQUEST,
-            "Generic: empty body should NOT return 400 (upstream may be unreachable though)"
+            "Generic: empty body should return 400 Bad Request"
+        );
+    }
+
+    /// Test malformed JSON handling for Generic provider
+    #[tokio::test]
+    async fn test_generic_malformed_json_returns_error() {
+        let state = Arc::new(ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-malformed-json"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/generate")
+            .body(Body::from(r#"{"prompt": "unterminated""#))
+            .unwrap();
+
+        let resp = handle_messages(State(state), HeaderMap::new(), req).await;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "Generic: malformed JSON should return 400 Bad Request"
         );
     }
 
