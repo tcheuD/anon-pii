@@ -461,8 +461,49 @@ fn allowed_passthrough_prefixes_for_provider(provider: Provider) -> &'static [&'
     }
 }
 
-/// Passthrough handler for any non-/v1/messages paths.
-/// Forwards the request to known API paths without anonymization.
+fn generic_method_requires_json_body(method: &axum::http::Method) -> bool {
+    method == axum::http::Method::POST
+        || method == axum::http::Method::PUT
+        || method == axum::http::Method::PATCH
+}
+
+async fn prepare_generic_passthrough_body(
+    state: &Arc<ProxyState>,
+    method: &axum::http::Method,
+    body_bytes: &[u8],
+) -> Result<(Option<Vec<u8>>, bool), Response> {
+    if body_bytes.is_empty() {
+        if generic_method_requires_json_body(method) {
+            return Err((StatusCode::BAD_REQUEST, "Invalid JSON: empty body").into_response());
+        }
+        return Ok((None, false));
+    }
+
+    let mut body_json: serde_json::Value = serde_json::from_slice(body_bytes)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response())?;
+
+    let is_streaming = body_json
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    {
+        let mut anonymizer = state.anonymizer.lock().await;
+        generic::anonymize_request(&mut body_json, &mut anonymizer);
+    }
+
+    let serialized = serde_json::to_vec(&body_json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Serialization error: {e}"),
+        )
+            .into_response()
+    })?;
+
+    Ok((Some(serialized), is_streaming))
+}
+
+/// Passthrough handler for provider-specific fallback paths.
 /// Rejects requests to unrecognized paths to prevent SSRF.
 pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body>) -> Response {
     let method = req.method().clone();
@@ -490,11 +531,6 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
         return (StatusCode::FORBIDDEN, "Forbidden: unknown API path").into_response();
     }
 
-    if state.provider == Provider::Generic {
-        let headers = req.headers().clone();
-        return handle_messages(State(state), headers, req).await;
-    }
-
     let headers: HeaderMap = req.headers().clone();
 
     let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
@@ -505,6 +541,7 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
     };
 
     let upstream_url = format!("{}{}", state.upstream, path);
+    let provider = state.provider;
 
     let mut upstream_req = state.client.request(
         reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::GET),
@@ -514,9 +551,22 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
     // Forward only allowlisted headers
     upstream_req = filter_headers_for_upstream(&headers, upstream_req, state.provider);
 
-    if !body_bytes.is_empty() {
-        upstream_req = upstream_req.body(body_bytes.to_vec());
-    }
+    let is_streaming = if provider == Provider::Generic {
+        let (body, is_streaming) =
+            match prepare_generic_passthrough_body(&state, &method, &body_bytes).await {
+                Ok(prepared) => prepared,
+                Err(response) => return response,
+            };
+        if let Some(body) = body {
+            upstream_req = upstream_req.body(body);
+        }
+        is_streaming
+    } else {
+        if !body_bytes.is_empty() {
+            upstream_req = upstream_req.body(body_bytes.to_vec());
+        }
+        false
+    };
 
     let upstream_resp = match upstream_req.send().await {
         Ok(r) => r,
@@ -528,6 +578,14 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
 
     let status = upstream_resp.status();
     let resp_headers = upstream_resp.headers().clone();
+
+    if provider == Provider::Generic {
+        if is_streaming && status.is_success() {
+            return handle_streaming(state, upstream_resp, status, resp_headers).await;
+        }
+        return handle_non_streaming(state, upstream_resp, status, resp_headers).await;
+    }
+
     let resp_body = upstream_resp.bytes().await.unwrap_or_default();
 
     let mut response = Response::builder().status(status.as_u16());
@@ -553,15 +611,32 @@ mod tests {
         calls: Arc<AtomicUsize>,
         captured_body: Arc<tokio::sync::Mutex<Vec<u8>>>,
     ) -> String {
-        let app = axum::Router::new().fallback(axum::routing::any(move |body: Bytes| {
-            let calls = Arc::clone(&calls);
-            let captured_body = Arc::clone(&captured_body);
-            async move {
-                calls.fetch_add(1, Ordering::SeqCst);
-                *captured_body.lock().await = body.to_vec();
-                (StatusCode::OK, r#"{"message":"ok"}"#)
-            }
-        }));
+        spawn_recording_upstream(
+            calls,
+            captured_body,
+            Arc::new(tokio::sync::Mutex::new(None)),
+        )
+        .await
+    }
+
+    async fn spawn_recording_upstream(
+        calls: Arc<AtomicUsize>,
+        captured_body: Arc<tokio::sync::Mutex<Vec<u8>>>,
+        captured_method: Arc<tokio::sync::Mutex<Option<String>>>,
+    ) -> String {
+        let app = axum::Router::new().fallback(axum::routing::any(
+            move |method: axum::http::Method, body: Bytes| {
+                let calls = Arc::clone(&calls);
+                let captured_body = Arc::clone(&captured_body);
+                let captured_method = Arc::clone(&captured_method);
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    *captured_method.lock().await = Some(method.as_str().to_string());
+                    *captured_body.lock().await = body.to_vec();
+                    (StatusCode::OK, r#"{"message":"ok"}"#)
+                }
+            },
+        ));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1294,8 +1369,13 @@ mod tests {
     async fn test_generic_passthrough_json_forwarded_anonymized() {
         let calls = Arc::new(AtomicUsize::new(0));
         let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let upstream =
-            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+        let captured_method = Arc::new(tokio::sync::Mutex::new(None));
+        let upstream = spawn_recording_upstream(
+            Arc::clone(&calls),
+            Arc::clone(&captured_body),
+            Arc::clone(&captured_method),
+        )
+        .await;
 
         let state = Arc::new(ProxyState::new(
             upstream,
@@ -1305,7 +1385,7 @@ mod tests {
         ));
 
         let req = Request::builder()
-            .method("POST")
+            .method("PATCH")
             .uri("/api/generate")
             .body(Body::from(r#"{"prompt":"Contact john@example.com"}"#))
             .unwrap();
@@ -1314,6 +1394,7 @@ mod tests {
 
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(captured_method.lock().await.as_deref(), Some("PATCH"));
 
         let forwarded_body = captured_body.lock().await.clone();
         let forwarded_json: serde_json::Value = serde_json::from_slice(&forwarded_body).unwrap();
@@ -1326,6 +1407,68 @@ mod tests {
             !prompt.contains("john@example.com"),
             "Generic fallback forwarded original PII"
         );
+    }
+
+    /// Test that generic fallback paths preserve empty-body methods
+    #[tokio::test]
+    async fn test_generic_passthrough_get_empty_body_preserves_method() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let captured_method = Arc::new(tokio::sync::Mutex::new(None));
+        let upstream = spawn_recording_upstream(
+            Arc::clone(&calls),
+            Arc::clone(&captured_body),
+            Arc::clone(&captured_method),
+        )
+        .await;
+
+        let state = Arc::new(ProxyState::new(
+            upstream,
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-passthrough-get"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/tags")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(captured_method.lock().await.as_deref(), Some("GET"));
+        assert!(captured_body.lock().await.is_empty());
+    }
+
+    /// Test that generic fallback payload methods still reject empty bodies
+    #[tokio::test]
+    async fn test_generic_passthrough_post_empty_body_rejected() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(ProxyState::new(
+            upstream,
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-passthrough-post-empty"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/generate")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(captured_body.lock().await.is_empty());
     }
 
     /// Test that non-generic providers reject non-JSON request bodies
