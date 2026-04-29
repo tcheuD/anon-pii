@@ -261,6 +261,10 @@ pub enum Commands {
         /// UNSAFE: allow generic-provider fallback forwarding for any path
         #[arg(long)]
         unsafe_generic_allow_all_paths: bool,
+
+        /// Forward Anthropic/OpenAI provider-specific headers in generic mode
+        #[arg(long)]
+        generic_forward_provider_headers: bool,
     },
 }
 

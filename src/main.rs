@@ -682,6 +682,7 @@ fn main() -> io::Result<()> {
             provider,
             generic_allow_path_prefixes,
             unsafe_generic_allow_all_paths,
+            generic_forward_provider_headers,
         }) => {
             let session_dir = match session_dir {
                 Some(dir) => {
@@ -708,6 +709,11 @@ fn main() -> io::Result<()> {
             {
                 eprintln!("Warning: generic passthrough path options require --provider generic");
             }
+            if provider != proxy::Provider::Generic && generic_forward_provider_headers {
+                eprintln!(
+                    "Warning: --generic-forward-provider-headers requires --provider generic"
+                );
+            }
 
             let mut proxy_state =
                 proxy::ProxyState::new(upstream, threshold, session_dir, provider)
@@ -716,6 +722,8 @@ fn main() -> io::Result<()> {
             if provider == proxy::Provider::Generic {
                 proxy_state =
                     proxy_state.with_unsafe_generic_allow_all_paths(unsafe_generic_allow_all_paths);
+                proxy_state = proxy_state
+                    .with_generic_provider_header_forwarding(generic_forward_provider_headers);
 
                 if generic_path_prefixes_configured {
                     proxy_state = proxy_state
