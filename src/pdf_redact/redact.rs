@@ -279,6 +279,7 @@ struct TextState {
     char_spacing: f64,
     word_spacing: f64,
     horizontal_scaling: f64,
+    leading: f64,
 }
 
 impl TextState {
@@ -288,6 +289,7 @@ impl TextState {
             char_spacing: 0.0,
             word_spacing: 0.0,
             horizontal_scaling: 1.0,
+            leading: 0.0,
         }
     }
 
@@ -538,6 +540,11 @@ fn rewrite_page_text_operands(
                     text_state.horizontal_scaling = value / 100.0;
                 }
             }
+            "TL" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.leading = value;
+                }
+            }
             "Tm" => {
                 if op.operands.len() >= 6 {
                     let matrix = TextMatrix {
@@ -556,12 +563,15 @@ fn rewrite_page_text_operands(
                 if op.operands.len() >= 2 {
                     let tx = object_to_f64(&op.operands[0]).unwrap_or(0.0);
                     let ty = object_to_f64(&op.operands[1]).unwrap_or(0.0);
+                    if op.operator == "TD" {
+                        text_state.leading = -ty;
+                    }
                     line_matrix.translate(tx, ty);
                     text_matrix = line_matrix;
                 }
             }
             "T*" => {
-                line_matrix.translate(0.0, -text_state.font_size);
+                line_matrix.translate(0.0, -text_state.leading);
                 text_matrix = line_matrix;
             }
             "Tj" | "TJ" => {
@@ -587,7 +597,7 @@ fn rewrite_page_text_operands(
                         text_state.char_spacing = char_spacing;
                     }
                 }
-                line_matrix.translate(0.0, -text_state.font_size);
+                line_matrix.translate(0.0, -text_state.leading);
                 text_matrix = line_matrix;
                 if let Some(encoding) = current_encoding {
                     let result = redact_text_showing_operation(
@@ -1539,6 +1549,84 @@ mod tests {
         assert!(
             !text_operands.contains("bob@example.com"),
             "later text runs should be matched after applying Tc/Tw/Tz/TJ displacement: {text_operands}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_uses_text_leading_for_next_line_operator() {
+        let dir = test_dir("text_leading");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Courier",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => font_id,
+            },
+        });
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Td", vec![72.into(), 720.into()]),
+                Operation::new("Tj", vec![Object::string_literal("Header")]),
+                Operation::new("TD", vec![0.into(), (-36).into()]),
+                Operation::new("Tj", vec![Object::string_literal("alice@example.com")]),
+                Operation::new("T*", vec![]),
+                Operation::new("Tj", vec![Object::string_literal("bob@example.com")]),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+        });
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1,
+            "Resources" => resources_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(&input).expect("failed to save leading test PDF");
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 70.0,
+            y: 644.0,
+            width: 125.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let redacted_doc = Document::load(&output).unwrap();
+        let pages = redacted_doc.get_pages();
+        let page1_id = pages.get(&1).unwrap();
+        let content_data = redacted_doc.get_page_content(*page1_id).unwrap();
+        let content = Content::decode(&content_data).unwrap();
+        let text_operands = content_text_operands(&content);
+
+        assert!(
+            !text_operands.contains("bob@example.com"),
+            "T* should redact using TD-set leading, not font size: {text_operands}"
         );
 
         let _ = fs::remove_dir_all(&dir);
