@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lopdf::content::{Content, Operation};
-use lopdf::{Document, Encoding, Object, Stream, dictionary};
+use lopdf::{Dictionary, Document, Encoding, Object, Stream, dictionary};
 
 use super::{PdfError, RedactionRegion};
 use crate::patterns::MAX_INPUT_SIZE;
@@ -100,138 +100,50 @@ pub fn parse_fill_color(color: &str) -> Result<(f64, f64, f64), RedactError> {
     }
 }
 
-/// Check if two rectangles overlap.
-/// PDF annotation Rect is [llx, lly, urx, ury] (lower-left x/y, upper-right x/y).
-/// RedactionRegion uses x, y, width, height where (x, y) is lower-left corner.
-fn rects_overlap(
-    annot_rect: &[Object],
-    region_x: f64,
-    region_y: f64,
-    region_width: f64,
-    region_height: f64,
-) -> bool {
-    if annot_rect.len() < 4 {
-        return false;
+const HIDDEN_PDF_DATA_KEYS: &[&[u8]] = &[
+    b"Metadata",
+    b"Annots",
+    b"Names",
+    b"Dests",
+    b"EmbeddedFiles",
+    b"AcroForm",
+    b"Fields",
+    b"Outlines",
+    b"OpenAction",
+    b"AA",
+    b"AF",
+];
+
+fn scrub_hidden_pdf_data(doc: &mut Document) {
+    doc.trailer.remove(b"Info");
+    doc.bookmarks.clear();
+    doc.bookmark_table.clear();
+
+    scrub_hidden_pdf_data_from_dictionary(&mut doc.trailer);
+    for object in doc.objects.values_mut() {
+        scrub_hidden_pdf_data_from_object(object);
     }
-
-    let extract_f64 = |obj: &Object| -> Option<f64> {
-        match obj {
-            Object::Integer(i) => Some(*i as f64),
-            Object::Real(r) => Some(*r as f64),
-            _ => None,
-        }
-    };
-
-    let Some(llx) = extract_f64(&annot_rect[0]) else {
-        return false;
-    };
-    let Some(lly) = extract_f64(&annot_rect[1]) else {
-        return false;
-    };
-    let Some(urx) = extract_f64(&annot_rect[2]) else {
-        return false;
-    };
-    let Some(ury) = extract_f64(&annot_rect[3]) else {
-        return false;
-    };
-
-    // Redaction region bounds
-    let r_llx = region_x;
-    let r_lly = region_y;
-    let r_urx = region_x + region_width;
-    let r_ury = region_y + region_height;
-
-    // Two rectangles overlap if they intersect in both dimensions
-    let x_overlap = llx < r_urx && urx > r_llx;
-    let y_overlap = lly < r_ury && ury > r_lly;
-
-    x_overlap && y_overlap
 }
 
-/// Remove annotations from a page that overlap with any of the given redaction regions.
-fn remove_overlapping_annotations(
-    doc: &mut Document,
-    page_id: (u32, u16),
-    regions: &[&RedactionRegion],
-) {
-    // Get the page dictionary
-    let Ok(Object::Dictionary(page_dict)) = doc.get_object(page_id) else {
-        return;
-    };
-
-    // Get the Annots array (can be direct or a reference)
-    let Ok(annots_obj) = page_dict.get(b"Annots") else {
-        return; // No annotations on this page
-    };
-
-    // Get the actual array of annotation references
-    let annot_refs: Vec<Object> = match annots_obj {
-        Object::Array(arr) => arr.clone(),
-        Object::Reference(r) => {
-            let Ok(Object::Array(arr)) = doc.get_object((r.0, r.1)) else {
-                return;
-            };
-            arr.clone()
-        }
-        _ => return,
-    };
-
-    // Filter out annotations that overlap with any redaction region
-    let mut kept_annots: Vec<Object> = Vec::new();
-
-    for annot_ref in &annot_refs {
-        let Object::Reference(ref_id) = annot_ref else {
-            // Keep non-reference items as-is (unusual but possible)
-            kept_annots.push(annot_ref.clone());
-            continue;
-        };
-
-        // Get the annotation dictionary
-        let Ok(Object::Dictionary(annot_dict)) = doc.get_object((ref_id.0, ref_id.1)) else {
-            kept_annots.push(annot_ref.clone());
-            continue;
-        };
-
-        // Get the annotation's Rect
-        let Ok(rect_obj) = annot_dict.get(b"Rect") else {
-            kept_annots.push(annot_ref.clone());
-            continue;
-        };
-
-        let rect: &[Object] = match rect_obj {
-            Object::Array(arr) => arr,
-            Object::Reference(r) => {
-                let Ok(Object::Array(arr)) = doc.get_object((r.0, r.1)) else {
-                    kept_annots.push(annot_ref.clone());
-                    continue;
-                };
-                arr
+fn scrub_hidden_pdf_data_from_object(object: &mut Object) {
+    match object {
+        Object::Array(items) => {
+            for item in items {
+                scrub_hidden_pdf_data_from_object(item);
             }
-            _ => {
-                kept_annots.push(annot_ref.clone());
-                continue;
-            }
-        };
-
-        // Check if this annotation overlaps with any redaction region
-        let overlaps = regions
-            .iter()
-            .any(|region| rects_overlap(rect, region.x, region.y, region.width, region.height));
-
-        if !overlaps {
-            kept_annots.push(annot_ref.clone());
         }
-        // If overlaps, we drop the annotation by not adding it to kept_annots
+        Object::Dictionary(dict) => scrub_hidden_pdf_data_from_dictionary(dict),
+        Object::Stream(stream) => scrub_hidden_pdf_data_from_dictionary(&mut stream.dict),
+        _ => {}
     }
+}
 
-    // Update the page's Annots array
-    if let Ok(Object::Dictionary(page_dict_mut)) = doc.get_object_mut(page_id) {
-        if kept_annots.is_empty() {
-            // Remove the Annots key entirely if no annotations remain
-            page_dict_mut.remove(b"Annots");
-        } else {
-            page_dict_mut.set("Annots", Object::Array(kept_annots));
-        }
+fn scrub_hidden_pdf_data_from_dictionary(dict: &mut Dictionary) {
+    for key in HIDDEN_PDF_DATA_KEYS {
+        dict.remove(key);
+    }
+    for (_, value) in dict.iter_mut() {
+        scrub_hidden_pdf_data_from_object(value);
     }
 }
 
@@ -656,8 +568,8 @@ fn append_visual_mask_operations(
 /// Destructively redact supported text regions of a PDF and draw opaque rectangles over them.
 ///
 /// Opens the input PDF, draws filled rectangles over each region on the
-/// appropriate page, removes overlapping annotations, and saves to the output
-/// path. Preserves the original layout, page count, and non-PII content.
+/// appropriate page, scrubs hidden PDF data, and saves to the output path.
+/// Preserves the original layout, page count, and non-PII page content.
 pub fn redact_pdf(
     input: &Path,
     output: &Path,
@@ -784,9 +696,6 @@ fn redact_pdf_with_mode(
         if let Ok(Object::Dictionary(page_dict)) = doc.get_object_mut(page_id) {
             page_dict.set("Contents", Object::Reference(new_content_id));
         }
-
-        // Remove annotations that overlap with masked regions
-        remove_overlapping_annotations(&mut doc, page_id, &page_region_refs);
     }
 
     if mode == PdfRedactionMode::Destructive {
@@ -802,6 +711,9 @@ fn redact_pdf_with_mode(
             });
         }
     }
+
+    scrub_hidden_pdf_data(&mut doc);
+    doc.prune_objects();
 
     // Save the modified PDF
     doc.save(output).map_err(|e| RedactError::PdfSave {
@@ -1041,6 +953,135 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    fn add_hidden_metadata(path: &Path) {
+        let mut doc = Document::load(path).expect("failed to reopen test PDF");
+
+        let info_id = doc.add_object(dictionary! {
+            "Title" => Object::string_literal("Case hidden.metadata@example.com"),
+            "Author" => Object::string_literal("hidden.metadata@example.com"),
+        });
+        doc.trailer.set("Info", info_id);
+
+        let metadata_id = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "Metadata",
+                "Subtype" => "XML",
+            },
+            b"<x:xmpmeta>hidden.metadata@example.com</x:xmpmeta>".to_vec(),
+        ));
+
+        let root_id = doc
+            .trailer
+            .get(b"Root")
+            .expect("test PDF should have catalog")
+            .as_reference()
+            .expect("catalog should be an indirect reference");
+        let root = doc
+            .get_object_mut(root_id)
+            .expect("catalog should exist")
+            .as_dict_mut()
+            .expect("catalog should be a dictionary");
+        root.set("Metadata", metadata_id);
+
+        doc.save(path).expect("failed to save metadata test PDF");
+    }
+
+    fn add_hidden_catalog_structures(path: &Path) {
+        let mut doc = Document::load(path).expect("failed to reopen test PDF");
+
+        let embedded_file_id = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "EmbeddedFile",
+            },
+            b"hidden.attachment@example.com".to_vec(),
+        ));
+        let file_spec_id = doc.add_object(dictionary! {
+            "Type" => "Filespec",
+            "F" => Object::string_literal("hidden.attachment@example.com"),
+            "EF" => dictionary! {
+                "F" => embedded_file_id,
+            },
+        });
+        let field_id = doc.add_object(dictionary! {
+            "T" => Object::string_literal("hidden.form@example.com"),
+            "V" => Object::string_literal("hidden.form@example.com"),
+        });
+        let acro_form_id = doc.add_object(dictionary! {
+            "Fields" => vec![Object::Reference(field_id)],
+        });
+        let outlines_id = doc.add_object(dictionary! {
+            "Title" => Object::string_literal("hidden.bookmark@example.com"),
+        });
+        let names_id = doc.add_object(dictionary! {
+            "EmbeddedFiles" => dictionary! {
+                "Names" => vec![
+                    Object::string_literal("hidden.attachment@example.com"),
+                    Object::Reference(file_spec_id),
+                ],
+            },
+            "Dests" => dictionary! {
+                "Names" => vec![
+                    Object::string_literal("hidden.dest@example.com"),
+                    Object::string_literal("hidden.dest@example.com"),
+                ],
+            },
+            "JavaScript" => dictionary! {
+                "Names" => vec![
+                    Object::string_literal("hidden.action@example.com"),
+                    Object::Dictionary(dictionary! {
+                        "S" => "JavaScript",
+                        "JS" => Object::string_literal("hidden.action@example.com"),
+                    }),
+                ],
+            },
+        });
+
+        let root_id = doc
+            .trailer
+            .get(b"Root")
+            .expect("test PDF should have catalog")
+            .as_reference()
+            .expect("catalog should be an indirect reference");
+        let root = doc
+            .get_object_mut(root_id)
+            .expect("catalog should exist")
+            .as_dict_mut()
+            .expect("catalog should be a dictionary");
+        root.set("Names", names_id);
+        root.set(
+            "Dests",
+            dictionary! {
+                "Legacy" => Object::string_literal("hidden.dest@example.com"),
+            },
+        );
+        root.set("AcroForm", acro_form_id);
+        root.set("Outlines", outlines_id);
+        root.set(
+            "OpenAction",
+            dictionary! {
+                "S" => "URI",
+                "URI" => Object::string_literal("mailto:hidden.action@example.com"),
+            },
+        );
+        root.set(
+            "AA",
+            dictionary! {
+                "WC" => dictionary! {
+                    "S" => "JavaScript",
+                    "JS" => Object::string_literal("hidden.action@example.com"),
+                },
+            },
+        );
+        root.set("AF", vec![Object::Reference(file_spec_id)]);
+
+        doc.save(path)
+            .expect("failed to save hidden catalog structures test PDF");
+    }
+
+    fn output_text(path: &Path) -> String {
+        String::from_utf8_lossy(&fs::read(path).expect("failed to read output PDF")).into_owned()
     }
 
     // ---------------------------------------------------------------------------
@@ -1395,9 +1436,126 @@ mod tests {
             "PII should not remain in decoded PDF text operands: {text_operands}"
         );
         assert!(
+            !output_text(&output).contains("john.smith@example.com"),
+            "PII should not remain in orphaned original content streams"
+        );
+        assert!(
             content.operations.iter().any(|op| op.operator == "re"),
             "visual masking rectangles should still be drawn"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_scrubs_document_info_and_xmp_metadata() {
+        let dir = test_dir("hidden_metadata_scrub");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf(&input);
+        add_hidden_metadata(&input);
+
+        assert!(
+            output_text(&input).contains("hidden.metadata@example.com"),
+            "test input should contain hidden metadata PII"
+        );
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 70.0,
+            y: 696.0,
+            width: 230.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let output_doc = Document::load(&output).unwrap();
+        assert!(
+            output_doc.trailer.get(b"Info").is_err(),
+            "document info metadata should be stripped"
+        );
+        let root_id = output_doc
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let root = output_doc.get_object(root_id).unwrap().as_dict().unwrap();
+        assert!(
+            root.get(b"Metadata").is_err(),
+            "catalog XMP metadata should be stripped"
+        );
+        assert!(
+            !output_text(&output).contains("hidden.metadata@example.com"),
+            "hidden metadata PII should not remain anywhere in the saved PDF"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_scrubs_hidden_catalog_structures() {
+        let dir = test_dir("hidden_catalog_scrub");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf(&input);
+        add_hidden_catalog_structures(&input);
+
+        let hidden_values = [
+            "hidden.attachment@example.com",
+            "hidden.form@example.com",
+            "hidden.bookmark@example.com",
+            "hidden.dest@example.com",
+            "hidden.action@example.com",
+        ];
+        let input_text = output_text(&input);
+        for value in hidden_values {
+            assert!(
+                input_text.contains(value),
+                "test input should contain hidden catalog PII: {value}"
+            );
+        }
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 70.0,
+            y: 696.0,
+            width: 230.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let output_doc = Document::load(&output).unwrap();
+        let root_id = output_doc
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let root = output_doc.get_object(root_id).unwrap().as_dict().unwrap();
+        for key in [
+            b"Names".as_slice(),
+            b"Dests",
+            b"AcroForm",
+            b"Outlines",
+            b"OpenAction",
+            b"AA",
+            b"AF",
+        ] {
+            assert!(root.get(key).is_err(), "catalog key should be stripped");
+        }
+
+        let output_text = output_text(&output);
+        for value in hidden_values {
+            assert!(
+                !output_text.contains(value),
+                "hidden catalog PII should not remain in output PDF: {value}"
+            );
+        }
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1926,7 +2084,7 @@ mod tests {
             "Rect" => vec![72.into(), 580.into(), 200.into(), 610.into()],
             "A" => dictionary! {
                 "S" => "URI",
-                "URI" => Object::string_literal("https://docs.example.com"),
+                "URI" => Object::string_literal("mailto:hidden.annotation@example.com"),
             },
         });
 
@@ -2057,8 +2215,8 @@ mod tests {
     }
 
     #[test]
-    fn redact_preserves_non_overlapping_annotations() {
-        let dir = test_dir("preserve_non_overlapping");
+    fn redact_removes_non_overlapping_annotations() {
+        let dir = test_dir("remove_non_overlapping");
         let input = dir.join("input.pdf");
         let output = dir.join("output.pdf");
         create_test_pdf_with_multiple_annotations(&input);
@@ -2071,7 +2229,7 @@ mod tests {
             "input should have 2 annotations"
         );
 
-        // Redact only the email region (overlaps annot1, not annot2)
+        // Redact only the email region; annotation cleanup is page-wide.
         let regions = vec![RedactionRegion {
             page: 1,
             x: 122.0,
@@ -2083,12 +2241,48 @@ mod tests {
 
         redact_pdf(&input, &output, &regions, "black").unwrap();
 
-        // Verify output has exactly 1 annotation (annot2 preserved)
         let output_doc = Document::load(&output).unwrap();
         assert_eq!(
             count_page_annotations(&output_doc, 1),
-            1,
-            "output should preserve the non-overlapping annotation"
+            0,
+            "output should remove non-overlapping annotations too"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_removes_non_overlapping_annotation_pii_on_redacted_page() {
+        let dir = test_dir("redacted_page_annotation_scrub");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf_with_multiple_annotations(&input);
+
+        assert!(
+            output_text(&input).contains("hidden.annotation@example.com"),
+            "test input should contain hidden annotation PII"
+        );
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 122.0,
+            y: 696.0,
+            width: 120.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let output_doc = Document::load(&output).unwrap();
+        assert_eq!(
+            count_page_annotations(&output_doc, 1),
+            0,
+            "all annotations on redacted pages should be removed"
+        );
+        assert!(
+            !output_text(&output).contains("hidden.annotation@example.com"),
+            "annotation PII should not remain anywhere in the saved PDF"
         );
 
         let _ = fs::remove_dir_all(&dir);
@@ -2127,8 +2321,8 @@ mod tests {
     }
 
     #[test]
-    fn redact_no_overlap_preserves_annotation() {
-        let dir = test_dir("no_overlap_preserve");
+    fn redact_no_overlap_still_removes_annotation() {
+        let dir = test_dir("no_overlap_remove");
         let input = dir.join("input.pdf");
         let output = dir.join("output.pdf");
         create_test_pdf_with_mailto_link(&input);
@@ -2147,12 +2341,11 @@ mod tests {
 
         visual_mask_pdf(&input, &output, &regions, "black").unwrap();
 
-        // Annotation should be preserved
         let output_doc = Document::load(&output).unwrap();
         assert_eq!(
             count_page_annotations(&output_doc, 1),
-            1,
-            "non-overlapping redaction should preserve annotation"
+            0,
+            "annotation scrub should not depend on rectangle overlap"
         );
 
         let _ = fs::remove_dir_all(&dir);
