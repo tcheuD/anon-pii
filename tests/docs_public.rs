@@ -333,16 +333,27 @@ fn public_pdf_docs_describe_destructive_redaction_default() {
         "PDF guide should warn that visual masking remains extractable"
     );
 
-    for required_limit in [
-        "OCR layers",
-        "metadata",
-        "attachments",
-        "annotations",
-        "fail closed",
-    ] {
+    for required_limit in ["OCR layers", "raster images", "fail closed"] {
         assert!(
             pdf_guide.contains(required_limit),
             "PDF guide should explicitly document limitation: {required_limit}"
+        );
+    }
+
+    for required_scrub in [
+        "Document info metadata",
+        "XMP metadata",
+        "Embedded files",
+        "file attachment annotations",
+        "Form fields",
+        "Outlines/bookmarks",
+        "named destinations",
+        "interactive actions",
+        "All page annotations",
+    ] {
+        assert!(
+            pdf_guide.contains(required_scrub),
+            "PDF guide should explicitly document hidden PDF scrub: {required_scrub}"
         );
     }
 

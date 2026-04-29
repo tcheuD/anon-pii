@@ -54,6 +54,23 @@ anon-pii pdf report.pdf -o report-masked.pdf --visual-mask-only
 | `--padding` | `2` | Extra points around each detected region |
 | `--visual-mask-only` | `false` | Draw overlays without rewriting PDF text streams |
 
+## Hidden Data Scrubbing
+
+Every PDF output is saved as a newly written file after stripping hidden data
+structures that can carry PII outside visible page text:
+
+- Document info metadata and catalog XMP metadata.
+- Embedded files, associated file arrays, and file attachment annotations.
+- Form fields and AcroForm data.
+- Outlines/bookmarks and named destinations.
+- Catalog/page interactive actions, additional actions, JavaScript name trees,
+  and related named action containers.
+- All page annotations, including links, comments, widgets, and attachments.
+
+Disconnected objects are pruned before saving so removed metadata, annotations,
+attachments, and original replaced content streams are not serialized as orphan
+objects in the output PDF.
+
 ## Limitations
 
 - Works best on PDFs with extractable text.
@@ -62,7 +79,6 @@ anon-pii pdf report.pdf -o report-masked.pdf --visual-mask-only
 - Unsupported mappings fail closed unless `--visual-mask-only` is selected.
 - Visual masking mode is region-based: visually inspect output before sharing.
 - In visual masking mode, underlying PDF text/content may remain extractable.
-- OCR layers, metadata, attachments, non-overlapping annotations, form fields,
-  outlines/bookmarks, actions, and embedded files may retain original PII.
-- Links and annotations that overlap masked regions are removed or neutralized
-  where the current implementation can identify them.
+- OCR layers, raster images, embedded fonts, and non-text page resources remain
+  unsupported unless their visible text is extractable and mapped to redaction
+  regions.

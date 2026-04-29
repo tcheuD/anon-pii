@@ -293,7 +293,10 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
   PDF redaction rewrites supported text drawing operands and fails closed when
   detected spans cannot be mapped, unless `--visual-mask-only` is selected.
   Visual masking is overlay-only; underlying PDF text/content may remain
-  extractable after sharing.
+  extractable after sharing. PDF outputs strip hidden metadata, annotations,
+  attachments, form fields, outlines/bookmarks, named destinations, and
+  interactive actions, but OCR layers, raster images, embedded fonts, and other
+  non-text page resources remain unsupported.
 - Proxy mode trusts local callers on the same machine. Do not expose it on a
   network interface.
 - Custom recognizers can introduce catastrophic false positives or false
