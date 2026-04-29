@@ -253,6 +253,14 @@ pub enum Commands {
         /// API provider (anthropic, openai, generic)
         #[arg(long, default_value = "anthropic")]
         provider: String,
+
+        /// Allow a generic-provider fallback path prefix (repeatable)
+        #[arg(long = "generic-allow-path-prefix", value_name = "PREFIX")]
+        generic_allow_path_prefixes: Vec<String>,
+
+        /// UNSAFE: allow generic-provider fallback forwarding for any path
+        #[arg(long)]
+        unsafe_generic_allow_all_paths: bool,
     },
 }
 

@@ -79,6 +79,62 @@ fn proxy_persistence_flag_is_opt_in() {
 }
 
 #[test]
+fn proxy_generic_path_options_are_opt_in() {
+    let cli = Cli::parse_from(["anon-pii", "proxy", "--provider", "generic"]);
+    match cli.command {
+        Some(Commands::Proxy {
+            generic_allow_path_prefixes,
+            unsafe_generic_allow_all_paths,
+            ..
+        }) => {
+            assert!(generic_allow_path_prefixes.is_empty());
+            assert!(!unsafe_generic_allow_all_paths);
+        }
+        _ => panic!("expected proxy command"),
+    }
+
+    let cli = Cli::parse_from([
+        "anon-pii",
+        "proxy",
+        "--provider",
+        "generic",
+        "--generic-allow-path-prefix",
+        "/api/",
+        "--generic-allow-path-prefix",
+        "/ollama",
+        "--unsafe-generic-allow-all-paths",
+    ]);
+    match cli.command {
+        Some(Commands::Proxy {
+            generic_allow_path_prefixes,
+            unsafe_generic_allow_all_paths,
+            ..
+        }) => {
+            assert_eq!(generic_allow_path_prefixes, ["/api/", "/ollama"]);
+            assert!(unsafe_generic_allow_all_paths);
+        }
+        _ => panic!("expected proxy command"),
+    }
+}
+
+#[test]
+fn proxy_generic_path_prefixes_reject_all_path_and_traversal_values() {
+    let dir = tempfile::tempdir().unwrap();
+
+    for prefix in ["/", "/api/../admin", "/api/%2e%2e/admin"] {
+        let result = ProxyState::new(
+            DEFAULT_UPSTREAM.to_string(),
+            0.5,
+            dir.path().to_path_buf(),
+            Provider::Generic,
+        )
+        .with_generic_allowed_path_prefixes([prefix]);
+
+        assert!(result.is_err(), "prefix should be rejected: {prefix}");
+    }
+}
+
+#[test]
 fn ui_persistence_flag_is_opt_in() {
     let cli = Cli::parse_from(["anon-pii", "ui"]);
     match cli.command {

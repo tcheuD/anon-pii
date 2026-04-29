@@ -680,6 +680,8 @@ fn main() -> io::Result<()> {
             session_dir,
             persist_mapping,
             provider,
+            generic_allow_path_prefixes,
+            unsafe_generic_allow_all_paths,
         }) => {
             let session_dir = match session_dir {
                 Some(dir) => {
@@ -700,10 +702,29 @@ fn main() -> io::Result<()> {
                 .parse()
                 .map_err(|e: String| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-            let state = Arc::new(
+            let generic_path_prefixes_configured = !generic_allow_path_prefixes.is_empty();
+            if provider != proxy::Provider::Generic
+                && (generic_path_prefixes_configured || unsafe_generic_allow_all_paths)
+            {
+                eprintln!("Warning: generic passthrough path options require --provider generic");
+            }
+
+            let mut proxy_state =
                 proxy::ProxyState::new(upstream, threshold, session_dir, provider)
-                    .with_mapping_persistence(persist_mapping),
-            );
+                    .with_mapping_persistence(persist_mapping);
+
+            if provider == proxy::Provider::Generic {
+                proxy_state =
+                    proxy_state.with_unsafe_generic_allow_all_paths(unsafe_generic_allow_all_paths);
+
+                if generic_path_prefixes_configured {
+                    proxy_state = proxy_state
+                        .with_generic_allowed_path_prefixes(generic_allow_path_prefixes)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+                }
+            }
+
+            let state = Arc::new(proxy_state);
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(proxy::run(state, port))?;

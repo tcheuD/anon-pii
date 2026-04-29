@@ -452,8 +452,8 @@ const ALLOWED_PASSTHROUGH_PREFIXES_ANTHROPIC: &[&str] = &["/v1/"];
 /// Allowed passthrough path prefixes for OpenAI API.
 const ALLOWED_PASSTHROUGH_PREFIXES_OPENAI: &[&str] = &["/v1/"];
 
-/// Allowed passthrough path prefixes for generic provider (all paths).
-const ALLOWED_PASSTHROUGH_PREFIXES_GENERIC: &[&str] = &["/"];
+/// Default passthrough path prefixes for generic provider.
+const ALLOWED_PASSTHROUGH_PREFIXES_GENERIC: &[&str] = &[];
 
 /// Get allowed passthrough prefixes for a provider.
 fn allowed_passthrough_prefixes_for_provider(provider: Provider) -> &'static [&'static str] {
@@ -462,6 +462,39 @@ fn allowed_passthrough_prefixes_for_provider(provider: Provider) -> &'static [&'
         Provider::OpenAi => ALLOWED_PASSTHROUGH_PREFIXES_OPENAI,
         Provider::Generic => ALLOWED_PASSTHROUGH_PREFIXES_GENERIC,
     }
+}
+
+fn path_contains_traversal(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    path.contains("..")
+        || lower.contains("%2e%2e")
+        || lower.contains("%2e.")
+        || lower.contains(".%2e")
+}
+
+fn path_matches_prefix(path: &str, prefix: &str) -> bool {
+    if prefix.ends_with('/') {
+        return path.starts_with(prefix);
+    }
+
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn passthrough_path_allowed(state: &ProxyState, path: &str) -> bool {
+    if state.provider == Provider::Generic {
+        return state.unsafe_generic_allow_all_paths
+            || state
+                .generic_allowed_path_prefixes
+                .iter()
+                .any(|prefix| path_matches_prefix(path, prefix));
+    }
+
+    allowed_passthrough_prefixes_for_provider(state.provider)
+        .iter()
+        .any(|prefix| path_matches_prefix(path, prefix))
 }
 
 fn generic_method_requires_json_body(method: &axum::http::Method) -> bool {
@@ -514,14 +547,15 @@ async fn prepare_generic_passthrough_body(
 /// Rejects requests to unrecognized paths to prevent SSRF.
 pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body>) -> Response {
     let method = req.method().clone();
-    let path = req
+    let path = req.uri().path().to_string();
+    let upstream_path = req
         .uri()
         .path_and_query()
         .map(|pq: &axum::http::uri::PathAndQuery| pq.as_str().to_string())
         .unwrap_or_default();
 
     // Reject path traversal attempts
-    if path.contains("..") {
+    if path_contains_traversal(&path) {
         return (
             StatusCode::BAD_REQUEST,
             "Bad request: path traversal not allowed",
@@ -530,11 +564,7 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
     }
 
     // Reject paths that don't match known API prefixes for this provider
-    let allowed_prefixes = allowed_passthrough_prefixes_for_provider(state.provider);
-    if !allowed_prefixes
-        .iter()
-        .any(|prefix| path.starts_with(prefix))
-    {
+    if !passthrough_path_allowed(&state, &path) {
         return (StatusCode::FORBIDDEN, "Forbidden: unknown API path").into_response();
     }
 
@@ -547,7 +577,7 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
         }
     };
 
-    let upstream_url = format!("{}{}", state.upstream, path);
+    let upstream_url = format!("{}{}", state.upstream, upstream_path);
     let provider = state.provider;
 
     let mut upstream_req = state.client.request(
@@ -858,6 +888,188 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_generic_passthrough_rejects_unknown_path_without_upstream_call() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(ProxyState::new(
+            upstream,
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-unknown-path"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/generate")
+            .body(Body::from(r#"{"prompt":"Contact john@example.com"}"#))
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "Rejected generic fallback path must not be forwarded upstream"
+        );
+        assert!(captured_body.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_generic_passthrough_allows_configured_path_prefix() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-configured-path"),
+                Provider::Generic,
+            )
+            .with_generic_allowed_path_prefixes(["/api/"])
+            .unwrap(),
+        );
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/generate")
+            .body(Body::from(r#"{"prompt":"Contact john@example.com"}"#))
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_generic_passthrough_prefix_does_not_match_neighbor_path() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-prefix-neighbor"),
+                Provider::Generic,
+            )
+            .with_generic_allowed_path_prefixes(["/api"])
+            .unwrap(),
+        );
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api2/generate")
+            .body(Body::from(r#"{"prompt":"Contact john@example.com"}"#))
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(captured_body.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_generic_passthrough_configured_path_still_rejects_traversal() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-configured-traversal"),
+                Provider::Generic,
+            )
+            .with_generic_allowed_path_prefixes(["/api/"])
+            .unwrap(),
+        );
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/../admin")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(captured_body.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_generic_passthrough_allows_dot_segments_in_query() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-query-dot-segments"),
+                Provider::Generic,
+            )
+            .with_generic_allowed_path_prefixes(["/api/"])
+            .unwrap(),
+        );
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/generate?prompt=%2e%2e")
+            .body(Body::from(r#"{"prompt":"Contact john@example.com"}"#))
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_generic_passthrough_unsafe_allows_all_paths() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured_body = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let upstream =
+            spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
+
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-unsafe-all-paths"),
+                Provider::Generic,
+            )
+            .with_unsafe_generic_allow_all_paths(true),
+        );
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/internal/admin")
+            .body(Body::from(r#"{"prompt":"Contact john@example.com"}"#))
+            .unwrap();
+
+        let resp = passthrough(State(state), req).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn test_handle_messages_accepts_valid_sized_body() {
         let state = Arc::new(ProxyState::new(
             "http://localhost:0".to_string(),
@@ -930,7 +1142,7 @@ mod tests {
     #[test]
     fn test_passthrough_prefixes_for_generic() {
         let prefixes = allowed_passthrough_prefixes_for_provider(Provider::Generic);
-        assert!(prefixes.contains(&"/"));
+        assert!(prefixes.is_empty());
     }
 
     // ============================================================================
@@ -1395,12 +1607,16 @@ mod tests {
         let upstream =
             spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
 
-        let state = Arc::new(ProxyState::new(
-            upstream,
-            0.0,
-            std::env::temp_dir().join("anon-test-generic-passthrough-non-json"),
-            Provider::Generic,
-        ));
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-passthrough-non-json"),
+                Provider::Generic,
+            )
+            .with_generic_allowed_path_prefixes(["/api/"])
+            .unwrap(),
+        );
 
         let req = Request::builder()
             .method("POST")
@@ -1432,12 +1648,16 @@ mod tests {
         )
         .await;
 
-        let state = Arc::new(ProxyState::new(
-            upstream,
-            0.0,
-            std::env::temp_dir().join("anon-test-generic-passthrough-json"),
-            Provider::Generic,
-        ));
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-passthrough-json"),
+                Provider::Generic,
+            )
+            .with_generic_allowed_path_prefixes(["/api/"])
+            .unwrap(),
+        );
 
         let req = Request::builder()
             .method("PATCH")
@@ -1477,12 +1697,16 @@ mod tests {
         )
         .await;
 
-        let state = Arc::new(ProxyState::new(
-            upstream,
-            0.0,
-            std::env::temp_dir().join("anon-test-generic-passthrough-get"),
-            Provider::Generic,
-        ));
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-passthrough-get"),
+                Provider::Generic,
+            )
+            .with_generic_allowed_path_prefixes(["/api/"])
+            .unwrap(),
+        );
 
         let req = Request::builder()
             .method("GET")
@@ -1504,12 +1728,16 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let upstream = spawn_hanging_sse_upstream(Arc::clone(&calls)).await;
 
-        let state = Arc::new(ProxyState::new(
-            upstream,
-            0.0,
-            std::env::temp_dir().join("anon-test-generic-passthrough-get-sse"),
-            Provider::Generic,
-        ));
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-passthrough-get-sse"),
+                Provider::Generic,
+            )
+            .with_generic_allowed_path_prefixes(["/api/"])
+            .unwrap(),
+        );
 
         let req = Request::builder()
             .method("GET")
@@ -1542,12 +1770,16 @@ mod tests {
         let upstream =
             spawn_counting_upstream(Arc::clone(&calls), Arc::clone(&captured_body)).await;
 
-        let state = Arc::new(ProxyState::new(
-            upstream,
-            0.0,
-            std::env::temp_dir().join("anon-test-generic-passthrough-post-empty"),
-            Provider::Generic,
-        ));
+        let state = Arc::new(
+            ProxyState::new(
+                upstream,
+                0.0,
+                std::env::temp_dir().join("anon-test-generic-passthrough-post-empty"),
+                Provider::Generic,
+            )
+            .with_generic_allowed_path_prefixes(["/api/"])
+            .unwrap(),
+        );
 
         let req = Request::builder()
             .method("POST")
