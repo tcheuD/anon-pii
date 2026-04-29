@@ -6,7 +6,8 @@
 files by extracting words and coordinates, running the normal PII detector,
 rewriting matching PDF text drawing operands, and drawing filled rectangles over
 detected regions in a new PDF. If a detected span cannot be mapped to removable
-PDF text, the command fails closed.
+PDF text, or if no extractable text is found, the command fails closed without
+writing an output PDF.
 
 Use `--visual-mask-only` only when you explicitly want overlay-only visual
 masking. In that mode, underlying PDF text/content may remain extractable by
@@ -74,7 +75,8 @@ objects in the output PDF.
 ## Limitations
 
 - Works best on PDFs with extractable text.
-- Scanned PDFs need OCR before this command can detect and redact visible text.
+- Scanned or image-only PDFs need OCR before this command can detect and redact
+  visible text.
 - Destructive redaction is limited to supported PDF text drawing operations.
 - Unsupported mappings fail closed unless `--visual-mask-only` is selected.
 - Visual masking mode is region-based: visually inspect output before sharing.

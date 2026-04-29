@@ -712,22 +712,15 @@ fn main() -> io::Result<()> {
             };
 
             if words.is_empty() {
-                eprintln!("No text detected in PDF, copying as-is without redaction");
-                let result = if visual_mask_only {
-                    anon_pii::pdf_redact::redact::visual_mask_pdf(&input, &output, &[], &fill_color)
+                let mode = if visual_mask_only {
+                    "visual masking"
                 } else {
-                    anon_pii::pdf_redact::redact::redact_pdf(&input, &output, &[], &fill_color)
+                    "destructive redaction"
                 };
-                if let Err(e) = result {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
-                if visual_mask_only {
-                    eprintln!("Visually masked 0 region(s) → {}", output.display());
-                } else {
-                    eprintln!("Redacted 0 region(s) → {}", output.display());
-                }
-                return Ok(());
+                eprintln!(
+                    "Error: No extractable text detected in PDF; {mode} cannot identify redaction regions in scanned or image-only PDFs. Run OCR first to add a text layer, or use an OCR/image redaction workflow. Use --visual-mask-only only for text-based PDFs when you explicitly accept overlay-only masking."
+                );
+                std::process::exit(1);
             }
 
             // 2. Reconstruct text with byte-span mapping
@@ -1465,16 +1458,55 @@ mod tests {
             doc.save(path).expect("failed to save test PDF");
         }
 
-        fn create_empty_pdf(path: &Path) {
-            use lopdf::{Document, Object, dictionary};
+        fn create_image_only_pdf(path: &Path) {
+            use lopdf::content::{Content, Operation};
+            use lopdf::{Document, Object, Stream, dictionary};
 
             let mut doc = Document::with_version("1.5");
 
             let pages_id = doc.new_object_id();
+            let image_id = doc.add_object(Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Image",
+                    "Width" => 1,
+                    "Height" => 1,
+                    "ColorSpace" => "DeviceRGB",
+                    "BitsPerComponent" => 8,
+                },
+                vec![0, 0, 0],
+            ));
+            let resources_id = doc.add_object(dictionary! {
+                "XObject" => dictionary! {
+                    "Im1" => image_id,
+                },
+            });
+            let page_content = Content {
+                operations: vec![
+                    Operation::new("q", vec![]),
+                    Operation::new(
+                        "cm",
+                        vec![
+                            120.into(),
+                            0.into(),
+                            0.into(),
+                            120.into(),
+                            72.into(),
+                            620.into(),
+                        ],
+                    ),
+                    Operation::new("Do", vec!["Im1".into()]),
+                    Operation::new("Q", vec![]),
+                ],
+            };
+            let content_id =
+                doc.add_object(Stream::new(dictionary! {}, page_content.encode().unwrap()));
 
             let page1_id = doc.add_object(dictionary! {
                 "Type" => "Page",
                 "Parent" => pages_id,
+                "Contents" => content_id,
+                "Resources" => resources_id,
             });
 
             let pages = dictionary! {
@@ -1680,11 +1712,11 @@ mod tests {
         }
 
         #[test]
-        fn test_pdf_cli_no_text() {
-            let dir = test_dir("no_text");
+        fn test_pdf_cli_image_only_fails_closed_by_default() {
+            let dir = test_dir("image_only");
             let input = dir.join("input.pdf");
             let output = dir.join("output.pdf");
-            create_empty_pdf(&input);
+            create_image_only_pdf(&input);
 
             let binary = std::env::current_exe()
                 .unwrap()
@@ -1710,18 +1742,20 @@ mod tests {
                 .expect("failed to execute command");
 
             assert!(
-                result.status.success(),
-                "command should succeed even with empty PDF"
+                !result.status.success(),
+                "destructive redaction should fail when the PDF has no extractable text"
             );
-            assert!(output.exists(), "output PDF should be created");
+            assert!(
+                !output.exists(),
+                "destructive redaction should not create a misleading output for image-only PDFs"
+            );
 
-            // Verify stderr indicates no PII or 0 regions
             let stderr = String::from_utf8_lossy(&result.stderr);
             assert!(
-                stderr.contains("0 region")
-                    || stderr.contains("No text")
-                    || stderr.contains("copying"),
-                "stderr should indicate no PII found: {}",
+                stderr.contains("No extractable text detected in PDF")
+                    && stderr.contains("OCR")
+                    && stderr.contains("--visual-mask-only"),
+                "stderr should explain why redaction failed and what to do next: {}",
                 stderr
             );
 
