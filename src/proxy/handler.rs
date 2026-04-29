@@ -467,25 +467,29 @@ fn generic_method_requires_json_body(method: &axum::http::Method) -> bool {
         || method == axum::http::Method::PATCH
 }
 
+fn response_is_event_stream(headers: &HeaderMap<HeaderValue>) -> bool {
+    headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(|media_type| media_type.trim().eq_ignore_ascii_case("text/event-stream"))
+        .unwrap_or(false)
+}
+
 async fn prepare_generic_passthrough_body(
     state: &Arc<ProxyState>,
     method: &axum::http::Method,
     body_bytes: &[u8],
-) -> Result<(Option<Vec<u8>>, bool), Response> {
+) -> Result<Option<Vec<u8>>, Response> {
     if body_bytes.is_empty() {
         if generic_method_requires_json_body(method) {
             return Err((StatusCode::BAD_REQUEST, "Invalid JSON: empty body").into_response());
         }
-        return Ok((None, false));
+        return Ok(None);
     }
 
     let mut body_json: serde_json::Value = serde_json::from_slice(body_bytes)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response())?;
-
-    let is_streaming = body_json
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
 
     {
         let mut anonymizer = state.anonymizer.lock().await;
@@ -500,7 +504,7 @@ async fn prepare_generic_passthrough_body(
             .into_response()
     })?;
 
-    Ok((Some(serialized), is_streaming))
+    Ok(Some(serialized))
 }
 
 /// Passthrough handler for provider-specific fallback paths.
@@ -551,22 +555,17 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
     // Forward only allowlisted headers
     upstream_req = filter_headers_for_upstream(&headers, upstream_req, state.provider);
 
-    let is_streaming = if provider == Provider::Generic {
-        let (body, is_streaming) =
-            match prepare_generic_passthrough_body(&state, &method, &body_bytes).await {
-                Ok(prepared) => prepared,
-                Err(response) => return response,
-            };
+    if provider == Provider::Generic {
+        let body = match prepare_generic_passthrough_body(&state, &method, &body_bytes).await {
+            Ok(prepared) => prepared,
+            Err(response) => return response,
+        };
         if let Some(body) = body {
             upstream_req = upstream_req.body(body);
         }
-        is_streaming
-    } else {
-        if !body_bytes.is_empty() {
-            upstream_req = upstream_req.body(body_bytes.to_vec());
-        }
-        false
-    };
+    } else if !body_bytes.is_empty() {
+        upstream_req = upstream_req.body(body_bytes.to_vec());
+    }
 
     let upstream_resp = match upstream_req.send().await {
         Ok(r) => r,
@@ -580,7 +579,7 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
     let resp_headers = upstream_resp.headers().clone();
 
     if provider == Provider::Generic {
-        if is_streaming && status.is_success() {
+        if status.is_success() && response_is_event_stream(&resp_headers) {
             return handle_streaming(state, upstream_resp, status, resp_headers).await;
         }
         return handle_non_streaming(state, upstream_resp, status, resp_headers).await;
@@ -637,6 +636,38 @@ mod tests {
                 }
             },
         ));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        format!("http://{addr}")
+    }
+
+    async fn spawn_hanging_sse_upstream(calls: Arc<AtomicUsize>) -> String {
+        let app = axum::Router::new().fallback(axum::routing::any(move || {
+            let calls = Arc::clone(&calls);
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+
+                let stream = futures::stream::once(async {
+                    Ok::<Bytes, std::convert::Infallible>(Bytes::from_static(
+                        b"data: {\"message\":\"hello\"}\n\n",
+                    ))
+                })
+                .chain(futures::stream::pending::<
+                    Result<Bytes, std::convert::Infallible>,
+                >());
+
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from_stream(stream))
+                    .unwrap()
+            }
+        }));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1441,6 +1472,42 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(captured_method.lock().await.as_deref(), Some("GET"));
         assert!(captured_body.lock().await.is_empty());
+    }
+
+    /// Test that generic fallback detects SSE from response headers
+    #[tokio::test]
+    async fn test_generic_passthrough_get_sse_response_detected_from_headers() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let upstream = spawn_hanging_sse_upstream(Arc::clone(&calls)).await;
+
+        let state = Arc::new(ProxyState::new(
+            upstream,
+            0.0,
+            std::env::temp_dir().join("anon-test-generic-passthrough-get-sse"),
+            Provider::Generic,
+        ));
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/events")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            passthrough(State(state), req),
+        )
+        .await
+        .expect("SSE passthrough should return headers without waiting for EOF");
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .unwrap(),
+            "text/event-stream"
+        );
     }
 
     /// Test that generic fallback payload methods still reject empty bodies
