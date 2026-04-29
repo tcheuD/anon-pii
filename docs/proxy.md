@@ -16,7 +16,7 @@ Anonymizing reverse proxy that sits between AI coding tools and LLM APIs. PII is
 
 - **Anthropic**: Anonymizes `system`, `messages[].content`, `tool_result.content`, `tool_use.input`. Only forwards Anthropic headers (`x-api-key`, `anthropic-version`, `anthropic-beta`).
 - **OpenAI**: Anonymizes `messages[].content`, `tool_calls[].function.arguments`, `tools[].function.parameters.*.description`. Only forwards OpenAI headers (`openai-organization`, `openai-project`).
-- **Generic**: Anonymizes all string values in the entire JSON body recursively. Forwards all provider headers. Use this for local LLMs (Ollama, vLLM) or unsupported providers.
+- **Generic**: Anonymizes all string values in the entire JSON body recursively. Forwards all provider headers. Use this for local LLMs (Ollama, vLLM) or unsupported providers. Built-in `/v1/messages` and `/v1/chat/completions` routes are enabled by default; other fallback paths require `--generic-allow-path-prefix`.
 
 ## Request / response flow
 
@@ -54,7 +54,7 @@ mapping remains in process memory.
 flowchart TD
     A[Incoming request] --> B{Host header valid?}
     B -->|No| X[403 Forbidden]
-    B -->|Yes| C{Path starts with /v1/?}
+    B -->|Yes| C{Path allowed for provider?}
     C -->|No| Y[403 Forbidden]
     C -->|Yes| D[Body size limit: 10MB]
     D --> E[Header allowlist forwarding]
@@ -75,10 +75,14 @@ anon-pii proxy --provider openai --upstream https://api.openai.com
 # anon-pii proxy listening on http://127.0.0.1:9100
 # upstream: https://api.openai.com
 
-# Generic (any LLM API)
+# Generic (OpenAI-compatible routes)
 anon-pii proxy --provider generic --upstream http://localhost:11434
 # anon-pii proxy listening on http://127.0.0.1:9100
 # upstream: http://localhost:11434
+
+# Generic fallback routes require an explicit allowlist
+anon-pii proxy --provider generic --upstream http://localhost:11434 \
+  --generic-allow-path-prefix /api/
 ```
 
 ## Use with AI coding tools
@@ -109,6 +113,8 @@ or manual restore workflows.
 | `--session-dir` | | `/tmp/anon-proxy-<random>` | Directory for mapping files when persistence is enabled |
 | `--persist-mapping` | | `false` | Write reversible session mappings to disk |
 | `--provider` | | `anthropic` | API provider: `anthropic`, `openai`, or `generic` |
+| `--generic-allow-path-prefix` | | none | Allow a generic-provider fallback path prefix; repeat for multiple prefixes |
+| `--unsafe-generic-allow-all-paths` | | `false` | Allow generic-provider fallback forwarding for any path after traversal checks |
 
 ## Testing without an API key
 
@@ -221,10 +227,10 @@ curl -s --no-buffer http://127.0.0.1:9100/v1/chat/completions \
 ### Generic (Ollama example)
 
 ```bash
-# Start proxy with generic provider pointing to Ollama
+# Start proxy with generic provider pointing to Ollama.
+# OpenAI-compatible /v1/chat/completions works without fallback allowlists.
 anon-pii proxy --provider generic --upstream http://localhost:11434
 
-# Works with any endpoint that Ollama supports
 curl -s http://127.0.0.1:9100/v1/chat/completions \
   -H "content-type: application/json" \
   -d '{
@@ -235,6 +241,18 @@ curl -s http://127.0.0.1:9100/v1/chat/completions \
   }' | jq .
 ```
 
+Ollama-native fallback paths such as `/api/generate` are rejected by default.
+Enable only the prefixes you intend to expose:
+
+```bash
+anon-pii proxy --provider generic --upstream http://localhost:11434 \
+  --generic-allow-path-prefix /api/
+
+curl -s http://127.0.0.1:9100/api/generate \
+  -H "content-type: application/json" \
+  -d '{"model":"llama3.2","prompt":"Email admin@secret.com for help"}' | jq .
+```
+
 ## Security notes
 
 - Binds to `127.0.0.1` only — not accessible from the network
@@ -242,4 +260,5 @@ curl -s http://127.0.0.1:9100/v1/chat/completions \
 - Mapping persistence is off by default; if enabled, the mapping file contains original PII and must be treated as sensitive
 - There is no local bearer-token auth yet. Use only on a trusted single-user workstation and do not expose the listener through tunnels, containers, or port forwards.
 - API keys are forwarded but never logged or stored
+- Generic fallback paths are denied by default; broad forwarding requires either explicit prefixes or `--unsafe-generic-allow-all-paths`.
 - Pattern and NER detection can miss unusual, domain-specific, split, or ambiguous identifiers; review high-risk payloads before relying on proxy output.

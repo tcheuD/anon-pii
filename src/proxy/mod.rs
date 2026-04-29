@@ -29,6 +29,8 @@ pub struct ProxyState {
     pub session_dir: PathBuf,
     pub provider: Provider,
     pub persist_mapping: bool,
+    pub generic_allowed_path_prefixes: Vec<String>,
+    pub unsafe_generic_allow_all_paths: bool,
 }
 
 impl ProxyState {
@@ -70,11 +72,33 @@ impl ProxyState {
             session_dir,
             provider,
             persist_mapping: false,
+            generic_allowed_path_prefixes: Vec::new(),
+            unsafe_generic_allow_all_paths: false,
         }
     }
 
     pub fn with_mapping_persistence(mut self, persist_mapping: bool) -> Self {
         self.persist_mapping = persist_mapping;
+        self
+    }
+
+    pub fn with_generic_allowed_path_prefixes<I, S>(mut self, prefixes: I) -> Result<Self, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut allowed = Vec::new();
+        for prefix in prefixes {
+            let prefix = prefix.into();
+            validate_generic_path_prefix(&prefix)?;
+            allowed.push(prefix);
+        }
+        self.generic_allowed_path_prefixes = allowed;
+        Ok(self)
+    }
+
+    pub fn with_unsafe_generic_allow_all_paths(mut self, allow: bool) -> Self {
+        self.unsafe_generic_allow_all_paths = allow;
         self
     }
 
@@ -125,6 +149,40 @@ impl ProxyState {
         snapshot.reverse = anonymizer.mapping.reverse.clone();
         snapshot
     }
+}
+
+pub fn validate_generic_path_prefix(prefix: &str) -> Result<(), String> {
+    if prefix.is_empty() {
+        return Err("generic path prefix must not be empty".to_string());
+    }
+    if !prefix.starts_with('/') {
+        return Err(format!("generic path prefix must start with '/': {prefix}"));
+    }
+    if prefix == "/" {
+        return Err(
+            "generic path prefix '/' is all-path forwarding; use --unsafe-generic-allow-all-paths"
+                .to_string(),
+        );
+    }
+    if prefix.contains('?') || prefix.contains('#') {
+        return Err(format!(
+            "generic path prefix must not contain query or fragment characters: {prefix}"
+        ));
+    }
+    if path_contains_traversal(prefix) {
+        return Err(format!(
+            "generic path prefix must not contain path traversal: {prefix}"
+        ));
+    }
+    Ok(())
+}
+
+fn path_contains_traversal(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    path.contains("..")
+        || lower.contains("%2e%2e")
+        || lower.contains("%2e.")
+        || lower.contains(".%2e")
 }
 
 // Host header validation middleware — DNS rebinding defense
