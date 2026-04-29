@@ -14,8 +14,6 @@ use crate::mapping::Mapping;
 /// Anonymize PII in an entire JSON request body.
 ///
 /// Walks all string values recursively using `anonymize_json_value()`.
-/// Non-JSON request bodies should be passed through without anonymization
-/// (handled by the caller with a warning log).
 pub fn anonymize_request(body: &mut Value, anonymizer: &mut Anonymizer) {
     let (anonymized, _) = anonymizer.anonymize_json_value(body);
     *body = anonymized;
