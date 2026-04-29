@@ -68,7 +68,7 @@ fn extract_words_from_page(
     let mut text_matrix = TextMatrix::identity();
     let mut line_matrix = TextMatrix::identity();
     let mut current_encoding = None;
-    let mut font_size: f64 = 12.0;
+    let mut text_state = TextState::new();
 
     for op in &content.operations {
         match op.operator.as_str() {
@@ -81,7 +81,22 @@ fn extract_words_from_page(
                     current_encoding = encodings.get(font_name);
                 }
                 if let Some(size) = op.operands.get(1) {
-                    font_size = object_to_f64(size).unwrap_or(12.0).abs();
+                    text_state.font_size = object_to_f64(size).unwrap_or(12.0).abs();
+                }
+            }
+            "Tc" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.char_spacing = value;
+                }
+            }
+            "Tw" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.word_spacing = value;
+                }
+            }
+            "Tz" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.horizontal_scaling = value / 100.0;
                 }
             }
             "Tm" => {
@@ -107,31 +122,47 @@ fn extract_words_from_page(
                 }
             }
             "T*" => {
-                line_matrix.translate(0.0, -font_size);
+                line_matrix.translate(0.0, -text_state.font_size);
                 text_matrix = line_matrix;
             }
             "Tj" | "TJ" => {
                 if let Some(encoding) = current_encoding {
-                    let text = collect_text_from_operands(encoding, &op.operands);
-                    if !text.trim().is_empty() {
-                        let (x, y) = text_matrix.position();
-                        let width = estimate_text_width(&text, font_size);
-                        push_words_from_text(&mut words, &text, page_num, x, y, font_size);
-                        text_matrix.translate(width, 0.0);
-                    }
+                    let (x, y) = text_matrix.position();
+                    let advance = push_words_from_operands(
+                        &mut words,
+                        encoding,
+                        &op.operands,
+                        page_num,
+                        x,
+                        y,
+                        text_state,
+                    );
+                    text_matrix.translate(advance, 0.0);
                 }
             }
             "'" | "\"" => {
-                line_matrix.translate(0.0, -font_size);
+                if op.operator == "\"" && op.operands.len() >= 3 {
+                    if let Some(word_spacing) = op.operands.first().and_then(object_to_f64) {
+                        text_state.word_spacing = word_spacing;
+                    }
+                    if let Some(char_spacing) = op.operands.get(1).and_then(object_to_f64) {
+                        text_state.char_spacing = char_spacing;
+                    }
+                }
+                line_matrix.translate(0.0, -text_state.font_size);
                 text_matrix = line_matrix;
                 if let Some(encoding) = current_encoding {
-                    let text = collect_text_from_operands(encoding, &op.operands);
-                    if !text.trim().is_empty() {
-                        let (x, y) = text_matrix.position();
-                        let width = estimate_text_width(&text, font_size);
-                        push_words_from_text(&mut words, &text, page_num, x, y, font_size);
-                        text_matrix.translate(width, 0.0);
-                    }
+                    let (x, y) = text_matrix.position();
+                    let advance = push_words_from_operands(
+                        &mut words,
+                        encoding,
+                        &op.operands,
+                        page_num,
+                        x,
+                        y,
+                        text_state,
+                    );
+                    text_matrix.translate(advance, 0.0);
                 }
             }
             _ => {}
@@ -141,52 +172,108 @@ fn extract_words_from_page(
     Ok(words)
 }
 
-fn push_words_from_text(
+fn push_words_from_operands(
     words: &mut Vec<PdfWord>,
-    text: &str,
+    encoding: &Encoding,
+    operands: &[Object],
     page: u32,
     x: f64,
     y: f64,
-    font_size: f64,
-) {
-    let char_width = font_size * 0.6;
-    let mut current = String::new();
-    let mut current_x = x;
-    let mut current_width = 0.0;
-    let mut offset = 0.0;
+    text_state: TextState,
+) -> f64 {
+    let mut text_run = ExtractedTextRun {
+        words,
+        page,
+        x,
+        y,
+        text_state,
+        current: String::new(),
+        current_x: x,
+        current_width: 0.0,
+        advance: 0.0,
+    };
 
-    for ch in text.chars() {
-        if ch.is_whitespace() {
-            if !current.is_empty() {
-                words.push(PdfWord {
-                    text: std::mem::take(&mut current),
-                    page,
-                    x: current_x,
-                    y,
-                    width: current_width,
-                    height: font_size,
-                });
-                current_width = 0.0;
-            }
-        } else {
-            if current.is_empty() {
-                current_x = x + offset;
-            }
-            current.push(ch);
-            current_width += char_width;
-        }
-        offset += char_width;
+    for operand in operands {
+        push_words_from_operand(encoding, operand, &mut text_run);
     }
 
-    if !current.is_empty() {
-        words.push(PdfWord {
-            text: current,
-            page,
-            x: current_x,
-            y,
-            width: current_width,
-            height: font_size,
+    text_run.finish_word();
+    text_run.advance
+}
+
+struct ExtractedTextRun<'a> {
+    words: &'a mut Vec<PdfWord>,
+    page: u32,
+    x: f64,
+    y: f64,
+    text_state: TextState,
+    current: String,
+    current_x: f64,
+    current_width: f64,
+    advance: f64,
+}
+
+impl ExtractedTextRun<'_> {
+    fn push_text(&mut self, text: &str) {
+        for ch in text.chars() {
+            self.push_char(ch);
+        }
+    }
+
+    fn push_char(&mut self, ch: char) {
+        if ch.is_whitespace() {
+            self.finish_word();
+        } else {
+            if self.current.is_empty() {
+                self.current_x = self.x + self.advance;
+            }
+            self.current.push(ch);
+            self.current_width += self.text_state.glyph_advance(ch);
+        }
+        self.advance += self.text_state.glyph_advance(ch);
+    }
+
+    fn apply_tj_adjustment(&mut self, value: f64) {
+        if value < -100.0 {
+            self.finish_word();
+        }
+        self.advance += self.text_state.tj_adjustment(value);
+    }
+
+    fn finish_word(&mut self) {
+        if self.current.is_empty() {
+            return;
+        }
+
+        self.words.push(PdfWord {
+            text: std::mem::take(&mut self.current),
+            page: self.page,
+            x: self.current_x,
+            y: self.y,
+            width: self.current_width,
+            height: self.text_state.font_size,
         });
+        self.current_width = 0.0;
+    }
+}
+
+fn push_words_from_operand(encoding: &Encoding, operand: &Object, text_run: &mut ExtractedTextRun) {
+    match operand {
+        Object::String(bytes, _) => {
+            if let Ok(decoded) = Document::decode_text(encoding, bytes) {
+                text_run.push_text(&decoded);
+            }
+        }
+        Object::Array(items) => {
+            for item in items {
+                match item {
+                    Object::Integer(i) => text_run.apply_tj_adjustment(*i as f64),
+                    Object::Real(r) => text_run.apply_tj_adjustment(*r as f64),
+                    _ => push_words_from_operand(encoding, item, text_run),
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -222,46 +309,40 @@ impl TextMatrix {
     }
 }
 
+#[derive(Clone, Copy)]
+struct TextState {
+    font_size: f64,
+    char_spacing: f64,
+    word_spacing: f64,
+    horizontal_scaling: f64,
+}
+
+impl TextState {
+    fn new() -> Self {
+        Self {
+            font_size: 12.0,
+            char_spacing: 0.0,
+            word_spacing: 0.0,
+            horizontal_scaling: 1.0,
+        }
+    }
+
+    fn glyph_advance(&self, ch: char) -> f64 {
+        let word_spacing = if ch == ' ' { self.word_spacing } else { 0.0 };
+        (self.font_size * 0.6 + self.char_spacing + word_spacing) * self.horizontal_scaling
+    }
+
+    fn tj_adjustment(&self, value: f64) -> f64 {
+        -(value / 1000.0) * self.font_size * self.horizontal_scaling
+    }
+}
+
 fn object_to_f64(obj: &Object) -> Option<f64> {
     match obj {
         Object::Integer(i) => Some(*i as f64),
         Object::Real(r) => Some(*r as f64),
         _ => None,
     }
-}
-
-fn collect_text_from_operands(encoding: &Encoding, operands: &[Object]) -> String {
-    let mut text = String::new();
-    for op in operands {
-        match op {
-            Object::String(bytes, _) => {
-                if let Ok(decoded) = Document::decode_text(encoding, bytes) {
-                    text.push_str(&decoded);
-                }
-            }
-            Object::Array(arr) => {
-                for item in arr {
-                    match item {
-                        Object::String(bytes, _) => {
-                            if let Ok(decoded) = Document::decode_text(encoding, bytes) {
-                                text.push_str(&decoded);
-                            }
-                        }
-                        Object::Integer(i) if *i < -100 => {
-                            text.push(' ');
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    text
-}
-
-fn estimate_text_width(text: &str, font_size: f64) -> f64 {
-    text.chars().count() as f64 * font_size * 0.6
 }
 
 pub fn reconstruct_text(words: &[PdfWord]) -> ReconstructedPdfText {

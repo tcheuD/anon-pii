@@ -273,46 +273,44 @@ impl TextMatrix {
     }
 }
 
+#[derive(Clone, Copy)]
+struct TextState {
+    font_size: f64,
+    char_spacing: f64,
+    word_spacing: f64,
+    horizontal_scaling: f64,
+}
+
+impl TextState {
+    fn new() -> Self {
+        Self {
+            font_size: 12.0,
+            char_spacing: 0.0,
+            word_spacing: 0.0,
+            horizontal_scaling: 1.0,
+        }
+    }
+
+    fn glyph_width(&self) -> f64 {
+        self.font_size * 0.6 * self.horizontal_scaling
+    }
+
+    fn glyph_advance(&self, ch: char) -> f64 {
+        let word_spacing = if ch == ' ' { self.word_spacing } else { 0.0 };
+        (self.font_size * 0.6 + self.char_spacing + word_spacing) * self.horizontal_scaling
+    }
+
+    fn tj_adjustment(&self, value: f64) -> f64 {
+        -(value / 1000.0) * self.font_size * self.horizontal_scaling
+    }
+}
+
 fn object_to_f64(obj: &Object) -> Option<f64> {
     match obj {
         Object::Integer(i) => Some(*i as f64),
         Object::Real(r) => Some(*r as f64),
         _ => None,
     }
-}
-
-fn collect_text_from_operands(encoding: &Encoding, operands: &[Object]) -> String {
-    let mut text = String::new();
-    for op in operands {
-        match op {
-            Object::String(bytes, _) => {
-                if let Ok(decoded) = Document::decode_text(encoding, bytes) {
-                    text.push_str(&decoded);
-                }
-            }
-            Object::Array(arr) => {
-                for item in arr {
-                    match item {
-                        Object::String(bytes, _) => {
-                            if let Ok(decoded) = Document::decode_text(encoding, bytes) {
-                                text.push_str(&decoded);
-                            }
-                        }
-                        Object::Integer(i) if *i < -100 => {
-                            text.push(' ');
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    text
-}
-
-fn estimate_text_width(text: &str, font_size: f64) -> f64 {
-    text.chars().count() as f64 * font_size * 0.6
 }
 
 fn region_overlaps_box(region: &RedactionRegion, x: f64, y: f64, width: f64, height: f64) -> bool {
@@ -328,21 +326,15 @@ fn redact_text_showing_operation(
     op: &mut Operation,
     encoding: &Encoding,
     text_matrix: &TextMatrix,
-    font_size: f64,
+    text_state: TextState,
     page_regions: &[(usize, &RedactionRegion)],
-) -> Option<(f64, Vec<usize>)> {
-    let text = collect_text_from_operands(encoding, &op.operands);
-    if text.trim().is_empty() {
-        return None;
-    }
-
+) -> (f64, Vec<usize>) {
     let (x, y) = text_matrix.position();
-    let width = estimate_text_width(&text, font_size);
 
     let mut text_run = TextRunState {
         x,
         y,
-        font_size,
+        text_state,
         advance: 0.0,
     };
     let mut matched_regions = Vec::new();
@@ -355,14 +347,14 @@ fn redact_text_showing_operation(
         ));
     }
 
-    Some((width, matched_regions))
+    (text_run.advance, matched_regions)
 }
 
 #[derive(Clone, Copy)]
 struct TextRunState {
     x: f64,
     y: f64,
-    font_size: f64,
+    text_state: TextState,
     advance: f64,
 }
 
@@ -377,7 +369,7 @@ fn redact_operand_text_by_region(
             let Ok(decoded) = Document::decode_text(encoding, bytes) else {
                 return Vec::new();
             };
-            let char_width = text_run.font_size * 0.6;
+            let char_width = text_run.text_state.glyph_width();
             let mut replacement = String::with_capacity(decoded.len());
             let mut matched_regions = Vec::new();
             let mut changed = false;
@@ -392,20 +384,20 @@ fn redact_operand_text_by_region(
                             char_x,
                             text_run.y,
                             char_width,
-                            text_run.font_size,
+                            text_run.text_state.font_size,
                         )
                         .then_some(*idx)
                     })
                     .collect();
 
                 if !char_matches.is_empty() && !ch.is_whitespace() {
-                    replacement.push(' ');
+                    replacement.push('X');
                     matched_regions.extend(char_matches);
                     changed = true;
                 } else {
                     replacement.push(ch);
                 }
-                text_run.advance += char_width;
+                text_run.advance += text_run.text_state.glyph_advance(ch);
             }
 
             if changed {
@@ -418,10 +410,10 @@ fn redact_operand_text_by_region(
             for item in items {
                 match item {
                     Object::Integer(i) => {
-                        text_run.advance += -(*i as f64) / 1000.0 * text_run.font_size;
+                        text_run.advance += text_run.text_state.tj_adjustment(*i as f64);
                     }
                     Object::Real(r) => {
-                        text_run.advance += -(*r as f64) / 1000.0 * text_run.font_size;
+                        text_run.advance += text_run.text_state.tj_adjustment(*r as f64);
                     }
                     _ => matched_regions.extend(redact_operand_text_by_region(
                         encoding,
@@ -462,7 +454,7 @@ fn rewrite_page_text_operands(
     let mut text_matrix = TextMatrix::identity();
     let mut line_matrix = TextMatrix::identity();
     let mut current_encoding = None;
-    let mut font_size: f64 = 12.0;
+    let mut text_state = TextState::new();
 
     for op in &mut content.operations {
         match op.operator.as_str() {
@@ -475,7 +467,22 @@ fn rewrite_page_text_operands(
                     current_encoding = encodings.get(font_name);
                 }
                 if let Some(size) = op.operands.get(1) {
-                    font_size = object_to_f64(size).unwrap_or(12.0).abs();
+                    text_state.font_size = object_to_f64(size).unwrap_or(12.0).abs();
+                }
+            }
+            "Tc" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.char_spacing = value;
+                }
+            }
+            "Tw" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.word_spacing = value;
+                }
+            }
+            "Tz" => {
+                if let Some(value) = op.operands.first().and_then(object_to_f64) {
+                    text_state.horizontal_scaling = value / 100.0;
                 }
             }
             "Tm" => {
@@ -501,37 +508,43 @@ fn rewrite_page_text_operands(
                 }
             }
             "T*" => {
-                line_matrix.translate(0.0, -font_size);
+                line_matrix.translate(0.0, -text_state.font_size);
                 text_matrix = line_matrix;
             }
             "Tj" | "TJ" => {
                 if let Some(encoding) = current_encoding {
-                    if let Some((width, matches)) = redact_text_showing_operation(
+                    let (width, matches) = redact_text_showing_operation(
                         op,
                         encoding,
                         &text_matrix,
-                        font_size,
+                        text_state,
                         page_regions,
-                    ) {
-                        matched_regions.extend(matches);
-                        text_matrix.translate(width, 0.0);
-                    }
+                    );
+                    matched_regions.extend(matches);
+                    text_matrix.translate(width, 0.0);
                 }
             }
             "'" | "\"" => {
-                line_matrix.translate(0.0, -font_size);
+                if op.operator == "\"" && op.operands.len() >= 3 {
+                    if let Some(word_spacing) = op.operands.first().and_then(object_to_f64) {
+                        text_state.word_spacing = word_spacing;
+                    }
+                    if let Some(char_spacing) = op.operands.get(1).and_then(object_to_f64) {
+                        text_state.char_spacing = char_spacing;
+                    }
+                }
+                line_matrix.translate(0.0, -text_state.font_size);
                 text_matrix = line_matrix;
                 if let Some(encoding) = current_encoding {
-                    if let Some((width, matches)) = redact_text_showing_operation(
+                    let (width, matches) = redact_text_showing_operation(
                         op,
                         encoding,
                         &text_matrix,
-                        font_size,
+                        text_state,
                         page_regions,
-                    ) {
-                        matched_regions.extend(matches);
-                        text_matrix.translate(width, 0.0);
-                    }
+                    );
+                    matched_regions.extend(matches);
+                    text_matrix.translate(width, 0.0);
                 }
             }
             _ => {}
@@ -1355,6 +1368,91 @@ mod tests {
         assert!(
             !text_operands.contains("john.smith@example.com"),
             "redaction should remove the selected PII text: {text_operands}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_advances_text_matrix_with_pdf_text_state_spacing() {
+        let dir = test_dir("text_state_spacing");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Courier",
+        });
+        let resources_id = doc.add_object(dictionary! {
+            "Font" => dictionary! {
+                "F1" => font_id,
+            },
+        });
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                Operation::new("Tc", vec![5.into()]),
+                Operation::new("Tw", vec![20.into()]),
+                Operation::new("Tz", vec![150.into()]),
+                Operation::new("Td", vec![72.into(), 720.into()]),
+                Operation::new(
+                    "TJ",
+                    vec![Object::Array(vec![
+                        Object::string_literal("Reference"),
+                        Object::Integer(-3000),
+                        Object::string_literal(" code "),
+                    ])],
+                ),
+                Operation::new("Tj", vec![Object::string_literal("bob@example.com")]),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+        });
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1,
+            "Resources" => resources_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        doc.save(&input).expect("failed to save spacing test PDF");
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 450.0,
+            y: 716.0,
+            width: 280.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let redacted_doc = Document::load(&output).unwrap();
+        let pages = redacted_doc.get_pages();
+        let page1_id = pages.get(&1).unwrap();
+        let content_data = redacted_doc.get_page_content(*page1_id).unwrap();
+        let content = Content::decode(&content_data).unwrap();
+        let text_operands = content_text_operands(&content);
+
+        assert!(
+            !text_operands.contains("bob@example.com"),
+            "later text runs should be matched after applying Tc/Tw/Tz/TJ displacement: {text_operands}"
         );
 
         let _ = fs::remove_dir_all(&dir);
