@@ -118,6 +118,33 @@ fn proxy_generic_path_options_are_opt_in() {
 }
 
 #[test]
+fn proxy_generic_provider_header_forwarding_is_opt_in() {
+    let cli = Cli::parse_from(["anon-pii", "proxy", "--provider", "generic"]);
+    match cli.command {
+        Some(Commands::Proxy {
+            generic_forward_provider_headers,
+            ..
+        }) => assert!(!generic_forward_provider_headers),
+        _ => panic!("expected proxy command"),
+    }
+
+    let cli = Cli::parse_from([
+        "anon-pii",
+        "proxy",
+        "--provider",
+        "generic",
+        "--generic-forward-provider-headers",
+    ]);
+    match cli.command {
+        Some(Commands::Proxy {
+            generic_forward_provider_headers,
+            ..
+        }) => assert!(generic_forward_provider_headers),
+        _ => panic!("expected proxy command"),
+    }
+}
+
+#[test]
 fn proxy_generic_path_prefixes_reject_all_path_and_traversal_values() {
     let dir = tempfile::tempdir().unwrap();
 

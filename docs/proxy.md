@@ -16,7 +16,7 @@ Anonymizing reverse proxy that sits between AI coding tools and LLM APIs. PII is
 
 - **Anthropic**: Anonymizes `system`, `messages[].content`, `tool_result.content`, `tool_use.input`. Only forwards Anthropic headers (`x-api-key`, `anthropic-version`, `anthropic-beta`).
 - **OpenAI**: Anonymizes `messages[].content`, `tool_calls[].function.arguments`, `tools[].function.parameters.*.description`. Only forwards OpenAI headers (`openai-organization`, `openai-project`).
-- **Generic**: Anonymizes all string values in the entire JSON body recursively. Forwards all provider headers. Use this for local LLMs (Ollama, vLLM) or unsupported providers. Built-in `/v1/messages` and `/v1/chat/completions` routes are enabled by default; other fallback paths require `--generic-allow-path-prefix`.
+- **Generic**: Anonymizes all string values in the entire JSON body recursively. Forwards only base headers (`authorization`, `content-type`, `accept`, `user-agent`) by default. Provider-specific headers (`x-api-key`, `anthropic-version`, `anthropic-beta`, `openai-organization`, `openai-project`) require `--generic-forward-provider-headers`. Use this for local LLMs (Ollama, vLLM) or unsupported providers. Built-in `/v1/messages` and `/v1/chat/completions` routes are enabled by default; other fallback paths require `--generic-allow-path-prefix`.
 
 ## Request / response flow
 
@@ -83,6 +83,10 @@ anon-pii proxy --provider generic --upstream http://localhost:11434
 # Generic fallback routes require an explicit allowlist
 anon-pii proxy --provider generic --upstream http://localhost:11434 \
   --generic-allow-path-prefix /api/
+
+# Generic upstreams that deliberately require Anthropic/OpenAI headers
+anon-pii proxy --provider generic --upstream https://llm.example.com \
+  --generic-forward-provider-headers
 ```
 
 ## Use with AI coding tools
@@ -115,6 +119,7 @@ or manual restore workflows.
 | `--provider` | | `anthropic` | API provider: `anthropic`, `openai`, or `generic` |
 | `--generic-allow-path-prefix` | | none | Allow a generic-provider fallback path prefix; repeat for multiple prefixes |
 | `--unsafe-generic-allow-all-paths` | | `false` | Allow generic-provider fallback forwarding for any path after traversal checks |
+| `--generic-forward-provider-headers` | | `false` | Forward Anthropic/OpenAI provider-specific headers in generic mode |
 
 ## Testing without an API key
 
@@ -259,6 +264,7 @@ curl -s http://127.0.0.1:9100/api/generate \
 - Host header validation blocks DNS rebinding attacks
 - Mapping persistence is off by default; if enabled, the mapping file contains original PII and must be treated as sensitive
 - There is no local bearer-token auth yet. Use only on a trusted single-user workstation and do not expose the listener through tunnels, containers, or port forwards.
-- API keys are forwarded but never logged or stored
+- Provider API credentials are forwarded only when permitted by the provider header allowlist, and are never logged or stored
+- Generic mode blocks cross-provider headers by default; only `authorization`, `content-type`, `accept`, and `user-agent` are forwarded unless `--generic-forward-provider-headers` is set.
 - Generic fallback paths are denied by default; broad forwarding requires either explicit prefixes or `--unsafe-generic-allow-all-paths`.
 - Pattern and NER detection can miss unusual, domain-specific, split, or ambiguous identifiers; review high-risk payloads before relying on proxy output.

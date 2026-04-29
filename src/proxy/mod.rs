@@ -31,6 +31,7 @@ pub struct ProxyState {
     pub persist_mapping: bool,
     pub generic_allowed_path_prefixes: Vec<String>,
     pub unsafe_generic_allow_all_paths: bool,
+    pub generic_forward_provider_headers: bool,
 }
 
 impl ProxyState {
@@ -74,6 +75,7 @@ impl ProxyState {
             persist_mapping: false,
             generic_allowed_path_prefixes: Vec::new(),
             unsafe_generic_allow_all_paths: false,
+            generic_forward_provider_headers: false,
         }
     }
 
@@ -99,6 +101,11 @@ impl ProxyState {
 
     pub fn with_unsafe_generic_allow_all_paths(mut self, allow: bool) -> Self {
         self.unsafe_generic_allow_all_paths = allow;
+        self
+    }
+
+    pub fn with_generic_provider_header_forwarding(mut self, forward: bool) -> Self {
+        self.generic_forward_provider_headers = forward;
         self
     }
 

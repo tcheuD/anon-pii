@@ -38,6 +38,14 @@ use super::Provider;
 
 /// Get the list of allowed headers for a specific provider.
 fn allowed_headers_for_provider(provider: Provider) -> Vec<&'static str> {
+    allowed_headers_for_provider_with_options(provider, false)
+}
+
+/// Get the list of allowed headers for a provider with generic-provider options.
+fn allowed_headers_for_provider_with_options(
+    provider: Provider,
+    generic_forward_provider_headers: bool,
+) -> Vec<&'static str> {
     let mut headers: Vec<&'static str> = ALLOWED_UPSTREAM_HEADERS_BASE.to_vec();
     match provider {
         Provider::Anthropic => {
@@ -47,9 +55,10 @@ fn allowed_headers_for_provider(provider: Provider) -> Vec<&'static str> {
             headers.extend_from_slice(ALLOWED_UPSTREAM_HEADERS_OPENAI);
         }
         Provider::Generic => {
-            // Generic provider allows all provider-specific headers
-            headers.extend_from_slice(ALLOWED_UPSTREAM_HEADERS_ANTHROPIC);
-            headers.extend_from_slice(ALLOWED_UPSTREAM_HEADERS_OPENAI);
+            if generic_forward_provider_headers {
+                headers.extend_from_slice(ALLOWED_UPSTREAM_HEADERS_ANTHROPIC);
+                headers.extend_from_slice(ALLOWED_UPSTREAM_HEADERS_OPENAI);
+            }
         }
     }
     headers
@@ -62,6 +71,26 @@ fn filter_headers_for_upstream(
     provider: Provider,
 ) -> reqwest::RequestBuilder {
     let allowed = allowed_headers_for_provider(provider);
+    filter_headers_by_allowlist(headers, builder, &allowed)
+}
+
+/// Filter headers with generic-provider forwarding options.
+fn filter_headers_for_upstream_with_options(
+    headers: &HeaderMap,
+    builder: reqwest::RequestBuilder,
+    provider: Provider,
+    generic_forward_provider_headers: bool,
+) -> reqwest::RequestBuilder {
+    let allowed =
+        allowed_headers_for_provider_with_options(provider, generic_forward_provider_headers);
+    filter_headers_by_allowlist(headers, builder, &allowed)
+}
+
+fn filter_headers_by_allowlist(
+    headers: &HeaderMap,
+    builder: reqwest::RequestBuilder,
+    allowed: &[&str],
+) -> reqwest::RequestBuilder {
     let mut req = builder;
     for (name, value) in headers.iter() {
         let name_str = name.as_str();
@@ -164,7 +193,11 @@ pub async fn handle_messages(
     let mut upstream_req = state.client.post(&upstream_url);
 
     // Forward only allowlisted headers
-    upstream_req = filter_headers_for_upstream(&headers, upstream_req, state.provider);
+    upstream_req = if state.generic_forward_provider_headers {
+        filter_headers_for_upstream_with_options(&headers, upstream_req, state.provider, true)
+    } else {
+        filter_headers_for_upstream(&headers, upstream_req, state.provider)
+    };
 
     upstream_req = upstream_req.body(anonymized_body);
 
@@ -586,7 +619,11 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
     );
 
     // Forward only allowlisted headers
-    upstream_req = filter_headers_for_upstream(&headers, upstream_req, state.provider);
+    upstream_req = if state.generic_forward_provider_headers {
+        filter_headers_for_upstream_with_options(&headers, upstream_req, state.provider, true)
+    } else {
+        filter_headers_for_upstream(&headers, upstream_req, state.provider)
+    };
 
     if provider == Provider::Generic {
         let body = match prepare_generic_passthrough_body(&state, &method, &body_bytes).await {
@@ -1119,9 +1156,20 @@ mod tests {
     #[test]
     fn test_allowed_headers_for_generic_provider() {
         let headers = allowed_headers_for_provider(Provider::Generic);
-        // Generic should allow all headers
+        assert!(!headers.contains(&"x-api-key"));
+        assert!(!headers.contains(&"anthropic-version"));
+        assert!(!headers.contains(&"anthropic-beta"));
+        assert!(!headers.contains(&"openai-organization"));
+        assert!(!headers.contains(&"openai-project"));
+        assert!(headers.contains(&"authorization"));
+    }
+
+    #[test]
+    fn test_allowed_headers_for_generic_provider_with_explicit_provider_headers() {
+        let headers = allowed_headers_for_provider_with_options(Provider::Generic, true);
         assert!(headers.contains(&"x-api-key"));
         assert!(headers.contains(&"anthropic-version"));
+        assert!(headers.contains(&"anthropic-beta"));
         assert!(headers.contains(&"openai-organization"));
         assert!(headers.contains(&"openai-project"));
         assert!(headers.contains(&"authorization"));
@@ -2534,14 +2582,16 @@ mod tests {
         );
     }
 
-    /// Test header forwarding: Generic provider forwards ALL provider headers
+    /// Test header forwarding: Generic provider blocks provider-specific headers by default
     #[test]
-    fn test_header_forwarding_generic_allows_all() {
+    fn test_header_forwarding_generic_blocks_provider_headers_by_default() {
         let client = reqwest::Client::new();
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("sk-ant-test"));
         headers.insert("anthropic-version", HeaderValue::from_static("2024-01-01"));
+        headers.insert("anthropic-beta", HeaderValue::from_static("tools-2024"));
         headers.insert("openai-organization", HeaderValue::from_static("org-123"));
+        headers.insert("openai-project", HeaderValue::from_static("proj-456"));
         headers.insert("authorization", HeaderValue::from_static("Bearer sk-test"));
 
         let builder = client.post("http://localhost/test");
@@ -2549,26 +2599,56 @@ mod tests {
         let req = filtered.build().unwrap();
         let fwd_headers = req.headers();
 
-        // Generic provider should forward ALL provider-specific headers
-        assert_eq!(
-            fwd_headers.get("x-api-key").unwrap(),
-            "sk-ant-test",
-            "x-api-key should be forwarded for Generic"
+        assert!(
+            fwd_headers.get("x-api-key").is_none(),
+            "x-api-key should not be forwarded for Generic by default"
         );
-        assert_eq!(
-            fwd_headers.get("anthropic-version").unwrap(),
-            "2024-01-01",
-            "anthropic-version should be forwarded for Generic"
+        assert!(
+            fwd_headers.get("anthropic-version").is_none(),
+            "anthropic-version should not be forwarded for Generic by default"
         );
-        assert_eq!(
-            fwd_headers.get("openai-organization").unwrap(),
-            "org-123",
-            "openai-organization should be forwarded for Generic"
+        assert!(
+            fwd_headers.get("anthropic-beta").is_none(),
+            "anthropic-beta should not be forwarded for Generic by default"
+        );
+        assert!(
+            fwd_headers.get("openai-organization").is_none(),
+            "openai-organization should not be forwarded for Generic by default"
+        );
+        assert!(
+            fwd_headers.get("openai-project").is_none(),
+            "openai-project should not be forwarded for Generic by default"
         );
         assert_eq!(
             fwd_headers.get("authorization").unwrap(),
             "Bearer sk-test",
             "authorization should be forwarded for Generic"
         );
+    }
+
+    /// Test header forwarding: Generic provider forwards provider-specific headers only by explicit opt-in
+    #[test]
+    fn test_header_forwarding_generic_explicitly_allows_provider_headers() {
+        let client = reqwest::Client::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("sk-ant-test"));
+        headers.insert("anthropic-version", HeaderValue::from_static("2024-01-01"));
+        headers.insert("anthropic-beta", HeaderValue::from_static("tools-2024"));
+        headers.insert("openai-organization", HeaderValue::from_static("org-123"));
+        headers.insert("openai-project", HeaderValue::from_static("proj-456"));
+        headers.insert("authorization", HeaderValue::from_static("Bearer sk-test"));
+
+        let builder = client.post("http://localhost/test");
+        let filtered =
+            filter_headers_for_upstream_with_options(&headers, builder, Provider::Generic, true);
+        let req = filtered.build().unwrap();
+        let fwd_headers = req.headers();
+
+        assert_eq!(fwd_headers.get("x-api-key").unwrap(), "sk-ant-test");
+        assert_eq!(fwd_headers.get("anthropic-version").unwrap(), "2024-01-01");
+        assert_eq!(fwd_headers.get("anthropic-beta").unwrap(), "tools-2024");
+        assert_eq!(fwd_headers.get("openai-organization").unwrap(), "org-123");
+        assert_eq!(fwd_headers.get("openai-project").unwrap(), "proj-456");
+        assert_eq!(fwd_headers.get("authorization").unwrap(), "Bearer sk-test");
     }
 }
