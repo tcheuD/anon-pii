@@ -384,7 +384,10 @@ fn process_sse_line<R: TokenResolver>(
     output: &mut String,
     provider: Provider,
 ) {
-    if let Some(data) = line.strip_prefix("data: ") {
+    if let Some(data) = line
+        .strip_prefix("data:")
+        .map(|data| data.strip_prefix(' ').unwrap_or(data))
+    {
         // Both Anthropic and OpenAI use data: [DONE] for termination
         if data == "[DONE]" {
             let remaining = token_buffer.flush();
@@ -1194,6 +1197,27 @@ mod tests {
         assert!(
             output.contains("admin@secret.org"),
             "Generic SSE: token should be restored in any data line, got: {output}"
+        );
+    }
+
+    /// Test that generic SSE restores tokens when data: has no following space
+    #[test]
+    fn test_generic_sse_line_restores_tokens_without_space_after_colon() {
+        let mut mapping = crate::mapping::Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_nospace1]".to_string(),
+            "admin@secret.org".to_string(),
+        );
+        mapping.rebuild_caches();
+        let mut token_buffer = sse::TokenBuffer::new(mapping);
+        let mut output = String::new();
+
+        let line = r#"data:{"text":"[EMAIL_ADDRESS_nospace1] is the user"}"#;
+        process_sse_line(line, &mut token_buffer, &mut output, Provider::Generic);
+
+        assert!(
+            output.contains("admin@secret.org"),
+            "Generic SSE without space after data: should restore tokens, got: {output}"
         );
     }
 
