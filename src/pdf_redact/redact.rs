@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lopdf::content::{Content, Operation};
-use lopdf::{Document, Object, Stream, dictionary};
+use lopdf::{Document, Encoding, Object, Stream, dictionary};
 
 use super::{PdfError, RedactionRegion};
 use crate::patterns::MAX_INPUT_SIZE;
@@ -15,6 +15,7 @@ pub enum RedactError {
     InvalidColor(String),
     PdfLoad { path: PathBuf, source: String },
     PdfSave { path: PathBuf, source: String },
+    UnmappedText { page: u32, entity_type: String },
 }
 
 impl fmt::Display for RedactError {
@@ -27,6 +28,10 @@ impl fmt::Display for RedactError {
             RedactError::PdfSave { path, source } => {
                 write!(f, "failed to save PDF {}: {source}", path.display())
             }
+            RedactError::UnmappedText { page, entity_type } => write!(
+                f,
+                "redaction region for {entity_type} on page {page} could not be mapped to removable PDF text"
+            ),
         }
     }
 }
@@ -230,17 +235,329 @@ fn remove_overlapping_annotations(
     }
 }
 
-/// Visually mask regions of a PDF by drawing opaque rectangles over them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PdfRedactionMode {
+    Destructive,
+    VisualOnly,
+}
+
+#[derive(Clone, Copy)]
+struct TextMatrix {
+    a: f64,
+    b: f64,
+    c: f64,
+    d: f64,
+    e: f64,
+    f: f64,
+}
+
+impl TextMatrix {
+    fn identity() -> Self {
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: 0.0,
+            f: 0.0,
+        }
+    }
+
+    fn position(&self) -> (f64, f64) {
+        (self.e, self.f)
+    }
+
+    fn translate(&mut self, tx: f64, ty: f64) {
+        self.e += self.a * tx + self.c * ty;
+        self.f += self.b * tx + self.d * ty;
+    }
+}
+
+fn object_to_f64(obj: &Object) -> Option<f64> {
+    match obj {
+        Object::Integer(i) => Some(*i as f64),
+        Object::Real(r) => Some(*r as f64),
+        _ => None,
+    }
+}
+
+fn collect_text_from_operands(encoding: &Encoding, operands: &[Object]) -> String {
+    let mut text = String::new();
+    for op in operands {
+        match op {
+            Object::String(bytes, _) => {
+                if let Ok(decoded) = Document::decode_text(encoding, bytes) {
+                    text.push_str(&decoded);
+                }
+            }
+            Object::Array(arr) => {
+                for item in arr {
+                    match item {
+                        Object::String(bytes, _) => {
+                            if let Ok(decoded) = Document::decode_text(encoding, bytes) {
+                                text.push_str(&decoded);
+                            }
+                        }
+                        Object::Integer(i) if *i < -100 => {
+                            text.push(' ');
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    text.trim().to_string()
+}
+
+fn estimate_text_width(text: &str, font_size: f64) -> f64 {
+    text.chars().count() as f64 * font_size * 0.6
+}
+
+fn region_overlaps_box(region: &RedactionRegion, x: f64, y: f64, width: f64, height: f64) -> bool {
+    let region_right = region.x + region.width;
+    let region_top = region.y + region.height;
+    let box_right = x + width;
+    let box_top = y + height;
+
+    region.x < box_right && region_right > x && region.y < box_top && region_top > y
+}
+
+fn replace_operand_text_with_spaces(encoding: &Encoding, object: &mut Object) -> bool {
+    match object {
+        Object::String(bytes, _) => {
+            let Ok(decoded) = Document::decode_text(encoding, bytes) else {
+                return false;
+            };
+            let replacement = " ".repeat(decoded.chars().count());
+            *bytes = Document::encode_text(encoding, &replacement);
+            true
+        }
+        Object::Array(items) => {
+            let mut replaced = false;
+            for item in items {
+                replaced |= replace_operand_text_with_spaces(encoding, item);
+            }
+            replaced
+        }
+        _ => false,
+    }
+}
+
+fn redact_text_showing_operation(
+    op: &mut Operation,
+    encoding: &Encoding,
+    text_matrix: &TextMatrix,
+    font_size: f64,
+    page_regions: &[(usize, &RedactionRegion)],
+) -> Option<(f64, Vec<usize>)> {
+    let text = collect_text_from_operands(encoding, &op.operands);
+    if text.is_empty() {
+        return None;
+    }
+
+    let (x, y) = text_matrix.position();
+    let width = estimate_text_width(&text, font_size);
+    let matched_regions: Vec<usize> = page_regions
+        .iter()
+        .filter_map(|(idx, region)| {
+            region_overlaps_box(region, x, y, width, font_size).then_some(*idx)
+        })
+        .collect();
+
+    if !matched_regions.is_empty() {
+        let replaced = op
+            .operands
+            .iter_mut()
+            .any(|operand| replace_operand_text_with_spaces(encoding, operand));
+        if !replaced {
+            return None;
+        }
+    }
+
+    Some((width, matched_regions))
+}
+
+fn rewrite_page_text_operands(
+    doc: &Document,
+    input: &Path,
+    page_id: (u32, u16),
+    content: &mut Content,
+    page_regions: &[(usize, &RedactionRegion)],
+) -> Result<Vec<usize>, RedactError> {
+    let fonts = doc
+        .get_page_fonts(page_id)
+        .map_err(|e| RedactError::PdfLoad {
+            path: input.to_path_buf(),
+            source: format!("failed to read page fonts: {e}"),
+        })?;
+    let encodings: BTreeMap<Vec<u8>, Encoding> = fonts
+        .into_iter()
+        .filter_map(|(name, font)| match font.get_font_encoding(doc) {
+            Ok(enc) => Some((name, enc)),
+            Err(_) => None,
+        })
+        .collect();
+
+    let mut matched_regions = Vec::new();
+    let mut text_matrix = TextMatrix::identity();
+    let mut line_matrix = TextMatrix::identity();
+    let mut current_encoding = None;
+    let mut font_size: f64 = 12.0;
+
+    for op in &mut content.operations {
+        match op.operator.as_str() {
+            "BT" => {
+                text_matrix = TextMatrix::identity();
+                line_matrix = TextMatrix::identity();
+            }
+            "Tf" => {
+                if let Some(Object::Name(font_name)) = op.operands.first() {
+                    current_encoding = encodings.get(font_name);
+                }
+                if let Some(size) = op.operands.get(1) {
+                    font_size = object_to_f64(size).unwrap_or(12.0).abs();
+                }
+            }
+            "Tm" => {
+                if op.operands.len() >= 6 {
+                    let matrix = TextMatrix {
+                        a: object_to_f64(&op.operands[0]).unwrap_or(1.0),
+                        b: object_to_f64(&op.operands[1]).unwrap_or(0.0),
+                        c: object_to_f64(&op.operands[2]).unwrap_or(0.0),
+                        d: object_to_f64(&op.operands[3]).unwrap_or(1.0),
+                        e: object_to_f64(&op.operands[4]).unwrap_or(0.0),
+                        f: object_to_f64(&op.operands[5]).unwrap_or(0.0),
+                    };
+                    text_matrix = matrix;
+                    line_matrix = matrix;
+                }
+            }
+            "Td" | "TD" => {
+                if op.operands.len() >= 2 {
+                    let tx = object_to_f64(&op.operands[0]).unwrap_or(0.0);
+                    let ty = object_to_f64(&op.operands[1]).unwrap_or(0.0);
+                    line_matrix.translate(tx, ty);
+                    text_matrix = line_matrix;
+                }
+            }
+            "T*" => {
+                line_matrix.translate(0.0, -font_size);
+                text_matrix = line_matrix;
+            }
+            "Tj" | "TJ" => {
+                if let Some(encoding) = current_encoding {
+                    if let Some((width, matches)) = redact_text_showing_operation(
+                        op,
+                        encoding,
+                        &text_matrix,
+                        font_size,
+                        page_regions,
+                    ) {
+                        matched_regions.extend(matches);
+                        text_matrix.translate(width, 0.0);
+                    }
+                }
+            }
+            "'" | "\"" => {
+                line_matrix.translate(0.0, -font_size);
+                text_matrix = line_matrix;
+                if let Some(encoding) = current_encoding {
+                    if let Some((width, matches)) = redact_text_showing_operation(
+                        op,
+                        encoding,
+                        &text_matrix,
+                        font_size,
+                        page_regions,
+                    ) {
+                        matched_regions.extend(matches);
+                        text_matrix.translate(width, 0.0);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(matched_regions)
+}
+
+fn append_visual_mask_operations(
+    content: &mut Content,
+    page_regions: &[&RedactionRegion],
+    r: f64,
+    g: f64,
+    b: f64,
+) {
+    content.operations.push(Operation::new("q", vec![]));
+    content.operations.push(Operation::new(
+        "rg",
+        vec![
+            Object::Real(r as f32),
+            Object::Real(g as f32),
+            Object::Real(b as f32),
+        ],
+    ));
+
+    for region in page_regions {
+        content.operations.push(Operation::new(
+            "re",
+            vec![
+                Object::Real(region.x as f32),
+                Object::Real(region.y as f32),
+                Object::Real(region.width as f32),
+                Object::Real(region.height as f32),
+            ],
+        ));
+        content.operations.push(Operation::new("f", vec![]));
+    }
+
+    content.operations.push(Operation::new("Q", vec![]));
+}
+
+/// Destructively redact supported text regions of a PDF and draw opaque rectangles over them.
 ///
 /// Opens the input PDF, draws filled rectangles over each region on the
 /// appropriate page, removes overlapping annotations, and saves to the output
 /// path. Preserves the original layout, page count, and non-PII content.
-/// This does not destructively rewrite PDF text content streams.
 pub fn redact_pdf(
     input: &Path,
     output: &Path,
     regions: &[RedactionRegion],
     fill_color: &str,
+) -> Result<(), RedactError> {
+    redact_pdf_with_mode(
+        input,
+        output,
+        regions,
+        fill_color,
+        PdfRedactionMode::Destructive,
+    )
+}
+
+/// Visually mask regions of a PDF by drawing opaque rectangles without rewriting text streams.
+pub fn visual_mask_pdf(
+    input: &Path,
+    output: &Path,
+    regions: &[RedactionRegion],
+    fill_color: &str,
+) -> Result<(), RedactError> {
+    redact_pdf_with_mode(
+        input,
+        output,
+        regions,
+        fill_color,
+        PdfRedactionMode::VisualOnly,
+    )
+}
+
+fn redact_pdf_with_mode(
+    input: &Path,
+    output: &Path,
+    regions: &[RedactionRegion],
+    fill_color: &str,
+    mode: PdfRedactionMode,
 ) -> Result<(), RedactError> {
     let (r, g, b) = parse_fill_color(fill_color)?;
 
@@ -276,17 +593,21 @@ pub fn redact_pdf(
     })?;
 
     // Group regions by page number
-    let mut regions_by_page: BTreeMap<u32, Vec<&RedactionRegion>> = BTreeMap::new();
-    for region in regions {
-        regions_by_page.entry(region.page).or_default().push(region);
+    let mut regions_by_page: BTreeMap<u32, Vec<(usize, &RedactionRegion)>> = BTreeMap::new();
+    for (idx, region) in regions.iter().enumerate() {
+        regions_by_page
+            .entry(region.page)
+            .or_default()
+            .push((idx, region));
     }
 
     let pages = doc.get_pages();
+    let mut mapped_regions = vec![mode == PdfRedactionMode::VisualOnly; regions.len()];
 
-    // For each page with regions, append visual masking rectangles to the content stream
+    // For each page with regions, rewrite supported text then append visual masking rectangles.
     for (page_num, page_regions) in &regions_by_page {
         let Some(&page_id) = pages.get(page_num) else {
-            continue; // Skip regions for non-existent pages
+            continue;
         };
 
         // Get existing content
@@ -300,37 +621,18 @@ pub fn redact_pdf(
             })?
         };
 
-        // Add visual masking rectangles
-        // Save graphics state
-        content.operations.push(Operation::new("q", vec![]));
-
-        // Set fill color (rg = RGB fill color)
-        content.operations.push(Operation::new(
-            "rg",
-            vec![
-                Object::Real(r as f32),
-                Object::Real(g as f32),
-                Object::Real(b as f32),
-            ],
-        ));
-
-        for region in page_regions {
-            // Draw rectangle: x y width height re
-            content.operations.push(Operation::new(
-                "re",
-                vec![
-                    Object::Real(region.x as f32),
-                    Object::Real(region.y as f32),
-                    Object::Real(region.width as f32),
-                    Object::Real(region.height as f32),
-                ],
-            ));
-            // Fill the rectangle
-            content.operations.push(Operation::new("f", vec![]));
+        if mode == PdfRedactionMode::Destructive {
+            for idx in rewrite_page_text_operands(&doc, input, page_id, &mut content, page_regions)?
+            {
+                if let Some(mapped) = mapped_regions.get_mut(idx) {
+                    *mapped = true;
+                }
+            }
         }
 
-        // Restore graphics state
-        content.operations.push(Operation::new("Q", vec![]));
+        let page_region_refs: Vec<&RedactionRegion> =
+            page_regions.iter().map(|(_, region)| *region).collect();
+        append_visual_mask_operations(&mut content, &page_region_refs, r, g, b);
 
         // Encode and update the page content
         let encoded = content.encode().map_err(|e| RedactError::PdfSave {
@@ -347,7 +649,21 @@ pub fn redact_pdf(
         }
 
         // Remove annotations that overlap with masked regions
-        remove_overlapping_annotations(&mut doc, page_id, page_regions);
+        remove_overlapping_annotations(&mut doc, page_id, &page_region_refs);
+    }
+
+    if mode == PdfRedactionMode::Destructive {
+        if let Some((idx, _)) = mapped_regions
+            .iter()
+            .enumerate()
+            .find(|(_, mapped)| !**mapped)
+        {
+            let region = &regions[idx];
+            return Err(RedactError::UnmappedText {
+                page: region.page,
+                entity_type: region.entity_type.clone(),
+            });
+        }
     }
 
     // Save the modified PDF
@@ -566,6 +882,28 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("anon_pdf_test_{}_{name}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn content_text_operands(content: &Content) -> String {
+        let mut text = String::new();
+        for op in &content.operations {
+            for operand in &op.operands {
+                append_operand_text(operand, &mut text);
+            }
+        }
+        text
+    }
+
+    fn append_operand_text(object: &Object, output: &mut String) {
+        match object {
+            Object::String(bytes, _) => output.push_str(&String::from_utf8_lossy(bytes)),
+            Object::Array(items) => {
+                for item in items {
+                    append_operand_text(item, output);
+                }
+            }
+            _ => {}
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -871,6 +1209,88 @@ mod tests {
 
         assert!(has_rect, "output should contain rectangle operation (re)");
         assert!(has_fill, "output should contain fill operation (f)");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_removes_extractable_pii_from_pdf_text_streams() {
+        let dir = test_dir("destructive_text_removal");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf(&input);
+
+        let original_text = crate::pdf_redact::extract::reconstruct_text(
+            &crate::pdf_redact::extract::extract_words(&input).unwrap(),
+        )
+        .text;
+        assert!(original_text.contains("john.smith@example.com"));
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 70.0,
+            y: 696.0,
+            width: 230.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let redacted_text = crate::pdf_redact::extract::reconstruct_text(
+            &crate::pdf_redact::extract::extract_words(&output).unwrap(),
+        )
+        .text;
+        assert!(
+            !redacted_text.contains("john.smith@example.com"),
+            "PII should not be recoverable through project PDF extraction: {redacted_text}"
+        );
+
+        let doc = Document::load(&output).unwrap();
+        let pages = doc.get_pages();
+        let page1_id = pages.get(&1).unwrap();
+        let content_data = doc.get_page_content(*page1_id).unwrap();
+        let content = Content::decode(&content_data).unwrap();
+        let text_operands = content_text_operands(&content);
+
+        assert!(
+            !text_operands.contains("john.smith@example.com"),
+            "PII should not remain in decoded PDF text operands: {text_operands}"
+        );
+        assert!(
+            content.operations.iter().any(|op| op.operator == "re"),
+            "visual masking rectangles should still be drawn"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_fails_closed_when_region_cannot_be_mapped_to_text() {
+        let dir = test_dir("unmapped_text_region");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf(&input);
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 500.0,
+            y: 500.0,
+            width: 20.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        let err = redact_pdf(&input, &output, &regions, "black")
+            .expect_err("unmapped text redaction should fail closed");
+        assert!(
+            err.to_string().contains("could not be mapped"),
+            "error should explain the fail-closed mapping problem: {err}"
+        );
+        assert!(
+            !output.exists(),
+            "fail-closed redaction should not write an overlay-only PDF"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1358,7 +1778,7 @@ mod tests {
             entity_type: "OTHER".to_string(),
         }];
 
-        redact_pdf(&input, &output, &regions, "black").unwrap();
+        visual_mask_pdf(&input, &output, &regions, "black").unwrap();
 
         // Annotation should be preserved
         let output_doc = Document::load(&output).unwrap();

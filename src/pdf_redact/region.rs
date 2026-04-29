@@ -2,12 +2,12 @@ use super::extract::ReconstructedPdfText;
 use super::{PdfWord, RedactionRegion};
 use crate::detection::Detection;
 
-/// Map text-domain PII detections to PDF page-coordinate visual masking regions.
+/// Map text-domain PII detections to PDF page-coordinate redaction regions.
 ///
 /// For each detection, finds PDF words whose byte spans overlap the detection
 /// range, computes the bounding box union of those words, applies padding, and
 /// emits a `RedactionRegion`. Detections with no overlapping words (e.g.
-/// whitespace-only) are silently skipped.
+/// whitespace-only) are skipped; callers decide whether that is a hard failure.
 ///
 /// This is the PDF equivalent of `image_redact::region::map_detections()`.
 pub fn map_detections(

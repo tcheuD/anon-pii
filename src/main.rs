@@ -641,6 +641,7 @@ fn main() -> io::Result<()> {
             threshold,
             fill_color,
             padding,
+            visual_mask_only,
         }) => {
             // 1. OCR: extract words with bounding boxes
             let words = match anon_pii::image_redact::ocr::extract_words(&input, "eng") {
@@ -700,6 +701,7 @@ fn main() -> io::Result<()> {
             threshold,
             fill_color,
             padding,
+            visual_mask_only,
         }) => {
             // 1. Extract words with bounding boxes from PDF
             let words = match anon_pii::pdf_redact::extract::extract_words(&input) {
@@ -711,14 +713,21 @@ fn main() -> io::Result<()> {
             };
 
             if words.is_empty() {
-                eprintln!("No text detected in PDF, copying as-is without visual masking");
-                if let Err(e) =
+                eprintln!("No text detected in PDF, copying as-is without redaction");
+                let result = if visual_mask_only {
+                    anon_pii::pdf_redact::redact::visual_mask_pdf(&input, &output, &[], &fill_color)
+                } else {
                     anon_pii::pdf_redact::redact::redact_pdf(&input, &output, &[], &fill_color)
-                {
+                };
+                if let Err(e) = result {
                     eprintln!("Error: {e}");
                     std::process::exit(1);
                 }
-                eprintln!("Visually masked 0 region(s) → {}", output.display());
+                if visual_mask_only {
+                    eprintln!("Visually masked 0 region(s) → {}", output.display());
+                } else {
+                    eprintln!("Redacted 0 region(s) → {}", output.display());
+                }
                 return Ok(());
             }
 
@@ -737,19 +746,42 @@ fn main() -> io::Result<()> {
                 padding,
             );
 
-            // 5. Render visual masking
-            if let Err(e) =
+            if !visual_mask_only && regions.len() != detections.len() {
+                eprintln!(
+                    "Error: one or more detected PDF spans could not be mapped to removable text; rerun with --visual-mask-only to allow overlay-only masking"
+                );
+                std::process::exit(1);
+            }
+
+            // 5. Render redaction or explicit visual masking
+            let result = if visual_mask_only {
+                anon_pii::pdf_redact::redact::visual_mask_pdf(
+                    &input,
+                    &output,
+                    &regions,
+                    &fill_color,
+                )
+            } else {
                 anon_pii::pdf_redact::redact::redact_pdf(&input, &output, &regions, &fill_color)
-            {
+            };
+            if let Err(e) = result {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
 
-            eprintln!(
-                "Visually masked {} region(s) → {}",
-                regions.len(),
-                output.display()
-            );
+            if visual_mask_only {
+                eprintln!(
+                    "Visually masked {} region(s) → {}",
+                    regions.len(),
+                    output.display()
+                );
+            } else {
+                eprintln!(
+                    "Redacted {} region(s) → {}",
+                    regions.len(),
+                    output.display()
+                );
+            }
         }
         Some(Commands::ListEntities) => {
             // Load custom patterns from config if provided
@@ -1531,7 +1563,7 @@ mod tests {
         }
 
         #[test]
-        fn test_pdf_cli_help_labels_current_mode_as_visual_masking() {
+        fn test_pdf_cli_help_defaults_to_destructive_redaction_with_visual_mask_option() {
             let mut cmd = Cli::command();
             let pdf = cmd
                 .find_subcommand_mut("pdf")
@@ -1539,12 +1571,12 @@ mod tests {
             let help = pdf.render_long_help().to_string();
 
             assert!(
-                help.contains("visual masking"),
-                "pdf help should describe the current overlay-only mode as visual masking:\n{help}"
+                help.contains("destructive"),
+                "pdf help should describe the default destructive redaction mode:\n{help}"
             );
             assert!(
-                !help.contains("redaction"),
-                "pdf help should avoid implying destructive redaction:\n{help}"
+                help.contains("--visual-mask-only"),
+                "pdf help should expose the explicit visual masking escape hatch:\n{help}"
             );
         }
 
@@ -1739,6 +1771,22 @@ mod tests {
                 String::from_utf8_lossy(&result.stderr)
             );
             assert!(output.exists(), "output PDF should be created");
+
+            let redacted_text = anon_pii::pdf_redact::extract::reconstruct_text(
+                &anon_pii::pdf_redact::extract::extract_words(&output).unwrap(),
+            )
+            .text;
+            for original in [
+                "john.doe@example.com",
+                "+1-555-123-4567",
+                "192.168.1.100",
+                "4532015112830366",
+            ] {
+                assert!(
+                    !redacted_text.contains(original),
+                    "redacted PDF output should not expose {original}: {redacted_text}"
+                );
+            }
 
             let _ = fs::remove_dir_all(&dir);
         }

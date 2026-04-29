@@ -66,6 +66,7 @@ fn extract_words_from_page(
 
     let mut words = Vec::new();
     let mut text_matrix = TextMatrix::identity();
+    let mut line_matrix = TextMatrix::identity();
     let mut current_encoding = None;
     let mut font_size: f64 = 12.0;
 
@@ -73,6 +74,7 @@ fn extract_words_from_page(
         match op.operator.as_str() {
             "BT" => {
                 text_matrix = TextMatrix::identity();
+                line_matrix = TextMatrix::identity();
             }
             "Tf" => {
                 if let Some(Object::Name(font_name)) = op.operands.first() {
@@ -84,7 +86,7 @@ fn extract_words_from_page(
             }
             "Tm" => {
                 if op.operands.len() >= 6 {
-                    text_matrix = TextMatrix {
+                    let matrix = TextMatrix {
                         a: object_to_f64(&op.operands[0]).unwrap_or(1.0),
                         b: object_to_f64(&op.operands[1]).unwrap_or(0.0),
                         c: object_to_f64(&op.operands[2]).unwrap_or(0.0),
@@ -92,17 +94,21 @@ fn extract_words_from_page(
                         e: object_to_f64(&op.operands[4]).unwrap_or(0.0),
                         f: object_to_f64(&op.operands[5]).unwrap_or(0.0),
                     };
+                    text_matrix = matrix;
+                    line_matrix = matrix;
                 }
             }
             "Td" | "TD" => {
                 if op.operands.len() >= 2 {
                     let tx = object_to_f64(&op.operands[0]).unwrap_or(0.0);
                     let ty = object_to_f64(&op.operands[1]).unwrap_or(0.0);
-                    text_matrix.translate(tx, ty);
+                    line_matrix.translate(tx, ty);
+                    text_matrix = line_matrix;
                 }
             }
             "T*" => {
-                text_matrix.translate(0.0, -font_size);
+                line_matrix.translate(0.0, -font_size);
+                text_matrix = line_matrix;
             }
             "Tj" | "TJ" => {
                 if let Some(encoding) = current_encoding {
@@ -123,7 +129,8 @@ fn extract_words_from_page(
                 }
             }
             "'" | "\"" => {
-                text_matrix.translate(0.0, -font_size);
+                line_matrix.translate(0.0, -font_size);
+                text_matrix = line_matrix;
                 if let Some(encoding) = current_encoding {
                     let text = collect_text_from_operands(encoding, &op.operands);
                     if !text.is_empty() {
@@ -148,6 +155,7 @@ fn extract_words_from_page(
     Ok(words)
 }
 
+#[derive(Clone, Copy)]
 struct TextMatrix {
     a: f64,
     b: f64,

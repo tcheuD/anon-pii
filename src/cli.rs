@@ -200,14 +200,14 @@ pub enum Commands {
         #[arg(long, default_value = "2")]
         padding: u32,
     },
-    /// Anonymize PII in PDF documents via text extraction and visual masking
+    /// Anonymize PII in PDF documents with destructive text redaction
     #[cfg(feature = "pdf")]
     Pdf {
         /// Input PDF file
         #[arg(value_name = "PATH")]
         input: PathBuf,
 
-        /// Output visually masked PDF file
+        /// Output redacted PDF file
         #[arg(short, long)]
         output: PathBuf,
 
@@ -215,13 +215,17 @@ pub enum Commands {
         #[arg(long, default_value = "0.5")]
         threshold: f64,
 
-        /// Fill color for visually masked regions
+        /// Fill color for redacted regions
         #[arg(long, default_value = "black")]
         fill_color: String,
 
         /// Padding around detected PII regions (points)
         #[arg(long, default_value = "2")]
         padding: f64,
+
+        /// Draw visual masks only; underlying PDF text may remain extractable
+        #[arg(long)]
+        visual_mask_only: bool,
     },
     /// Start anonymizing proxy server
     #[cfg(feature = "proxy")]
