@@ -308,7 +308,7 @@ fn collect_text_from_operands(encoding: &Encoding, operands: &[Object]) -> Strin
             _ => {}
         }
     }
-    text.trim().to_string()
+    text
 }
 
 fn estimate_text_width(text: &str, font_size: f64) -> f64 {
@@ -324,27 +324,6 @@ fn region_overlaps_box(region: &RedactionRegion, x: f64, y: f64, width: f64, hei
     region.x < box_right && region_right > x && region.y < box_top && region_top > y
 }
 
-fn replace_operand_text_with_spaces(encoding: &Encoding, object: &mut Object) -> bool {
-    match object {
-        Object::String(bytes, _) => {
-            let Ok(decoded) = Document::decode_text(encoding, bytes) else {
-                return false;
-            };
-            let replacement = " ".repeat(decoded.chars().count());
-            *bytes = Document::encode_text(encoding, &replacement);
-            true
-        }
-        Object::Array(items) => {
-            let mut replaced = false;
-            for item in items {
-                replaced |= replace_operand_text_with_spaces(encoding, item);
-            }
-            replaced
-        }
-        _ => false,
-    }
-}
-
 fn redact_text_showing_operation(
     op: &mut Operation,
     encoding: &Encoding,
@@ -353,30 +332,109 @@ fn redact_text_showing_operation(
     page_regions: &[(usize, &RedactionRegion)],
 ) -> Option<(f64, Vec<usize>)> {
     let text = collect_text_from_operands(encoding, &op.operands);
-    if text.is_empty() {
+    if text.trim().is_empty() {
         return None;
     }
 
     let (x, y) = text_matrix.position();
     let width = estimate_text_width(&text, font_size);
-    let matched_regions: Vec<usize> = page_regions
-        .iter()
-        .filter_map(|(idx, region)| {
-            region_overlaps_box(region, x, y, width, font_size).then_some(*idx)
-        })
-        .collect();
 
-    if !matched_regions.is_empty() {
-        let replaced = op
-            .operands
-            .iter_mut()
-            .any(|operand| replace_operand_text_with_spaces(encoding, operand));
-        if !replaced {
-            return None;
-        }
+    let mut text_run = TextRunState {
+        x,
+        y,
+        font_size,
+        advance: 0.0,
+    };
+    let mut matched_regions = Vec::new();
+    for operand in &mut op.operands {
+        matched_regions.extend(redact_operand_text_by_region(
+            encoding,
+            operand,
+            &mut text_run,
+            page_regions,
+        ));
     }
 
     Some((width, matched_regions))
+}
+
+#[derive(Clone, Copy)]
+struct TextRunState {
+    x: f64,
+    y: f64,
+    font_size: f64,
+    advance: f64,
+}
+
+fn redact_operand_text_by_region(
+    encoding: &Encoding,
+    object: &mut Object,
+    text_run: &mut TextRunState,
+    page_regions: &[(usize, &RedactionRegion)],
+) -> Vec<usize> {
+    match object {
+        Object::String(bytes, _) => {
+            let Ok(decoded) = Document::decode_text(encoding, bytes) else {
+                return Vec::new();
+            };
+            let char_width = text_run.font_size * 0.6;
+            let mut replacement = String::with_capacity(decoded.len());
+            let mut matched_regions = Vec::new();
+            let mut changed = false;
+
+            for ch in decoded.chars() {
+                let char_x = text_run.x + text_run.advance;
+                let char_matches: Vec<usize> = page_regions
+                    .iter()
+                    .filter_map(|(idx, region)| {
+                        region_overlaps_box(
+                            region,
+                            char_x,
+                            text_run.y,
+                            char_width,
+                            text_run.font_size,
+                        )
+                        .then_some(*idx)
+                    })
+                    .collect();
+
+                if !char_matches.is_empty() && !ch.is_whitespace() {
+                    replacement.push(' ');
+                    matched_regions.extend(char_matches);
+                    changed = true;
+                } else {
+                    replacement.push(ch);
+                }
+                text_run.advance += char_width;
+            }
+
+            if changed {
+                *bytes = Document::encode_text(encoding, &replacement);
+            }
+            matched_regions
+        }
+        Object::Array(items) => {
+            let mut matched_regions = Vec::new();
+            for item in items {
+                match item {
+                    Object::Integer(i) => {
+                        text_run.advance += -(*i as f64) / 1000.0 * text_run.font_size;
+                    }
+                    Object::Real(r) => {
+                        text_run.advance += -(*r as f64) / 1000.0 * text_run.font_size;
+                    }
+                    _ => matched_regions.extend(redact_operand_text_by_region(
+                        encoding,
+                        item,
+                        text_run,
+                        page_regions,
+                    )),
+                }
+            }
+            matched_regions
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn rewrite_page_text_operands(
@@ -1260,6 +1318,43 @@ mod tests {
         assert!(
             content.operations.iter().any(|op| op.operator == "re"),
             "visual masking rectangles should still be drawn"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn redact_preserves_unmatched_text_in_same_pdf_text_operation() {
+        let dir = test_dir("preserve_unmatched_text");
+        let input = dir.join("input.pdf");
+        let output = dir.join("output.pdf");
+        create_test_pdf(&input);
+
+        let regions = vec![RedactionRegion {
+            page: 1,
+            x: 122.0,
+            y: 696.0,
+            width: 160.0,
+            height: 20.0,
+            entity_type: "EMAIL_ADDRESS".to_string(),
+        }];
+
+        redact_pdf(&input, &output, &regions, "black").unwrap();
+
+        let doc = Document::load(&output).unwrap();
+        let pages = doc.get_pages();
+        let page1_id = pages.get(&1).unwrap();
+        let content_data = doc.get_page_content(*page1_id).unwrap();
+        let content = Content::decode(&content_data).unwrap();
+        let text_operands = content_text_operands(&content);
+
+        assert!(
+            text_operands.contains("Email:"),
+            "redaction should preserve text outside the selected region: {text_operands}"
+        );
+        assert!(
+            !text_operands.contains("john.smith@example.com"),
+            "redaction should remove the selected PII text: {text_operands}"
         );
 
         let _ = fs::remove_dir_all(&dir);

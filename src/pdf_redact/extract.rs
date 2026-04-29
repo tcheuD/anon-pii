@@ -113,17 +113,10 @@ fn extract_words_from_page(
             "Tj" | "TJ" => {
                 if let Some(encoding) = current_encoding {
                     let text = collect_text_from_operands(encoding, &op.operands);
-                    if !text.is_empty() {
+                    if !text.trim().is_empty() {
                         let (x, y) = text_matrix.position();
                         let width = estimate_text_width(&text, font_size);
-                        words.push(PdfWord {
-                            text,
-                            page: page_num,
-                            x,
-                            y,
-                            width,
-                            height: font_size,
-                        });
+                        push_words_from_text(&mut words, &text, page_num, x, y, font_size);
                         text_matrix.translate(width, 0.0);
                     }
                 }
@@ -133,17 +126,10 @@ fn extract_words_from_page(
                 text_matrix = line_matrix;
                 if let Some(encoding) = current_encoding {
                     let text = collect_text_from_operands(encoding, &op.operands);
-                    if !text.is_empty() {
+                    if !text.trim().is_empty() {
                         let (x, y) = text_matrix.position();
                         let width = estimate_text_width(&text, font_size);
-                        words.push(PdfWord {
-                            text,
-                            page: page_num,
-                            x,
-                            y,
-                            width,
-                            height: font_size,
-                        });
+                        push_words_from_text(&mut words, &text, page_num, x, y, font_size);
                         text_matrix.translate(width, 0.0);
                     }
                 }
@@ -153,6 +139,55 @@ fn extract_words_from_page(
     }
 
     Ok(words)
+}
+
+fn push_words_from_text(
+    words: &mut Vec<PdfWord>,
+    text: &str,
+    page: u32,
+    x: f64,
+    y: f64,
+    font_size: f64,
+) {
+    let char_width = font_size * 0.6;
+    let mut current = String::new();
+    let mut current_x = x;
+    let mut current_width = 0.0;
+    let mut offset = 0.0;
+
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !current.is_empty() {
+                words.push(PdfWord {
+                    text: std::mem::take(&mut current),
+                    page,
+                    x: current_x,
+                    y,
+                    width: current_width,
+                    height: font_size,
+                });
+                current_width = 0.0;
+            }
+        } else {
+            if current.is_empty() {
+                current_x = x + offset;
+            }
+            current.push(ch);
+            current_width += char_width;
+        }
+        offset += char_width;
+    }
+
+    if !current.is_empty() {
+        words.push(PdfWord {
+            text: current,
+            page,
+            x: current_x,
+            y,
+            width: current_width,
+            height: font_size,
+        });
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -222,7 +257,7 @@ fn collect_text_from_operands(encoding: &Encoding, operands: &[Object]) -> Strin
             _ => {}
         }
     }
-    text.trim().to_string()
+    text
 }
 
 fn estimate_text_width(text: &str, font_size: f64) -> f64 {
@@ -611,6 +646,34 @@ mod tests {
         assert!(
             text.contains("john.smith@example.com"),
             "extracted text should contain email"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_words_splits_text_showing_operations_into_words() {
+        let dir = std::env::temp_dir().join("anon-test-pdf-word-split");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let pdf_path = dir.join("test.pdf");
+        create_test_pdf(&pdf_path);
+
+        let words = extract_words(&pdf_path).expect("should extract words from test PDF");
+        let label = words
+            .iter()
+            .find(|word| word.text == "Email:")
+            .expect("label should be its own extracted word");
+        let email = words
+            .iter()
+            .find(|word| word.text == "john.smith@example.com")
+            .expect("email should be its own extracted word");
+
+        assert_eq!(label.page, email.page);
+        assert!(
+            email.x > label.x + label.width,
+            "email should have a tighter box after the label: label={label:?} email={email:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);

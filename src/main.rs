@@ -641,7 +641,6 @@ fn main() -> io::Result<()> {
             threshold,
             fill_color,
             padding,
-            visual_mask_only,
         }) => {
             // 1. OCR: extract words with bounding boxes
             let words = match anon_pii::image_redact::ocr::extract_words(&input, "eng") {
