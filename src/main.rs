@@ -14,7 +14,7 @@ use anon_pii::detection::{
     Anonymizer, Detection, MaskConfig, Operator, decrypt_encrypted, parse_encrypt_key,
 };
 use anon_pii::format::{DetectedFormat, detect_format, detect_json_indent};
-use anon_pii::mapping::Mapping;
+use anon_pii::mapping::{Mapping, MappingLoadStatus};
 use anon_pii::patterns::{MAX_INPUT_SIZE, PATTERNS};
 #[cfg(feature = "proxy")]
 use anon_pii::proxy;
@@ -513,6 +513,7 @@ fn main() -> io::Result<()> {
             restore_bare,
             output,
             decrypt_key,
+            allow_unsigned_mapping,
         }) => {
             let resolved_input = input.or(input_positional);
             let content = read_input(resolved_input.as_ref())?;
@@ -532,14 +533,30 @@ fn main() -> io::Result<()> {
 
             if has_mapping {
                 let mapping_content = fs::read_to_string(&mapping_path)?;
-                let mut m: Mapping = match serde_json::from_str(&mapping_content) {
-                    Ok(m) => m,
+                let loaded = if allow_unsigned_mapping {
+                    Mapping::from_persisted_json_allow_legacy(&mapping_content)
+                } else {
+                    Mapping::from_persisted_json(&mapping_content)
+                        .map(|m| (m, MappingLoadStatus::Verified))
+                };
+                let (m, status) = match loaded {
+                    Ok(loaded) => loaded,
+                    Err(anon_pii::mapping::MappingIntegrityError::MissingIntegrity) => {
+                        eprintln!(
+                            "Error: unsigned mapping file. Re-run with --allow-unsigned-mapping to restore a legacy map, then save a new mapping to add integrity metadata."
+                        );
+                        std::process::exit(1);
+                    }
                     Err(e) => {
                         eprintln!("Error: invalid mapping file: {e}");
                         std::process::exit(1);
                     }
                 };
-                m.rebuild_caches();
+                if status == MappingLoadStatus::LegacyUnsigned {
+                    eprintln!(
+                        "Warning: legacy unsigned mapping file loaded; re-save the mapping to add integrity metadata"
+                    );
+                }
                 result = if restore_bare {
                     eprintln!(
                         "Warning: --restore-bare restores unbracketed tokens from untrusted model output; use only for trusted legacy content"
@@ -1168,10 +1185,11 @@ fn main() -> io::Result<()> {
                 }
             };
 
+            let mapping_json = anonymizer.mapping.to_persisted_json_pretty()?;
+
             // Handle --include-mapping: append mapping as comment at end
             let final_output = if cli.include_mapping {
                 eprintln!("Warning: --include-mapping embeds original PII values in the output");
-                let mapping_json = serde_json::to_string_pretty(&anonymizer.mapping)?;
                 format!("{}\n\n/* MAPPING:\n{}\n*/", result.trim_end(), mapping_json)
             } else {
                 result
@@ -1217,7 +1235,6 @@ fn main() -> io::Result<()> {
                 None => (default_mapping_path(), true),
             };
             prepare_mapping_parent(&mapping_path, private_parent)?;
-            let mapping_json = serde_json::to_string_pretty(&anonymizer.mapping)?;
             write_mapping_file(&mapping_path, &mapping_json)?;
             if cli.verbose {
                 eprintln!("Mapping saved to {:?}", mapping_path);
@@ -1226,7 +1243,6 @@ fn main() -> io::Result<()> {
             // Output mapping to stderr
             if cli.mapping_stderr {
                 eprintln!("WARNING: mapping output contains original PII values in cleartext");
-                let mapping_json = serde_json::to_string_pretty(&anonymizer.mapping)?;
                 eprintln!("{}", mapping_json);
             }
 

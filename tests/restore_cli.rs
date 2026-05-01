@@ -1,19 +1,25 @@
+use anon_pii::mapping::Mapping;
 use std::fs;
 use std::process::Command;
 
-fn write_mapping(dir: &std::path::Path) -> std::path::PathBuf {
-    let path = dir.join("restore-map.json");
-    fs::write(
-        &path,
-        r#"{
+const LEGACY_MAPPING_JSON: &str = r#"{
   "session_id": "test-session",
   "created_at": "2026-05-01T00:00:00+00:00",
   "mappings": {
     "[EMAIL_ADDRESS_deadbeef]": "alice@example.com"
   }
-}"#,
-    )
-    .unwrap();
+}"#;
+
+fn write_legacy_mapping(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("restore-map-legacy.json");
+    fs::write(&path, LEGACY_MAPPING_JSON).unwrap();
+    path
+}
+
+fn write_mapping(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("restore-map.json");
+    let (mapping, _) = Mapping::from_persisted_json_allow_legacy(LEGACY_MAPPING_JSON).unwrap();
+    fs::write(&path, mapping.to_persisted_json_pretty().unwrap()).unwrap();
     path
 }
 
@@ -75,6 +81,59 @@ fn restore_bare_flag_enables_legacy_bare_token_restore() {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
         "Contact alice@example.com; legacy alice@example.com\n"
+    );
+}
+
+#[test]
+fn restore_unsigned_mapping_requires_explicit_opt_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let mapping = write_legacy_mapping(dir.path());
+    let input = dir.path().join("response.txt");
+    fs::write(&input, "Contact [EMAIL_ADDRESS_deadbeef]").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_anon-pii"))
+        .arg("restore")
+        .arg("--mapping")
+        .arg(mapping)
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "restore should reject unsigned mapping"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--allow-unsigned-mapping"),
+        "stderr should explain the opt-in flag:\n{stderr}"
+    );
+}
+
+#[test]
+fn restore_allow_unsigned_mapping_restores_legacy_map() {
+    let dir = tempfile::tempdir().unwrap();
+    let mapping = write_legacy_mapping(dir.path());
+    let input = dir.path().join("response.txt");
+    fs::write(&input, "Contact [EMAIL_ADDRESS_deadbeef]").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_anon-pii"))
+        .arg("restore")
+        .arg("--allow-unsigned-mapping")
+        .arg("--mapping")
+        .arg(mapping)
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "restore failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Contact alice@example.com\n"
     );
 }
 
