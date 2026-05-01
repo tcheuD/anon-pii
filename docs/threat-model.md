@@ -30,7 +30,7 @@ Method: STRIDE-lite (repo-evidence based)
 1. Input arrives via stdin/file (`src/main.rs`) or HTTP (`src/proxy/handler.rs`, `src/ui/mod.rs`).
 2. Detection pipeline normalizes input, scans patterns, optional NER, then replaces spans with generated tokens (`src/detection.rs`).
 3. CLI token-mode mappings are persisted locally for restore; proxy/UI mappings are memory-only unless explicit persistence is enabled (`src/main.rs`, `src/proxy/mod.rs`, `src/ui/mod.rs`).
-4. Proxy forwards anonymized requests upstream and restores bracketed tokens in responses (`src/proxy/anthropic.rs`, `src/proxy/sse.rs`).
+4. Proxy forwards anonymized requests upstream and restores bracketed tokens in responses (`src/proxy/anthropic.rs`, `src/proxy/sse.rs`); UI `/api/restore` also restores bracketed tokens by default (`src/ui/mod.rs`).
 
 ## Threat scenarios
 
@@ -38,7 +38,7 @@ Method: STRIDE-lite (repo-evidence based)
 |---|---|---|---|---|---|---|
 | T1 | Information Disclosure | Local attacker or malware reads mapping files containing original PII. | High confidentiality loss. | Private dir/file permissions + atomic writes in CLI, plus proxy/UI memory-only defaults unless `--persist-mapping` is supplied. | CLI mappings and any explicitly persisted proxy/UI mappings are still plaintext at rest. Backups/indexers can expose them. Mapping-at-rest encryption is out of scope for first public release until key management is designed. | Medium |
 | T2 | Spoofing / Elevation | Any local process can call proxy/UI endpoints (no auth layer), potentially using forwarded API credentials. | Unauthorized local usage, cost exposure, potential data misuse. | Loopback bind + host validation (`src/proxy/mod.rs`, `src/ui/mod.rs`). Launch docs explicitly prohibit tunnels, container port exposure, and shared-host use without external controls. | Same-host adversary remains in trust zone. Bearer-token or socket ACL auth is a post-launch hardening item because proxy auth must not collide with upstream provider credentials. | High |
-| T3 | Tampering | Maliciously modified mapping file causes incorrect or malicious restoration behavior. | Data integrity loss, accidental disclosure/corruption. | Proxy restore path uses bracketed-only restoration (`src/proxy/handler.rs:199`, `src/proxy/anthropic.rs:35`). | CLI/UI restore paths can use broad restore logic on untrusted mapping content (`src/main.rs:335`, `src/ui/mod.rs:340`, `src/mapping.rs:189`). | Medium |
+| T3 | Tampering | Maliciously modified mapping file causes incorrect or malicious restoration behavior. | Data integrity loss, accidental disclosure/corruption. | Proxy and UI restore paths use bracketed-only restoration (`src/proxy/handler.rs`, `src/proxy/anthropic.rs`, `src/ui/mod.rs`). | CLI restore can still use broad restore logic on untrusted mapping content (`src/main.rs`, `src/mapping.rs`). | Medium |
 | T4 | Denial of Service | Large payloads, long streams, or heavy detection/NER workloads exhaust CPU/memory. | Service slowdown/outage. | Input/body/SSE limits: 50 MB core max (`src/patterns.rs:331`), 10 MB proxy body (`src/proxy/handler.rs:15`), SSE caps/timeouts (`src/proxy/handler.rs:18`, `src/proxy/handler.rs:21`, `src/proxy/handler.rs:286`), UI max input (`src/ui/mod.rs:250`). | 50 MB text plus regex/NER remains expensive; no adaptive rate limit in UI/CLI path. | Medium |
 | T5 | Information Disclosure | Redaction misses (false negatives) send sensitive data upstream unmasked. | High confidentiality loss. | Normalization + decoding + validators + overlap handling, format-aware paths, and prominent README/proxy documentation caveats. | Pattern/NER-based detection is inherently incomplete for novel formats, domain-specific entities, split secrets, non-Latin text, and ambiguous names. | High |
 | T6 | Tampering / Supply Chain | Compromised model/runtime artifacts lead to malicious inference code or poisoned outputs. | Integrity compromise and possible code-execution vector. | SHA-256-pinned model downloads (`src/ner/download.rs:12`, `src/ner/download.rs:80`) and ORT path allowlist validation (`src/ner/ml.rs:6`, `src/ner/ml.rs:19`, `src/ner/ml.rs:79`). | Trust still anchored to pinned hashes and allowed filesystem prefixes; no signature/attestation workflow. | Medium |
@@ -46,14 +46,14 @@ Method: STRIDE-lite (repo-evidence based)
 
 ## Existing strengths
 - Proxy header forwarding is allowlisted to reduce credential/header leakage (`src/proxy/handler.rs:23`, `src/proxy/handler.rs:37`).
-- Proxy restore path uses bracketed-token mode to reduce token-injection restoration risk (`src/proxy/handler.rs:199`, `src/proxy/anthropic.rs:39`).
+- Proxy/UI restore paths use bracketed-token mode to reduce token-injection restoration risk (`src/proxy/handler.rs`, `src/proxy/anthropic.rs`, `src/ui/mod.rs`).
 - Proxy/UI mapping persistence is disabled by default; explicit persistence is required before reversible mappings are written by those HTTP modes.
 - Host header checks and loopback binding reduce network-exposed attack surface (`src/proxy/mod.rs:114`, `src/ui/mod.rs:372`).
 
 ## Recommended mitigations (next iteration)
 1. Protect mapping at rest: optional encryption with OS keychain key for CLI and explicitly persisted HTTP-mode mappings.
 2. Add local auth for HTTP surfaces: random bearer token using a header that cannot be confused with upstream provider credentials, or Unix domain socket mode with filesystem ACLs.
-3. Add mapping integrity checks: HMAC/signature on mapping files; strict mode to restore only bracketed tokens in CLI/UI unless explicitly overridden.
+3. Add mapping integrity checks: HMAC/signature on mapping files; consider strict mode or explicit opt-in for bare-token restoration in CLI workflows.
 4. Add abuse controls: configurable request timeout, lower default size ceilings for proxy/UI, and optional per-minute rate limiting.
 5. Improve redaction assurance: corpus-based coverage tests and custom pattern packs per organization/domain.
 6. Add structured security audit logs: request id, mode, counts only (never raw PII), with optional local retention policy.
