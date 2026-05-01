@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -115,11 +115,23 @@ static ML_NER_AVAILABLE: OnceLock<bool> = OnceLock::new();
 #[derive(Clone)]
 struct UiState {
     persist_mapping: bool,
+    mapping_path: PathBuf,
 }
 
 impl UiState {
     fn new(persist_mapping: bool) -> Self {
-        Self { persist_mapping }
+        Self {
+            persist_mapping,
+            mapping_path: mapping_path(),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_mapping_path(persist_mapping: bool, mapping_path: PathBuf) -> Self {
+        Self {
+            persist_mapping,
+            mapping_path,
+        }
     }
 }
 
@@ -139,16 +151,20 @@ fn mapping_path() -> PathBuf {
     mapping_dir().join("mapping.json")
 }
 
-fn save_mapping(mapping: &Mapping) {
-    let dir = mapping_dir();
-    if let Err(e) = std::fs::create_dir_all(&dir) {
+fn save_mapping(path: &Path, mapping: &Mapping) {
+    let Some(dir) = path.parent() else {
+        eprintln!("Warning: mapping path has no parent directory");
+        return;
+    };
+
+    if let Err(e) = std::fs::create_dir_all(dir) {
         eprintln!("Warning: could not create mapping dir: {e}");
         return;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
 
     let json = match serde_json::to_string_pretty(mapping) {
@@ -191,14 +207,13 @@ fn save_mapping(mapping: &Mapping) {
         }
     }
 
-    if let Err(e) = std::fs::rename(&tmp, mapping_path()) {
+    if let Err(e) = std::fs::rename(&tmp, path) {
         eprintln!("Warning: could not rename mapping file: {e}");
     }
 }
 
-fn load_mapping() -> Option<Mapping> {
-    let path = mapping_path();
-    let content = std::fs::read_to_string(&path).ok()?;
+fn load_mapping(path: &Path) -> Option<Mapping> {
+    let content = std::fs::read_to_string(path).ok()?;
     let mut mapping: Mapping = serde_json::from_str(&content).ok()?;
     mapping.rebuild_caches();
     Some(mapping)
@@ -325,7 +340,7 @@ async fn anonymize(State(state): State<UiState>, Json(req): Json<AnonymizeReques
     // Persist mapping to ~/.anon-pii/mapping.json (same as CLI)
     let io_time_ms = if state.persist_mapping {
         let io_start = Instant::now();
-        save_mapping(&anonymizer.mapping);
+        save_mapping(&state.mapping_path, &anonymizer.mapping);
         io_start.elapsed().as_secs_f64() * 1000.0
     } else {
         0.0
@@ -355,7 +370,7 @@ async fn restore(State(state): State<UiState>, Json(req): Json<RestoreRequest>) 
     if let Some(m) = req.mapping {
         mapping.mappings = m;
     } else if state.persist_mapping {
-        if let Some(saved) = load_mapping() {
+        if let Some(saved) = load_mapping(&state.mapping_path) {
             mapping = saved;
         } else {
             return (StatusCode::BAD_REQUEST, "Aucune correspondance disponible").into_response();
@@ -368,7 +383,7 @@ async fn restore(State(state): State<UiState>, Json(req): Json<RestoreRequest>) 
             .into_response();
     }
     mapping.rebuild_caches();
-    let result = mapping.restore(&req.text);
+    let result = mapping.restore_bracketed(&req.text);
 
     Json(RestoreResponse { result }).into_response()
 }
@@ -382,7 +397,7 @@ async fn get_mapping(State(state): State<UiState>) -> Response {
             .into_response();
     }
 
-    match load_mapping() {
+    match load_mapping(&state.mapping_path) {
         Some(m) => Json(MappingResponse {
             mapping: m.mappings,
             session_id: m.session_id,
@@ -478,13 +493,17 @@ mod tests {
     }
 
     fn app_with_persistence(persist_mapping: bool) -> Router {
+        app_with_mapping_path(persist_mapping, mapping_path())
+    }
+
+    fn app_with_mapping_path(persist_mapping: bool, mapping_path: PathBuf) -> Router {
         Router::new()
             .route("/", get(index))
             .route("/api/anonymize", post(anonymize))
             .route("/api/restore", post(restore))
             .route("/api/mapping", get(get_mapping))
             .route("/api/capabilities", get(capabilities))
-            .with_state(UiState::new(persist_mapping))
+            .with_state(UiState::with_mapping_path(persist_mapping, mapping_path))
     }
 
     #[tokio::test]
@@ -585,6 +604,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_restore_with_uploaded_mapping_uses_bracketed_only() {
+        let token = "[EMAIL_ADDRESS_deadbeef]";
+        let bare_token = "EMAIL_ADDRESS_deadbeef";
+        let restore_body = serde_json::json!({
+            "text": format!("{token} {bare_token}"),
+            "mapping": {
+                token: "test@example.org"
+            }
+        });
+
+        let resp = app()
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/api/restore")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&restore_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        let data: RestoreResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(data.result, "test@example.org EMAIL_ADDRESS_deadbeef");
+    }
+
+    #[tokio::test]
     async fn test_restore_without_mapping_rejected_when_persistence_disabled() {
         let body = serde_json::json!({
             "text": "[TOKEN_test]"
@@ -607,6 +657,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_without_mapping_uses_saved() {
+        let temp = tempfile::tempdir().unwrap();
+        let mapping_path = temp.path().join("ui-restore-mapping.json");
+
         // Anonymize first with explicit server-side persistence enabled.
         let body = serde_json::json!({
             "text": "email: saved@example.org",
@@ -614,7 +667,7 @@ mod tests {
             "threshold": 0.0
         });
 
-        let resp = app_with_persistence(true)
+        let resp = app_with_mapping_path(true, mapping_path.clone())
             .oneshot(
                 HttpRequest::builder()
                     .method("POST")
@@ -631,18 +684,18 @@ mod tests {
             .unwrap();
         let anon_data: AnonymizeResponse = serde_json::from_slice(&bytes).unwrap();
 
-        // Re-save the mapping right before restore to avoid race with parallel tests
-        let mut mapping = Mapping::new();
-        mapping.mappings = anon_data.mapping.clone();
-        mapping.rebuild_caches();
-        save_mapping(&mapping);
-
-        // Restore WITHOUT providing mapping — should use saved one
+        // Restore WITHOUT providing mapping — should use the mapping saved by anonymize.
+        let token = anon_data
+            .mapping
+            .keys()
+            .find(|token| token.starts_with("[EMAIL_ADDRESS_"))
+            .unwrap();
+        let bare_token = token.trim_start_matches('[').trim_end_matches(']');
         let restore_body = serde_json::json!({
-            "text": anon_data.result
+            "text": format!("{} {bare_token}", anon_data.result)
         });
 
-        let resp = app_with_persistence(true)
+        let resp = app_with_mapping_path(true, mapping_path)
             .oneshot(
                 HttpRequest::builder()
                     .method("POST")
@@ -659,6 +712,9 @@ mod tests {
             .await
             .unwrap();
         let data: RestoreResponse = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(data.result, "email: saved@example.org");
+        assert_eq!(
+            data.result,
+            format!("email: saved@example.org {bare_token}")
+        );
     }
 }
