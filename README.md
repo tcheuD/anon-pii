@@ -155,10 +155,12 @@ More runnable examples are in [demo/README.md](demo/README.md).
 
 Default token mode persists a reversible mapping so `anon-pii restore` can put
 original values back after an AI round trip. Use `--mapping` to choose a
-different file, `--mapping-stderr` for review pipelines, or `--include-mapping`
-only when you intentionally want the sensitive map embedded in supported output.
-Mapping files are written atomically with owner-only permissions where the
-platform supports them. Proxy and UI modes keep mappings in memory by default;
+different file. Bare tokens remain unchanged unless explicitly enabled; use
+`--restore-bare` only for trusted legacy output that needs unbracketed token
+restoration. Use `--mapping-stderr` for review pipelines, or
+`--include-mapping` only when you intentionally want the sensitive map embedded
+in supported output. Mapping files are written atomically with owner-only
+permissions where the platform supports them. Proxy and UI modes keep mappings in memory by default;
 pass `--persist-mapping` when you intentionally need server-side mappings on
 disk for debugging or manual restore workflows.
 
@@ -256,6 +258,7 @@ sequenceDiagram
 | `INPUT_POSITIONAL` |  |  | Input file (positional, optional) |
 | `--input` | `-i` |  | Input file (flag, optional — overrides positional) |
 | `--mapping` | `-m` |  | Mapping file (defaults to ~/.anon-pii/mapping.json) |
+| `--restore-bare` |  |  | Restore bare tokens in addition to bracketed tokens (compatibility mode; unsafe for untrusted model output) |
 | `--output` | `-o` |  | Output file (writes to stdout if not provided) |
 | `--decrypt-key` |  |  | AES decryption key, hex-encoded (decrypts ENC[...] tokens) Must be 32 (128-bit), 48 (192-bit), or 64 (256-bit) hex characters |
 <!-- END CLI_RESTORE -->
