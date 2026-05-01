@@ -510,6 +510,7 @@ fn main() -> io::Result<()> {
             input_positional,
             input,
             mapping,
+            restore_bare,
             output,
             decrypt_key,
         }) => {
@@ -539,7 +540,14 @@ fn main() -> io::Result<()> {
                     }
                 };
                 m.rebuild_caches();
-                result = m.restore(&result);
+                result = if restore_bare {
+                    eprintln!(
+                        "Warning: --restore-bare restores unbracketed tokens from untrusted model output; use only for trusted legacy content"
+                    );
+                    m.restore(&result)
+                } else {
+                    m.restore_bracketed(&result)
+                };
                 eprintln!("Restored {} entities from mapping", m.mappings.len());
             }
 

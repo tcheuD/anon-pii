@@ -425,6 +425,8 @@ fn readme_explains_mapping_persistence_and_risk() {
         "Default token mode persists a reversible mapping",
         concat!("`~/.anon-pii/", "mapping", ".json`"),
         "`--mapping`",
+        "`--restore-bare`",
+        "Bare tokens remain unchanged unless explicitly enabled",
         "`--mapping-stderr`",
         "`--include-mapping`",
         "owner-only permissions",

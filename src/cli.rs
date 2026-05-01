@@ -131,6 +131,10 @@ pub enum Commands {
         #[arg(short, long)]
         mapping: Option<PathBuf>,
 
+        /// Restore bare tokens in addition to bracketed tokens (compatibility mode; unsafe for untrusted model output)
+        #[arg(long)]
+        restore_bare: bool,
+
         /// Output file (writes to stdout if not provided)
         #[arg(short, long)]
         output: Option<PathBuf>,
