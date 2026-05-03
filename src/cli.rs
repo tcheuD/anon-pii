@@ -143,6 +143,10 @@ pub enum Commands {
         /// Must be 32 (128-bit), 48 (192-bit), or 64 (256-bit) hex characters
         #[arg(long)]
         decrypt_key: Option<String>,
+
+        /// Allow restoring from legacy mapping files that do not have integrity metadata
+        #[arg(long)]
+        allow_unsigned_mapping: bool,
     },
     /// List all supported entity types
     ListEntities,

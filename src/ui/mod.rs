@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::detection::Anonymizer;
 use crate::format::{DetectedFormat, detect_format, detect_json_indent};
-use crate::mapping::Mapping;
+use crate::mapping::{Mapping, MappingLoadStatus};
 use crate::patterns::MAX_INPUT_SIZE;
 
 // ─── NER capability detection ────────────────────────────────────────────────
@@ -167,7 +167,7 @@ fn save_mapping(path: &Path, mapping: &Mapping) {
         let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
 
-    let json = match serde_json::to_string_pretty(mapping) {
+    let json = match mapping.to_persisted_json_pretty() {
         Ok(j) => j,
         Err(e) => {
             eprintln!("Warning: could not serialize mapping: {e}");
@@ -214,8 +214,18 @@ fn save_mapping(path: &Path, mapping: &Mapping) {
 
 fn load_mapping(path: &Path) -> Option<Mapping> {
     let content = std::fs::read_to_string(path).ok()?;
-    let mut mapping: Mapping = serde_json::from_str(&content).ok()?;
-    mapping.rebuild_caches();
+    let (mapping, status) = match Mapping::from_persisted_json_allow_legacy(&content) {
+        Ok(loaded) => loaded,
+        Err(e) => {
+            eprintln!("Warning: could not load persisted mapping: {e}");
+            return None;
+        }
+    };
+    if status == MappingLoadStatus::LegacyUnsigned {
+        eprintln!(
+            "Warning: legacy unsigned mapping file loaded; re-save the mapping to add integrity metadata"
+        );
+    }
     Some(mapping)
 }
 

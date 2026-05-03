@@ -1,11 +1,59 @@
+use crate::encoding::encode_lower_hex;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::fmt;
+
+const MAPPING_INTEGRITY_VERSION: u8 = 1;
+const MAPPING_INTEGRITY_ALGORITHM: &str = "sha256";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MappingIntegrity {
+    pub version: u8,
+    pub algorithm: String,
+    pub digest: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MappingLoadStatus {
+    Verified,
+    LegacyUnsigned,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum MappingIntegrityError {
+    InvalidJson(String),
+    MissingIntegrity,
+    UnsupportedVersion(u8),
+    UnsupportedAlgorithm(String),
+    Mismatch,
+}
+
+impl fmt::Display for MappingIntegrityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidJson(e) => write!(f, "invalid mapping JSON: {e}"),
+            Self::MissingIntegrity => write!(f, "mapping integrity metadata is missing"),
+            Self::UnsupportedVersion(version) => {
+                write!(f, "unsupported mapping integrity version: {version}")
+            }
+            Self::UnsupportedAlgorithm(algorithm) => {
+                write!(f, "unsupported mapping integrity algorithm: {algorithm}")
+            }
+            Self::Mismatch => write!(f, "mapping integrity check failed"),
+        }
+    }
+}
+
+impl std::error::Error for MappingIntegrityError {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Mapping {
     pub session_id: String,
     pub created_at: String,
     pub mappings: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<MappingIntegrity>,
     #[serde(skip)]
     pub reverse: HashMap<(String, String), String>,
     #[serde(skip)]
@@ -70,6 +118,7 @@ impl Mapping {
             session_id,
             created_at,
             mappings: HashMap::new(),
+            integrity: None,
             reverse: HashMap::new(),
             max_entries: None,
             insertion_order: VecDeque::new(),
@@ -158,6 +207,97 @@ impl Mapping {
         }
     }
 
+    pub fn to_persisted_json_pretty(&self) -> serde_json::Result<String> {
+        let mut value = serde_json::to_value(self)?;
+        if let serde_json::Value::Object(ref mut object) = value {
+            object.insert(
+                "integrity".to_string(),
+                serde_json::to_value(self.integrity_metadata())?,
+            );
+        }
+        serde_json::to_string_pretty(&value)
+    }
+
+    pub fn from_persisted_json(content: &str) -> Result<Self, MappingIntegrityError> {
+        let mut mapping = Self::parse_persisted_json(content)?;
+        mapping.verify_integrity()?;
+        mapping.rebuild_caches();
+        Ok(mapping)
+    }
+
+    pub fn from_persisted_json_allow_legacy(
+        content: &str,
+    ) -> Result<(Self, MappingLoadStatus), MappingIntegrityError> {
+        let mut mapping = Self::parse_persisted_json(content)?;
+
+        let status = match mapping.verify_integrity() {
+            Ok(()) => MappingLoadStatus::Verified,
+            Err(MappingIntegrityError::MissingIntegrity) => MappingLoadStatus::LegacyUnsigned,
+            Err(e) => return Err(e),
+        };
+
+        mapping.rebuild_caches();
+        Ok((mapping, status))
+    }
+
+    fn parse_persisted_json(content: &str) -> Result<Self, MappingIntegrityError> {
+        serde_json::from_str(content).map_err(|e| MappingIntegrityError::InvalidJson(e.to_string()))
+    }
+
+    fn verify_integrity(&self) -> Result<(), MappingIntegrityError> {
+        let integrity = self
+            .integrity
+            .as_ref()
+            .ok_or(MappingIntegrityError::MissingIntegrity)?;
+
+        if integrity.version != MAPPING_INTEGRITY_VERSION {
+            return Err(MappingIntegrityError::UnsupportedVersion(integrity.version));
+        }
+        if integrity.algorithm != MAPPING_INTEGRITY_ALGORITHM {
+            return Err(MappingIntegrityError::UnsupportedAlgorithm(
+                integrity.algorithm.clone(),
+            ));
+        }
+
+        let expected = self.integrity_digest();
+        if constant_time_eq(integrity.digest.as_bytes(), expected.as_bytes()) {
+            Ok(())
+        } else {
+            Err(MappingIntegrityError::Mismatch)
+        }
+    }
+
+    fn integrity_metadata(&self) -> MappingIntegrity {
+        MappingIntegrity {
+            version: MAPPING_INTEGRITY_VERSION,
+            algorithm: MAPPING_INTEGRITY_ALGORITHM.to_string(),
+            digest: self.integrity_digest(),
+        }
+    }
+
+    fn integrity_digest(&self) -> String {
+        let payload = self.integrity_payload();
+        let bytes =
+            serde_json::to_vec(&payload).expect("mapping integrity payload should serialize");
+        let digest = Sha256::digest(&bytes);
+        encode_lower_hex(&digest)
+    }
+
+    fn integrity_payload(&self) -> serde_json::Value {
+        let mappings: BTreeMap<&str, &str> = self
+            .mappings
+            .iter()
+            .map(|(token, original)| (token.as_str(), original.as_str()))
+            .collect();
+
+        serde_json::json!({
+            "version": MAPPING_INTEGRITY_VERSION,
+            "session_id": self.session_id,
+            "created_at": self.created_at,
+            "mappings": mappings,
+        })
+    }
+
     /// Build a lookup of bare tokens (without brackets) for fuzzy restore.
     fn bare_token_map(&self) -> HashMap<String, String> {
         self.mappings
@@ -236,6 +376,18 @@ impl Mapping {
 
         result
     }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    let mut diff = 0u8;
+    for (a, b) in left.iter().zip(right) {
+        diff |= a ^ b;
+    }
+    diff == 0
 }
 
 #[cfg(test)]
@@ -484,6 +636,64 @@ mod tests {
         let t4 = restored.add("EMAIL_ADDRESS", "d@test.com");
         assert_eq!(restored.mappings.len(), 3);
         assert!(is_valid_token(&t4, "EMAIL_ADDRESS"));
+    }
+
+    #[test]
+    fn test_persisted_json_includes_verified_integrity_metadata() {
+        let (mapping, token) = make_mapping_with_email();
+
+        let json = mapping.to_persisted_json_pretty().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["integrity"]["version"], 1);
+        assert_eq!(value["integrity"]["algorithm"], "sha256");
+        assert_eq!(value["integrity"]["digest"].as_str().unwrap().len(), 64);
+
+        let loaded = Mapping::from_persisted_json(&json).unwrap();
+        assert_eq!(loaded.restore_bracketed(&token), "john@example.com");
+    }
+
+    #[test]
+    fn test_persisted_json_rejects_tampered_original_value() {
+        let (mapping, _token) = make_mapping_with_email();
+        let json = mapping.to_persisted_json_pretty().unwrap();
+        let tampered = json.replace("john@example.com", "attacker@example.com");
+
+        assert_eq!(
+            Mapping::from_persisted_json(&tampered).unwrap_err(),
+            MappingIntegrityError::Mismatch
+        );
+    }
+
+    #[test]
+    fn test_persisted_json_rejects_tampered_token_and_session_metadata() {
+        let (mapping, token) = make_mapping_with_email();
+        let json = mapping.to_persisted_json_pretty().unwrap();
+        let tampered_token = json.replace(&token, "[EMAIL_ADDRESS_deadbeef]");
+        let tampered_session = json.replace(&mapping.session_id, "0000000000000000");
+
+        assert_eq!(
+            Mapping::from_persisted_json(&tampered_token).unwrap_err(),
+            MappingIntegrityError::Mismatch
+        );
+        assert_eq!(
+            Mapping::from_persisted_json(&tampered_session).unwrap_err(),
+            MappingIntegrityError::Mismatch
+        );
+    }
+
+    #[test]
+    fn test_legacy_unsigned_mapping_rejected_by_default() {
+        let (mapping, token) = make_mapping_with_email();
+        let json = serde_json::to_string_pretty(&mapping).unwrap();
+
+        assert_eq!(
+            Mapping::from_persisted_json(&json).unwrap_err(),
+            MappingIntegrityError::MissingIntegrity
+        );
+
+        let (loaded, status) = Mapping::from_persisted_json_allow_legacy(&json).unwrap();
+        assert_eq!(status, MappingLoadStatus::LegacyUnsigned);
+        assert_eq!(loaded.restore_bracketed(&token), "john@example.com");
     }
 
     #[test]
