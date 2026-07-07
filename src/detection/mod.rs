@@ -180,40 +180,31 @@ impl Anonymizer {
     pub fn anonymize_sql(&mut self, text: &str) -> (String, Vec<Detection>) {
         let mut all_detections = Vec::new();
         let mut output = String::with_capacity(text.len());
-        let bytes = text.as_bytes();
-        let mut i = 0;
+        let mut chars = text.chars().peekable();
 
-        while i < bytes.len() {
-            if bytes[i] == b'\'' {
+        while let Some(c) = chars.next() {
+            if c == '\'' {
                 // Extract the string literal (handling escaped quotes '')
-                let start = i;
-                i += 1; // skip opening quote
                 let mut literal = String::new();
-                while i < bytes.len() {
-                    if bytes[i] == b'\'' {
-                        if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                while let Some(cj) = chars.next() {
+                    if cj == '\'' {
+                        if chars.peek() == Some(&'\'') {
                             literal.push('\'');
-                            i += 2;
+                            chars.next();
                         } else {
                             break;
                         }
                     } else {
-                        literal.push(bytes[i] as char);
-                        i += 1;
+                        literal.push(cj);
                     }
-                }
-                if i < bytes.len() {
-                    i += 1; // skip closing quote
                 }
                 let (anon, dets) = self.anonymize_text(&literal);
                 all_detections.extend(dets);
                 output.push('\'');
                 output.push_str(&anon.replace('\'', "''"));
                 output.push('\'');
-                let _ = start; // suppress unused warning
             } else {
-                output.push(bytes[i] as char);
-                i += 1;
+                output.push(c);
             }
         }
 

@@ -21,36 +21,41 @@ pub(super) fn collapse_newlines(text: &str) -> Option<(String, Vec<usize>)> {
     let mut collapsed = String::with_capacity(text.len());
     // Maps each byte index in `collapsed` to the corresponding byte index in `text`.
     let mut pos_map: Vec<usize> = Vec::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
         // Detect whitespace runs containing a newline and collapse to one space.
-        if bytes[i].is_ascii_whitespace() {
+        // ASCII whitespace is always single-byte, so run indices are byte indices.
+        if c.is_ascii_whitespace() {
             let run_start = i;
-            let mut found_newline = bytes[i] == b'\n';
-            let mut j = i + 1;
-            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
-                if bytes[j] == b'\n' {
+            let mut found_newline = c == '\n';
+            let mut run: Vec<(usize, char)> = vec![(i, c)];
+            while let Some(&(j, cj)) = chars.peek() {
+                if !cj.is_ascii_whitespace() {
+                    break;
+                }
+                if cj == '\n' {
                     found_newline = true;
                 }
-                j += 1;
+                run.push((j, cj));
+                chars.next();
             }
             if found_newline {
                 collapsed.push(' ');
                 pos_map.push(run_start);
-                i = j;
             } else {
                 // Whitespace run without a newline — keep as-is.
-                while i < j {
-                    collapsed.push(bytes[i] as char);
-                    pos_map.push(i);
-                    i += 1;
+                for (j, cj) in run {
+                    collapsed.push(cj);
+                    pos_map.push(j);
                 }
             }
         } else {
-            collapsed.push(bytes[i] as char);
-            pos_map.push(i);
-            i += 1;
+            // Push the full character; pos_map gets one entry per byte of it so
+            // byte offsets into `collapsed` map back to the char's start in `text`.
+            collapsed.push(c);
+            for _ in 0..c.len_utf8() {
+                pos_map.push(i);
+            }
         }
     }
     Some((collapsed, pos_map))

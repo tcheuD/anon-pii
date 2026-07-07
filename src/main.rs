@@ -50,9 +50,17 @@ fn read_input(path: Option<&PathBuf>) -> io::Result<String> {
         }
         None => {
             let mut buffer = String::new();
+            // Read one byte past the limit so oversized input fails hard instead
+            // of being silently truncated (partial anonymization is a leak risk).
             io::stdin()
-                .take(MAX_INPUT_SIZE)
+                .take(MAX_INPUT_SIZE + 1)
                 .read_to_string(&mut buffer)?;
+            if buffer.len() as u64 > MAX_INPUT_SIZE {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Stdin input too large (max {} bytes)", MAX_INPUT_SIZE),
+                ));
+            }
             Ok(buffer)
         }
     }

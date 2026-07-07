@@ -100,3 +100,32 @@ fn test_multiline_full_stress_payload() {
     assert!(result.contains("[CREDIT_CARD_"));
     assert!(!result.contains("4111"));
 }
+
+#[test]
+fn test_multiline_credit_card_with_multibyte_utf8_before_break() {
+    let mut a = Anonymizer::new(0.0);
+    // Accented text before the split card: collapse_newlines must keep byte
+    // offsets aligned so the detection maps back to the correct original span.
+    let input = "Réglé au café par Gaël — CC: 4111\n1111 1111 1111 (fin)";
+    let (result, dets) = a.anonymize_text(input);
+    let cc = dets.iter().find(|d| d.entity_type == "CREDIT_CARD");
+    assert!(
+        cc.is_some(),
+        "Card split across newline after multibyte chars should be detected: {:?}",
+        dets
+    );
+    let cc = cc.unwrap();
+    // The recorded span must slice the original text on char boundaries and
+    // start exactly at the card number.
+    assert!(input.is_char_boundary(cc.start) && input.is_char_boundary(cc.end));
+    assert!(
+        input[cc.start..cc.end].starts_with("4111"),
+        "Span must map back to the card digits, got: {:?}",
+        &input[cc.start..cc.end]
+    );
+    assert!(result.contains("[CREDIT_CARD_"));
+    assert!(
+        result.contains("café"),
+        "Non-PII accented text must survive intact"
+    );
+}

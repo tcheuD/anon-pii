@@ -34,3 +34,23 @@ fn test_sql_escaped_quotes() {
     assert!(dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
     assert!(result.contains("[EMAIL_ADDRESS_"));
 }
+
+#[test]
+fn test_sql_multibyte_utf8_literal_not_corrupted() {
+    let mut a = Anonymizer::new(0.0);
+    // Accented characters inside and outside literals must not be corrupted
+    // by byte-wise scanning.
+    let sql =
+        "INSERT INTO clients VALUES ('Gaël Müller, réf café', 'mail: john@test.com') -- N° dossier";
+    let (result, dets) = a.anonymize_sql(sql);
+    assert!(dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
+    assert!(result.contains("[EMAIL_ADDRESS_"));
+    assert!(
+        result.contains("-- N° dossier"),
+        "Non-literal SQL must pass through byte-identical: {result}"
+    );
+    assert!(
+        !result.contains('\u{FFFD}') && !result.contains("GaÃ«l"),
+        "Multibyte characters must not be corrupted: {result}"
+    );
+}
