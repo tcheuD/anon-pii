@@ -62,6 +62,11 @@ pub struct Mapping {
     insertion_order: VecDeque<String>,
     #[serde(skip)]
     has_warned_eviction: bool,
+    /// Number of entries evicted this session because `max_entries` was hit.
+    /// A restore of an evicted token silently no-ops, so callers that need to
+    /// guarantee full restorability should check this is zero.
+    #[serde(skip)]
+    evicted_count: usize,
 }
 
 fn days_to_ymd(days: u64) -> (u64, u64, u64) {
@@ -123,7 +128,14 @@ impl Mapping {
             max_entries: None,
             insertion_order: VecDeque::new(),
             has_warned_eviction: false,
+            evicted_count: 0,
         }
+    }
+
+    /// Number of mappings evicted this session due to the `max_entries` cap.
+    /// Non-zero means some tokens are no longer restorable.
+    pub fn evicted_count(&self) -> usize {
+        self.evicted_count
     }
 
     pub fn with_max_entries(mut self, max: usize) -> Self {
@@ -169,6 +181,7 @@ impl Mapping {
 
     fn evict_oldest(&mut self) {
         if let Some(old_token) = self.insertion_order.pop_front() {
+            self.evicted_count += 1;
             if let Some(original) = self.mappings.remove(&old_token) {
                 if let Some(inner) = old_token
                     .strip_prefix('[')
@@ -562,6 +575,22 @@ mod tests {
         assert!(m.mappings.contains_key(&t2));
         assert!(m.mappings.contains_key(&t3));
         assert!(m.mappings.contains_key(&t4));
+    }
+
+    #[test]
+    fn test_evicted_count_signals_lost_tokens() {
+        let mut m = Mapping::new().with_max_entries(2);
+        assert_eq!(m.evicted_count(), 0);
+        m.add("EMAIL_ADDRESS", "a@test.com");
+        m.add("EMAIL_ADDRESS", "b@test.com");
+        assert_eq!(m.evicted_count(), 0, "no eviction under capacity");
+        m.add("EMAIL_ADDRESS", "c@test.com");
+        m.add("EMAIL_ADDRESS", "d@test.com");
+        assert!(
+            m.evicted_count() >= 2,
+            "eviction must be programmatically observable, got {}",
+            m.evicted_count()
+        );
     }
 
     #[test]
