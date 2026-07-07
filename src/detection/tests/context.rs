@@ -139,3 +139,24 @@ fn test_column_header_many_rows_below_header() {
         result
     );
 }
+
+#[test]
+fn test_context_window_counts_chars_not_bytes_cjk() {
+    // Keyword "telephone" sits ~31 characters (~91 bytes) before the phone
+    // number, separated by 3-byte CJK filler. A byte-based 80-window would drop
+    // the keyword (91 > 80 bytes) and leave the score at base 0.7; a char-based
+    // 80-window keeps it (31 <= 80 chars) and boosts the score.
+    let filler: String = std::iter::repeat('\u{3042}').take(30).collect();
+    let input = format!("telephone {filler} 06 12 34 56 78");
+    let mut a = Anonymizer::new(0.0);
+    let (_, dets) = a.anonymize_text(&input);
+    let phone = dets
+        .iter()
+        .find(|d| d.entity_type == "FR_PHONE_NUMBER")
+        .expect("phone detected past CJK filler");
+    assert!(
+        phone.score > 0.7,
+        "keyword within char-window should boost score, got {}",
+        phone.score
+    );
+}

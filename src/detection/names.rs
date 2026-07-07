@@ -82,8 +82,13 @@ pub(super) fn extend_person_span(text: &str, span_text: &str, span_end: usize) -
         {
             // Find the actual position of this word in the remaining text
             if let Some(word_offset) = text[end..].find(trimmed) {
-                end = end + word_offset + trimmed.len();
-                result = text[span_end - span_text.len()..end].to_string();
+                let new_end = end + word_offset + trimmed.len();
+                // Append the exact original bytes we just consumed. Re-slicing
+                // from `span_end - span_text.len()` would assume the detected
+                // span_text has the same byte length as its source span, which
+                // is false when NER returns normalized text.
+                result.push_str(&text[end..new_end]);
+                end = new_end;
             } else {
                 break;
             }
