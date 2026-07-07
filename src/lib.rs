@@ -18,3 +18,6 @@ pub mod proxy;
 pub mod ui;
 #[cfg(feature = "xlsx")]
 pub mod xlsx;
+
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;

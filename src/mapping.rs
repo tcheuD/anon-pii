@@ -102,14 +102,20 @@ impl Default for Mapping {
 
 impl Mapping {
     pub fn new() -> Self {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
         let session_id = crypto_random_hex(8);
 
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        // Wall-clock time is unavailable on bare wasm32 (SystemTime::now panics);
+        // created_at is informational metadata, so epoch-zero is fine there.
+        #[cfg(not(target_arch = "wasm32"))]
+        let secs = {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let secs: u64 = 0;
         let day_secs = secs % 86400;
         let (year, month, day) = days_to_ymd(secs / 86400);
         let created_at = format!(
