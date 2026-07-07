@@ -585,13 +585,25 @@ pub fn redact_pdf(
     )
 }
 
-/// Visually mask regions of a PDF by drawing opaque rectangles without rewriting text streams.
+/// Visually mask regions of a PDF by drawing opaque rectangles over them.
+///
+/// # Security warning
+///
+/// This does NOT remove the underlying text from the PDF content stream. The
+/// covered text remains fully extractable with `pdftotext`, copy-paste, or any
+/// PDF parser - the rectangles only hide it visually. **Never use this to
+/// redact PII in a document you will share.** Use [`redact_pdf`] (destructive
+/// mode), which rewrites the content stream and removes the text.
 pub fn visual_mask_pdf(
     input: &Path,
     output: &Path,
     regions: &[RedactionRegion],
     fill_color: &str,
 ) -> Result<(), RedactError> {
+    eprintln!(
+        "Warning: visual_mask_pdf only draws boxes; the underlying text is still \
+         extractable (pdftotext/copy-paste). Use destructive redaction to remove PII."
+    );
     redact_pdf_with_mode(
         input,
         output,

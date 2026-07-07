@@ -144,6 +144,12 @@ impl ProxyState {
         }
         #[cfg(not(unix))]
         {
+            // On non-Unix platforms we cannot set 0600; the mapping file (which
+            // holds original PII in cleartext) may be readable by other local
+            // users. See SECURITY.md.
+            eprintln!(
+                "Warning: mapping file written without restrictive permissions on this platform"
+            );
             tokio::fs::write(&tmp_path, &mapping_json).await?;
         }
 

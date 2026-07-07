@@ -201,6 +201,9 @@ fn save_mapping(path: &Path, mapping: &Mapping) {
     }
     #[cfg(not(unix))]
     {
+        // No 0600 equivalent here; the cleartext mapping file may be readable
+        // by other local users on this platform. See SECURITY.md.
+        eprintln!("Warning: mapping file written without restrictive permissions on this platform");
         if let Err(e) = std::fs::write(&tmp, &json) {
             eprintln!("Warning: could not write mapping: {e}");
             return;
