@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 RUSTFLAGS='--cfg getrandom_backend="wasm_js"' \
-  cargo build --release --target wasm32-unknown-unknown
+  cargo build --release --target wasm32-unknown-unknown --features ner-lite
 wasm-bindgen --target web --no-typescript \
   --out-dir docs/playground/pkg \
   target/wasm32-unknown-unknown/release/anon_pii.wasm

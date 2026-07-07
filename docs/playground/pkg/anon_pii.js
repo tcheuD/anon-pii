@@ -46,7 +46,8 @@ export class Engine {
         return ret >>> 0;
     }
     /**
-     * threshold matches the CLI default (0.5).
+     * threshold matches the CLI default (0.5); heuristic PERSON detection
+     * is enabled when the ner-lite feature is compiled in.
      */
     constructor() {
         const ret = wasm.engine_new();

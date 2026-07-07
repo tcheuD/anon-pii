@@ -8,6 +8,9 @@ use wasm_bindgen::prelude::*;
 use crate::detection::Anonymizer;
 use crate::patterns::PATTERNS;
 
+#[cfg(feature = "ner-lite")]
+use crate::ner::heuristic::HeuristicNerDetector;
+
 /// A stateful engine session: anonymize keeps a local mapping so that
 /// restore can put original values back, exactly like the CLI.
 #[wasm_bindgen]
@@ -17,12 +20,14 @@ pub struct Engine {
 
 #[wasm_bindgen]
 impl Engine {
-    /// threshold matches the CLI default (0.5).
+    /// threshold matches the CLI default (0.5); heuristic PERSON detection
+    /// is enabled when the ner-lite feature is compiled in.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Engine {
-        Engine {
-            anon: Anonymizer::new(0.5),
-        }
+        let mut anon = Anonymizer::new(0.5);
+        #[cfg(feature = "ner-lite")]
+        anon.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+        Engine { anon }
     }
 
     /// Anonymize text. Returns a JSON string:
