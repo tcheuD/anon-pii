@@ -58,7 +58,7 @@ leptess = { version = "=0.14.0", optional = true }
 lopdf = { version = "=0.40.0", optional = true }
 
 # XLSX spreadsheet parsing — behind "xlsx" feature, pinned for supply chain safety
-calamine = { version = "=0.34.0", optional = true }
+calamine = { version = "=0.35.0", optional = true }
 
 # NER (ML-based) — behind "ner" feature
 ort = { version = "=2.0.0-rc.12", features = ["load-dynamic"], optional = true }
