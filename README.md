@@ -134,12 +134,16 @@ echo 'Error for user john@example.com on F-GRHK' | anon-pii
 echo '{"email": "john@example.com", "count": 42}' | anon-pii
 # Output: {"count": 42, "email": "[EMAIL_ADDRESS_c3d4e5f6]"}
 
-# Redact instead of tokenize
+# Redact: remove PII entirely (empty string)
 echo 'User john@example.com logged in' | anon-pii --operator redact
-# Output: User [REDACTED] logged in
+# Output: User  logged in
 
-# Mask with partial visibility
-echo 'Card: 4111111111111111' | anon-pii --operator mask --mask-from-end
+# Replace with a fixed label (custom operator)
+echo 'User john@example.com logged in' | anon-pii --operator custom --replace-with 'REDACTED'
+# Output: User REDACTED logged in
+
+# Mask, leaving the last 4 characters visible
+echo 'Card: 4111111111111111' | anon-pii --operator mask --mask-count 12
 # Output: Card: ************1111
 
 # Roundtrip: anonymize, share, restore
