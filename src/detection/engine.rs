@@ -476,8 +476,10 @@ impl Anonymizer {
             }
         }
 
-        // Sort by position asc, then span length desc, then score desc
-        // Matches Python/Presidio overlap resolution: position-first
+        // Sort by position asc, then span length desc, then score desc, then
+        // entity_type asc as a final deterministic tiebreak. Without the last
+        // key, two detections identical in position/length/score would resolve
+        // in unstable order, making output depend on the sort implementation.
         detections.sort_by(|a, b| {
             a.start
                 .cmp(&b.start)
@@ -487,6 +489,7 @@ impl Anonymizer {
                         .partial_cmp(&a.score)
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
+                .then_with(|| a.entity_type.cmp(&b.entity_type))
         });
 
         // Remove overlapping detections (keep first = longest/highest score)

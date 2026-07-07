@@ -12,15 +12,20 @@ impl Anonymizer {
         if keywords.is_empty() {
             return false;
         }
-        // 1. Local window check (fast path)
-        let mut window_start = start.saturating_sub(CONTEXT_WINDOW);
-        let mut window_end = (end + CONTEXT_WINDOW).min(text.len());
-        while !text.is_char_boundary(window_start) {
-            window_start += 1;
-        }
-        while !text.is_char_boundary(window_end) {
-            window_end -= 1;
-        }
+        // 1. Local window check (fast path). CONTEXT_WINDOW is a count of
+        //    CHARACTERS, not bytes: on multibyte text (e.g. CJK, 3 bytes/char)
+        //    a byte window would cover far fewer characters than intended and
+        //    miss context keywords. char_indices boundaries are always valid.
+        let window_start = text[..start]
+            .char_indices()
+            .nth_back(CONTEXT_WINDOW - 1)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let window_end = text[end..]
+            .char_indices()
+            .nth(CONTEXT_WINDOW)
+            .map(|(i, _)| end + i)
+            .unwrap_or(text.len());
         let window = &text[window_start..window_end];
         let lower = window.to_lowercase();
         if keywords.iter().any(|kw| lower.contains(*kw)) {

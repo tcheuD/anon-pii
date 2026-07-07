@@ -84,9 +84,10 @@ use us::US_PATTERNS;
 
 /// All PII patterns aggregated into a single slice.
 ///
-/// Pattern order affects overlap resolution: when two patterns match at the same position,
-/// the one appearing earlier in the array wins. Categories are ordered from most specific
-/// to most general.
+/// Overlap resolution does NOT use array order: overlapping detections are
+/// resolved in `engine.rs` by (position, longer span, higher score, entity_type).
+/// Array order only sets the order in which detections are produced; categories
+/// are listed most-specific to most-general for readability.
 pub const PATTERNS: &[PiiPattern] = &{
     // Use const array concatenation to build the master PATTERNS array.
     // This preserves the &[PiiPattern] type and zero runtime cost.
