@@ -925,8 +925,8 @@ fn main() -> io::Result<()> {
                 None
             };
 
-            eprintln!("{}", "Supported entity types:".bold());
-            eprintln!();
+            println!("{}", "Supported entity types:".bold());
+            println!();
 
             let mut seen = std::collections::HashSet::new();
 
@@ -962,7 +962,7 @@ fn main() -> io::Result<()> {
                     } else {
                         String::new()
                     };
-                    eprintln!(
+                    println!(
                         "  {:<tw$}  {}{}",
                         p.entity_type.green(),
                         p.name,
@@ -983,7 +983,7 @@ fn main() -> io::Result<()> {
                         } else {
                             String::new()
                         };
-                        eprintln!(
+                        println!(
                             "  {:<tw$}  {} [custom]{}",
                             r.entity_type.green(),
                             r.name,
@@ -1001,7 +1001,7 @@ fn main() -> io::Result<()> {
                 } else {
                     "heuristic"
                 };
-                eprintln!(
+                println!(
                     "  {:<tw$}  NER-based person detection ({backend})",
                     "PERSON".green(),
                     tw = type_width
