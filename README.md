@@ -49,15 +49,17 @@ and restores the real values in Claude's reply. The PII never leaves your machin
 
 ### Pre-built binaries (no Rust required)
 
-Download the latest binary for your platform from the
-[Releases page](https://github.com/tcheuD/anon-pii/releases/latest)
-(Linux x86_64, macOS x86_64, macOS aarch64), then:
+Each tagged release publishes binaries for Linux x86_64, macOS x86_64, and macOS
+aarch64 on the [Releases page](https://github.com/tcheuD/anon-pii/releases). Once
+a release is available, download the archive for your platform and:
 
 ```bash
 tar xzf anon-pii-*.tar.gz
 sudo mv anon-pii /usr/local/bin/
 anon-pii --help
 ```
+
+If no release is published yet, build from source (below).
 
 ### From source
 
