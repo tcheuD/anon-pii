@@ -124,5 +124,8 @@ fn test_multiline_credit_card_with_multibyte_utf8_before_break() {
         &input[cc.start..cc.end]
     );
     assert!(result.contains("[CREDIT_CARD_"));
-    assert!(result.contains("café"), "Non-PII accented text must survive intact");
+    assert!(
+        result.contains("café"),
+        "Non-PII accented text must survive intact"
+    );
 }

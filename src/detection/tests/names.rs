@@ -339,7 +339,7 @@ fn test_email_thread_realistic_format() {
     a.set_ner_detector(Box::new(HeuristicNerDetector::new()));
     let input = r#"Gaël FONTAINE
 mar. 27 janv. 16:45
-À Mathilde, moi
+À Camille, moi
 
 Hello @Damien DUPONT,
 
@@ -369,7 +369,7 @@ example-air.com"#;
         "FONTAINE should be anonymized"
     );
     assert!(!result.contains("DUPONT"), "DUPONT should be anonymized");
-    assert!(!result.contains("LEROY"), "LEROY should be anonymized");
+    assert!(!result.contains("BERNARD"), "BERNARD should be anonymized");
     // Bare first names should also be caught by the name consistency pass
     // (they appear as part of full "Firstname LASTNAME" elsewhere in the text).
     assert!(
@@ -377,8 +377,8 @@ example-air.com"#;
         "Bare 'Gaël' should be anonymized by consistency pass"
     );
     assert!(
-        !result.contains("Mathilde"),
-        "Bare 'Mathilde' should be anonymized by consistency pass"
+        !result.contains("Camille"),
+        "Bare 'Camille' should be anonymized by consistency pass"
     );
 
     // Email and phone should be caught
