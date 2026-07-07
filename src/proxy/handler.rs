@@ -316,21 +316,31 @@ async fn handle_streaming(
     let mut utf8_buf: Vec<u8> = Vec::new();
     // Buffer for incomplete SSE lines split across chunks
     let mut line_buf = String::new();
+    // Once a buffer limit is exceeded, restoration state is unreliable; drop all
+    // further content (fail closed) rather than risk passing tokens unrestored.
+    let mut poisoned = false;
 
     let processed_stream = byte_stream.map(move |chunk_result| {
         match chunk_result {
             Ok(chunk) => {
+                if poisoned {
+                    return Ok::<_, reqwest::Error>(Bytes::new());
+                }
                 utf8_buf.extend_from_slice(&chunk);
 
                 // Guard against unbounded buffer growth from upstream
                 if utf8_buf.len() > MAX_SSE_BUFFER_SIZE {
                     eprintln!(
-                        "Warning: SSE utf8_buf exceeded {} bytes, truncating",
+                        "Warning: SSE utf8_buf exceeded {} bytes, aborting stream (fail closed)",
                         MAX_SSE_BUFFER_SIZE
                     );
                     utf8_buf.clear();
                     line_buf.clear();
-                    return Ok::<_, reqwest::Error>(Bytes::new());
+                    poisoned = true;
+                    // SSE comment line: protocol-safe, ignored by event parsers.
+                    return Ok::<_, reqwest::Error>(Bytes::from(
+                        ": anon-pii proxy aborted stream (buffer limit exceeded)\n\n",
+                    ));
                 }
 
                 // Find the last valid UTF-8 boundary
@@ -366,10 +376,15 @@ async fn handle_streaming(
                 // Guard line_buf growth
                 if line_buf.len() > MAX_SSE_BUFFER_SIZE {
                     eprintln!(
-                        "Warning: SSE line_buf exceeded {} bytes, flushing",
+                        "Warning: SSE line_buf exceeded {} bytes, aborting stream (fail closed)",
                         MAX_SSE_BUFFER_SIZE
                     );
                     line_buf.clear();
+                    utf8_buf.clear();
+                    poisoned = true;
+                    return Ok::<_, reqwest::Error>(Bytes::from(
+                        ": anon-pii proxy aborted stream (buffer limit exceeded)\n\n",
+                    ));
                 }
 
                 utf8_buf = remainder;
