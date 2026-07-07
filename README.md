@@ -11,6 +11,24 @@ compliance guarantee and it cannot prove that a payload is fully anonymized.
 Always evaluate it against your own data, policies, and risk tolerance before
 production use.
 
+## Try it in 10 seconds
+
+```bash
+echo 'Error for user john@acme.com (IP 10.0.0.5) card 4111111111111111' \
+  | anon-pii | claude -p "what failed?" | anon-pii restore
+```
+
+`anon-pii` detects the email, IP, and card, sends only opaque tokens to Claude,
+and restores the real values in Claude's reply. The PII never leaves your machine.
+
+## Why anon-pii?
+
+- **One static binary** - no Python, no Docker, no services to run (unlike Presidio / llm-guard).
+- **Reversible by default** - anonymize on the way out, restore original values on the way back from the LLM.
+- **63 entity types / 99 patterns across 13 countries**, with checksum validation (Luhn, IBAN, etc.) and context scoring to reduce false positives.
+- **Fast** - ~59k lines/sec (regex-only), viable for piping production logs. Reproduce with `cargo run --release --example benchmark`.
+- **Format-aware** - JSON / CSV / SQL structure preserved; text, images (OCR), and PDFs supported.
+
 ## Security & Privacy Notice
 
 - **Mapping files contain original PII.** The default token operator saves
@@ -29,29 +47,16 @@ production use.
 
 ## Installation
 
-### From crates.io (once published)
+### Pre-built binaries (no Rust required)
+
+Download the latest binary for your platform from the
+[Releases page](https://github.com/tcheuD/anon-pii/releases/latest)
+(Linux x86_64, macOS x86_64, macOS aarch64), then:
 
 ```bash
-# Default (regex-only, no NER)
-cargo install anon-pii
-
-# With heuristic name detection
-cargo install anon-pii --features ner-lite
-
-# With reverse proxy + web UI + REST API
-cargo install anon-pii --features proxy
-
-# With image redaction (requires Tesseract)
-cargo install anon-pii --features image
-
-# With PDF redaction
-cargo install anon-pii --features pdf
-
-# With XLSX format detection scaffold
-cargo install anon-pii --features xlsx
-
-# Recommended full build (heuristic NER + proxy, no ML deps)
-cargo install anon-pii --features ner-lite,proxy
+tar xzf anon-pii-*.tar.gz
+sudo mv anon-pii /usr/local/bin/
+anon-pii --help
 ```
 
 ### From source
