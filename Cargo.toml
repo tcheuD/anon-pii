@@ -1,6 +1,6 @@
 [package]
 name = "anon-pii"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.87"
 description = "Fast CLI tool to anonymize PII in debug data — regex patterns, optional NER, anonymizing reverse proxy"
