@@ -5,7 +5,7 @@ use super::super::*;
 #[test]
 fn test_aircraft_fr() {
     let mut a = Anonymizer::new(0.0);
-    let (result, _) = a.anonymize_text("aircraft F-HOPA ready");
+    let (result, _) = a.anonymize_text("aircraft F-TEST ready");
     assert!(result.contains("[AIRCRAFT_REGISTRATION_"));
 }
 
@@ -33,7 +33,7 @@ fn test_aircraft_us_two_letter_suffix() {
 #[test]
 fn test_crew_code_with_context() {
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) = a.anonymize_text("pilot: JDU is on duty");
+    let (result, dets) = a.anonymize_text("pilot: ZKP is on duty");
     assert!(dets.iter().any(|d| d.entity_type == "CREW_CODE"));
     assert!(result.contains("[CREW_CODE_"));
 }
@@ -41,7 +41,7 @@ fn test_crew_code_with_context() {
 #[test]
 fn test_crew_code_without_context() {
     let mut a = Anonymizer::new(0.0);
-    let (_, dets) = a.anonymize_text("hello JDU world");
+    let (_, dets) = a.anonymize_text("hello ZKP world");
     assert!(!dets.iter().any(|d| d.entity_type == "CREW_CODE"));
 }
 
@@ -125,16 +125,16 @@ fn test_crew_code_blocklist_airport_codes() {
 fn test_crew_code_real_codes_still_detected() {
     let mut a = Anonymizer::new(0.0);
     // Real crew codes with context should still work
-    let (result, dets) = a.anonymize_text("pilote JDU en service avec copilote PLR");
+    let (result, dets) = a.anonymize_text("pilote ZKP en service avec copilote WQD");
     assert!(
         dets.iter()
-            .any(|d| d.entity_type == "CREW_CODE" && d.original == "JDU"),
-        "Real crew code JDU should still be detected"
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "ZKP"),
+        "Crew code ZKP should still be detected"
     );
     assert!(
         dets.iter()
-            .any(|d| d.entity_type == "CREW_CODE" && d.original == "PLR"),
-        "Real crew code PLR should still be detected"
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "WQD"),
+        "Real crew code WQD should still be detected"
     );
     assert!(result.contains("[CREW_CODE_"));
 }
@@ -143,7 +143,7 @@ fn test_crew_code_real_codes_still_detected() {
 fn test_utf8_context_window() {
     let mut a = Anonymizer::new(0.0);
     // French accented text with crew code context — should not panic
-    let input = "L'équipage était composé du pilote JDU et du copilote André résumé";
+    let input = "L'équipage était composé du pilote ZKP et du copilote André résumé";
     let (result, dets) = a.anonymize_text(input);
     assert!(dets.iter().any(|d| d.entity_type == "CREW_CODE"));
     assert!(result.contains("[CREW_CODE_"));

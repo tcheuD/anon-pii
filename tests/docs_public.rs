@@ -436,3 +436,38 @@ fn readme_explains_mapping_persistence_and_risk() {
         assert!(readme.contains(snippet), "README should mention {snippet}");
     }
 }
+
+#[test]
+fn no_known_real_identifiers_in_public_text() {
+    // Identifiers confirmed real during the 2026-07 PII audit. Constructed from
+    // fragments so this guard file itself never contains them verbatim.
+    let forbidden: Vec<String> = vec![
+        format!("F-GRH{}", "K"),
+        format!("F-HOP{}", "A"),
+        format!("JD{}", "U"),
+        format!("jdupon{}", "t@"),
+        format!("mmartine{}", "z@"),
+        format!("brunea{}", "u@"),
+    ];
+    let mut scan: Vec<std::path::PathBuf> = vec!["README.md".into()];
+    for dir in ["docs", "src/detection/tests", "demo"] {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                if e.path().is_file() {
+                    scan.push(e.path());
+                }
+            }
+        }
+    }
+    for path in scan {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for f in &forbidden {
+            assert!(
+                !text.contains(f.as_str()),
+                "forbidden real identifier {f:?} found in {path:?}"
+            );
+        }
+    }
+}

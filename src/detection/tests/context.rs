@@ -43,34 +43,34 @@ fn test_tabular_crew_codes_with_login_context() {
       ------- ------------------------- ----------------- --------------- ------------- ------------ ------------
        Login   Email                     Leave ID          Duty IDs        Mapping IDs   Start        End
       ------- ------------------------- ----------------- --------------- ------------- ------------ ------------
-       JDU     jdupont@example-air.com     26062001          65880001        90001         2026-03-01   2026-03-01
-       MMA     mmartinez@example-air.com   26072001          65100001        90002         2026-03-02   2026-03-02
-       BRN     bruneau@example-air.com     26055001          65090001        90003         2026-03-03   2026-03-03
+       ZKP     zpetit@example-air.com     26062001          65880001        90001         2026-03-01   2026-03-01
+       VQM     vmercier@example-air.com   26072001          65100001        90002         2026-03-02   2026-03-02
+       XRL     xrenard@example-air.com     26055001          65090001        90003         2026-03-03   2026-03-03
       ------- ------------------------- ----------------- --------------- ------------- ------------ ------------"#;
     let (result, dets) = a.anonymize_text(input);
 
     // Crew codes should be anonymized (Login header provides context)
     assert!(
         dets.iter().any(|d| d.entity_type == "CREW_CODE"),
-        "Crew codes (JDU, MMA, BRN) should be detected with 'Login' context.\nDetections: {:?}\nResult: {}",
+        "Crew codes (ZKP, VQM, XRL) should be detected with 'Login' context.\nDetections: {:?}\nResult: {}",
         dets,
         result
     );
-    assert!(!result.contains("JDU"), "JDU should be anonymized");
-    assert!(!result.contains("MMA"), "MMA should be anonymized");
-    assert!(!result.contains("BRN"), "BRN should be anonymized");
+    assert!(!result.contains("ZKP"), "ZKP should be anonymized");
+    assert!(!result.contains("VQM"), "VQM should be anonymized");
+    assert!(!result.contains("XRL"), "XRL should be anonymized");
 
     // Emails should be anonymized
     assert!(
-        !result.contains("jdupont@example-air.com"),
+        !result.contains("zpetit@example-air.com"),
         "Email should be anonymized"
     );
     assert!(
-        !result.contains("mmartinez@example-air.com"),
+        !result.contains("vmercier@example-air.com"),
         "Email should be anonymized"
     );
     assert!(
-        !result.contains("bruneau@example-air.com"),
+        !result.contains("xrenard@example-air.com"),
         "Email should be anonymized"
     );
 }
@@ -95,7 +95,7 @@ fn test_column_header_no_false_positive_wrong_column() {
 fn test_column_header_context_with_duty_keyword() {
     // "Duty" is also a CREW_CODE context keyword — test it as a column header
     let mut a = Anonymizer::new(0.0);
-    let input = "Duty    Name\n------  ------\nJDU     Someone\nMMA     Another";
+    let input = "Duty    Name\n------  ------\nZKP     Someone\nVQM     Another";
     let (result, dets) = a.anonymize_text(input);
     assert!(
         dets.iter().any(|d| d.entity_type == "CREW_CODE"),
@@ -103,19 +103,19 @@ fn test_column_header_context_with_duty_keyword() {
         dets,
         result
     );
-    assert!(!result.contains("JDU"), "JDU should be anonymized");
-    assert!(!result.contains("MMA"), "MMA should be anonymized");
+    assert!(!result.contains("ZKP"), "ZKP should be anonymized");
+    assert!(!result.contains("VQM"), "VQM should be anonymized");
 }
 
 #[test]
 fn test_column_header_no_header_above() {
     // No header line at all — crew code should NOT be detected
     let mut a = Anonymizer::new(0.0);
-    let input = "JDU     some text here";
+    let input = "ZKP     some text here";
     let (_, dets) = a.anonymize_text(input);
     assert!(
         !dets.iter().any(|d| d.entity_type == "CREW_CODE"),
-        "JDU without any context should not be detected.\nDetections: {:?}",
+        "ZKP without any context should not be detected.\nDetections: {:?}",
         dets
     );
 }
@@ -128,13 +128,13 @@ fn test_column_header_many_rows_below_header() {
     for i in 0..15 {
         lines.push(format!("C{:02}   row {}", i, i));
     }
-    lines.push("JDU   last row".to_string());
+    lines.push("ZKP   last row".to_string());
     let input = lines.join("\n");
     let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter()
-            .any(|d| d.entity_type == "CREW_CODE" && d.original == "JDU"),
-        "JDU should be detected with 'Crew' header 17 lines above.\nDetections: {:?}\nResult: {}",
+            .any(|d| d.entity_type == "CREW_CODE" && d.original == "ZKP"),
+        "ZKP should be detected with 'Crew' header 17 lines above.\nDetections: {:?}\nResult: {}",
         dets,
         result
     );

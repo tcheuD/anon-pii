@@ -194,7 +194,7 @@ curl -s --no-buffer http://127.0.0.1:9100/v1/messages \
     "max_tokens": 256,
     "stream": true,
     "messages": [
-      {"role": "user", "content": "What about pilot JDU on aircraft F-HOPA?"}
+      {"role": "user", "content": "What about pilot ZKP on aircraft F-TEST?"}
     ]
   }'
 ```

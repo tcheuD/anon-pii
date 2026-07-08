@@ -127,7 +127,7 @@ To update after code changes, re-run the same `cargo install` command.
 
 ```bash
 # Anonymize from stdin
-echo 'Error for user john@example.com on F-GRHK' | anon-pii
+echo 'Error for user john@example.com on F-DEMO' | anon-pii
 # Output: Error for user [EMAIL_ADDRESS_a1b2c3d4] on [AIRCRAFT_REGISTRATION_b2c3d4e5]
 
 # Anonymize JSON (auto-detected, structure preserved)
