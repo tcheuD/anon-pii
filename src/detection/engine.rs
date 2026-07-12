@@ -1,12 +1,11 @@
 use std::borrow::Cow;
 
 use regex::Regex;
-use unicode_normalization::UnicodeNormalization;
 
 use super::Anonymizer;
 use super::names::{build_byte_offset_map, extend_person_span, is_name_like_word};
 use super::normalize::{
-    MULTILINE_ENTITY_TYPES, collapse_newlines, decode_percent_encoding, decode_unicode_escapes,
+    MULTILINE_ENTITY_TYPES, NormalizedText, collapse_newlines, decode_percent_encoding,
     strip_diacritics,
 };
 use super::operators::{apply_custom_replacement, apply_encrypt, apply_hash, apply_mask};
@@ -24,18 +23,29 @@ fn has_valid_iban_checksum(entity_type: &str, value: &str) -> bool {
     !matches!(entity_type, "IBAN_CODE" | "FR_IBAN") || iban_mod97(value)
 }
 
+fn locate_ner_span(
+    text: &str,
+    value: &str,
+    start: usize,
+    end: usize,
+) -> Option<std::ops::Range<usize>> {
+    if value.is_empty() {
+        return None;
+    }
+    if text.get(start..end) == Some(value) {
+        return Some(start..end);
+    }
+
+    text.match_indices(value)
+        .min_by_key(|(candidate, _)| candidate.abs_diff(start))
+        .map(|(candidate, matched)| candidate..candidate + matched.len())
+}
+
 impl Anonymizer {
-    pub fn anonymize_text(&mut self, text: &str) -> (String, Vec<Detection>) {
-        // NFKC normalization converts fullwidth digits, confusable homoglyphs,
-        // and other Unicode variants to their canonical ASCII equivalents so
-        // that regex patterns match consistently.
-        let normalized: String = text.nfkc().collect();
-        // Decode JSON-style \uXXXX escape sequences (e.g. \u0040 -> @) so that
-        // PII hidden behind unicode escapes in log lines is detected.
-        let normalized = decode_unicode_escapes(&normalized);
-        // Decode URL percent-encoding (e.g. %40 -> @) so that PII in HTTP
-        // access log query strings is detected.
-        let normalized = decode_percent_encoding(&normalized);
+    pub fn anonymize_text(&mut self, raw_text: &str) -> (String, Vec<Detection>) {
+        // Regexes and validators see normalized/decoded text. Replacements and
+        // public offsets are projected back to the caller's exact input.
+        let normalized = NormalizedText::new(raw_text);
         let text = normalized.as_str();
 
         let mut detections: Vec<Detection> = Vec::new();
@@ -188,11 +198,14 @@ impl Anonymizer {
                     continue;
                 }
 
+                let raw_range = normalized
+                    .project_range(mat.start()..mat.end())
+                    .expect("regex match must project to a raw UTF-8 span");
                 detections.push(Detection {
                     entity_type: pat.entity_type.clone(),
-                    original: mat.as_str().to_string(),
-                    start: mat.start(),
-                    end: mat.end(),
+                    original: raw_text[raw_range.clone()].to_string(),
+                    start: raw_range.start,
+                    end: raw_range.end,
                     score: detection_score,
                 });
             }
@@ -201,7 +214,7 @@ impl Anonymizer {
         // Multiline second pass: collapse whitespace+newline runs into a single
         // space and re-run patterns that can span line breaks (credit cards, IBANs).
         // Detections are mapped back to original byte positions.
-        if let Some((collapsed, pos_map)) = collapse_newlines(text) {
+        if let Some(collapsed) = collapse_newlines(text) {
             for pat in &self.patterns {
                 if !MULTILINE_ENTITY_TYPES.contains(&pat.entity_type.as_ref()) {
                     continue;
@@ -214,22 +227,14 @@ impl Anonymizer {
                 if max_score < self.threshold {
                     continue;
                 }
-                for mat in pat.regex.find_iter(&collapsed) {
+                for mat in pat.regex.find_iter(collapsed.as_str()) {
                     // Only consider matches that actually span a newline
-                    let orig_start = pos_map[mat.start()];
-                    let orig_end_idx = (mat.end() - 1).min(pos_map.len() - 1);
-                    let orig_end_byte = pos_map[orig_end_idx];
-                    let orig_span = &text[orig_start..=orig_end_byte];
-                    if !orig_span.contains('\n') {
+                    let normalized_range = collapsed
+                        .project_range(mat.start()..mat.end())
+                        .expect("collapsed match must project to normalized text");
+                    if !text[normalized_range.clone()].contains('\n') {
                         continue; // Already found by the single-line pass
                     }
-
-                    // Compute original end as one past the last byte
-                    let orig_end = if mat.end() < pos_map.len() {
-                        pos_map[mat.end()]
-                    } else {
-                        text.len()
-                    };
 
                     let matched = mat.as_str();
 
@@ -317,7 +322,12 @@ impl Anonymizer {
                     }
 
                     let has_ctx = if !pat.context_keywords.is_empty() {
-                        self.has_context(text, orig_start, orig_end, &pat.context_keywords)
+                        self.has_context(
+                            text,
+                            normalized_range.start,
+                            normalized_range.end,
+                            &pat.context_keywords,
+                        )
                     } else {
                         false
                     };
@@ -341,11 +351,14 @@ impl Anonymizer {
                         continue;
                     }
 
+                    let raw_range = normalized
+                        .project_range(normalized_range)
+                        .expect("normalized multiline match must project to raw text");
                     detections.push(Detection {
                         entity_type: pat.entity_type.clone(),
-                        original: matched.to_string(),
-                        start: orig_start,
-                        end: orig_end,
+                        original: raw_text[raw_range.clone()].to_string(),
+                        start: raw_range.start,
+                        end: raw_range.end,
                         score: detection_score,
                     });
                 }
@@ -354,9 +367,15 @@ impl Anonymizer {
 
         // Inject NER-based PERSON and LOCATION detections
         if let Some(ref ner) = self.ner_detector {
-            for span in ner.detect_persons(text) {
+            for span in ner.detect_persons(raw_text) {
                 if span.score >= self.threshold {
-                    let trimmed = span.text.trim();
+                    let Some(raw_range) =
+                        locate_ner_span(raw_text, &span.text, span.start, span.end)
+                    else {
+                        continue;
+                    };
+                    let raw_span = &raw_text[raw_range.clone()];
+                    let trimmed = raw_span.trim();
                     let is_person = span.label == "PERSON" || span.label == "PER";
                     let is_location = span.label == "LOCATION" || span.label == "LOC";
 
@@ -364,20 +383,21 @@ impl Anonymizer {
                         if PERSON_BLOCKLIST.contains(&trimmed) {
                             continue;
                         }
-                        let (ext_text, ext_end) = extend_person_span(text, &span.text, span.end);
+                        let (ext_text, ext_end) =
+                            extend_person_span(raw_text, raw_span, raw_range.end);
                         detections.push(Detection {
                             entity_type: Cow::Borrowed("PERSON"),
                             original: ext_text,
-                            start: span.start,
+                            start: raw_range.start,
                             end: ext_end,
                             score: span.score,
                         });
                     } else if is_location {
                         detections.push(Detection {
                             entity_type: Cow::Borrowed("LOCATION"),
-                            original: span.text.clone(),
-                            start: span.start,
-                            end: span.end,
+                            original: raw_span.to_string(),
+                            start: raw_range.start,
+                            end: raw_range.end,
                             score: span.score,
                         });
                     }
@@ -393,7 +413,7 @@ impl Anonymizer {
                     r"(?im)(?:best\s+regards|regards|brgds|brds|cordialement|cdlt|bien\s+[àa]\s+vous|sincerely|cheers|merci|thanks)[,.]?\s*\n?\s*([A-Z\p{Lu}][\p{L}'-]+)"
                 ).unwrap()
             });
-            for cap in SIGNOFF_RE.captures_iter(text) {
+            for cap in SIGNOFF_RE.captures_iter(raw_text) {
                 if let Some(name_match) = cap.get(1) {
                     let name = name_match.as_str();
                     if name.len() >= 2
@@ -446,12 +466,12 @@ impl Anonymizer {
             name_parts.dedup();
 
             // Pre-compute stripped text and offset map once for accent-insensitive matching
-            let stripped_text = strip_diacritics(text);
-            let offset_map = build_byte_offset_map(text);
+            let stripped_text = strip_diacritics(raw_text);
+            let offset_map = build_byte_offset_map(raw_text);
 
             for name_part in &name_parts {
                 Self::find_bare_name_occurrences(
-                    text,
+                    raw_text,
                     name_part,
                     &stripped_text,
                     &offset_map,
@@ -652,8 +672,13 @@ impl Anonymizer {
         }
 
         // Replace from end to start
-        let mut result = text.to_string();
+        let mut result = raw_text.to_string();
         for det in filtered.iter().rev() {
+            debug_assert_eq!(
+                raw_text.get(det.start..det.end),
+                Some(det.original.as_str()),
+                "replacement detection must reference its exact raw input"
+            );
             let replacement = match self.operator {
                 Operator::Token => self.mapping.add(&det.entity_type, &det.original),
                 Operator::Redact => String::new(),
