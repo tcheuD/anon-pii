@@ -2,6 +2,7 @@
 pub mod api;
 pub mod cli;
 pub mod config;
+mod csv;
 pub mod detection;
 mod encoding;
 pub mod format;

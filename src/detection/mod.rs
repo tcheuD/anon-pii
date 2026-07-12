@@ -5,6 +5,7 @@ use regex::{Regex, RegexBuilder};
 use serde_json::Value;
 
 use crate::config::RecognizerConfigFile;
+use crate::csv::{parse_csv_document, serialize_csv_field};
 use crate::mapping::Mapping;
 use crate::ner::{NerDetector, NerSpan};
 use crate::patterns::{CONTEXT_SCORE_BOOST, PATTERNS};
@@ -23,7 +24,6 @@ pub use operators::{
 };
 pub use types::{CompiledPattern, Detection, HashAlgo, MaskConfig, Operator};
 
-use normalize::parse_csv_line;
 use types::CompiledPattern as CompiledPatternInternal;
 
 pub struct Anonymizer {
@@ -141,72 +141,218 @@ impl Anonymizer {
         detections
     }
 
-    /// Anonymize CSV content cell-by-cell, respecting RFC 4180 quoting.
-    /// Quoted fields (e.g. `"Doe, John"`) are extracted whole before anonymization.
+    /// Anonymize CSV content cell-by-cell while preserving its source structure.
+    /// Unchanged fields, delimiters, and line endings are copied byte-for-byte.
     pub fn anonymize_csv(&mut self, text: &str) -> (String, Vec<Detection>) {
+        let Some(document) = parse_csv_document(text) else {
+            return (text.to_string(), Vec::new());
+        };
+
         let mut all_detections = Vec::new();
         let mut output = String::with_capacity(text.len());
+        let mut copied_until = 0;
 
-        for (line_idx, line) in text.lines().enumerate() {
-            if line_idx > 0 {
-                output.push('\n');
-            }
-            let cells = parse_csv_line(line);
-            for (i, cell) in cells.iter().enumerate() {
-                if i > 0 {
-                    output.push(',');
-                }
-                let needs_quoting = cell.contains(',') || cell.contains('"') || cell.contains('\n');
-                let (anon, dets) = self.anonymize_text(cell);
+        for record in document.records {
+            for field in record.fields {
+                output.push_str(&text[copied_until..field.start]);
+                let value = field.value(text);
+                let (anonymized, dets) = self.anonymize_text(&value);
+                let changed = self.operator != Operator::Keep
+                    && !dets.is_empty()
+                    && anonymized != value.as_ref();
                 all_detections.extend(dets);
-                if needs_quoting {
-                    output.push('"');
-                    output.push_str(&anon.replace('"', "\"\""));
-                    output.push('"');
+
+                if changed {
+                    output.push_str(&serialize_csv_field(&anonymized, field.quoted));
                 } else {
-                    output.push_str(&anon);
+                    output.push_str(&text[field.start..field.end]);
                 }
+                copied_until = field.end;
             }
         }
-        if text.ends_with('\n') {
-            output.push('\n');
-        }
+        output.push_str(&text[copied_until..]);
 
         (output, all_detections)
     }
 
-    /// Anonymize SQL content by only processing single-quoted string literals.
-    /// Identifiers, keywords, and non-string content are preserved as-is.
+    /// Anonymize SQL content by processing single-quoted and PostgreSQL
+    /// dollar-quoted string literals. Identifiers, comments, keywords, and
+    /// non-string content are preserved as-is.
     pub fn anonymize_sql(&mut self, text: &str) -> (String, Vec<Detection>) {
         let mut all_detections = Vec::new();
         let mut output = String::with_capacity(text.len());
-        let mut chars = text.chars().peekable();
+        let bytes = text.as_bytes();
+        let mut cursor = 0;
+        let mut copied_until = 0;
 
-        while let Some(c) = chars.next() {
-            if c == '\'' {
-                // Extract the string literal (handling escaped quotes '')
-                let mut literal = String::new();
-                while let Some(cj) = chars.next() {
-                    if cj == '\'' {
-                        if chars.peek() == Some(&'\'') {
-                            literal.push('\'');
-                            chars.next();
+        while cursor < bytes.len() {
+            // Skip comments and quoted identifiers. Apostrophes inside these
+            // regions are source text, not SQL string-literal delimiters.
+            if bytes[cursor] == b'-' && bytes.get(cursor + 1) == Some(&b'-') {
+                cursor += 2;
+                while cursor < bytes.len() && bytes[cursor] != b'\n' {
+                    cursor += 1;
+                }
+                continue;
+            }
+            if bytes[cursor] == b'/' && bytes.get(cursor + 1) == Some(&b'*') {
+                cursor += 2;
+                while cursor + 1 < bytes.len()
+                    && !(bytes[cursor] == b'*' && bytes[cursor + 1] == b'/')
+                {
+                    cursor += 1;
+                }
+                cursor = (cursor + 2).min(bytes.len());
+                continue;
+            }
+            if matches!(bytes[cursor], b'"' | b'`') {
+                let delimiter = bytes[cursor];
+                cursor += 1;
+                while cursor < bytes.len() {
+                    if bytes[cursor] == delimiter {
+                        if bytes.get(cursor + 1) == Some(&delimiter) {
+                            cursor += 2;
                         } else {
+                            cursor += 1;
                             break;
                         }
                     } else {
-                        literal.push(cj);
+                        cursor += 1;
                     }
                 }
-                let (anon, dets) = self.anonymize_text(&literal);
-                all_detections.extend(dets);
-                output.push('\'');
-                output.push_str(&anon.replace('\'', "''"));
-                output.push('\'');
-            } else {
-                output.push(c);
+                continue;
             }
+            if bytes[cursor] == b'$' {
+                let delimiter_end = if bytes.get(cursor + 1) == Some(&b'$') {
+                    Some(cursor + 2)
+                } else {
+                    let mut end = cursor + 1;
+                    if bytes
+                        .get(end)
+                        .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+                    {
+                        end += 1;
+                        while bytes
+                            .get(end)
+                            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                        {
+                            end += 1;
+                        }
+                        (bytes.get(end) == Some(&b'$')).then_some(end + 1)
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(delimiter_end) = delimiter_end {
+                    let delimiter = &text[cursor..delimiter_end];
+                    let content_start = delimiter_end;
+                    let Some(relative_end) = text[content_start..].find(delimiter) else {
+                        break;
+                    };
+                    let content_end = content_start + relative_end;
+                    let literal_end = content_end + delimiter.len();
+                    let literal = &text[content_start..content_end];
+                    let (anonymized, dets) = self.anonymize_text(literal);
+                    let changed = self.operator != Operator::Keep
+                        && !dets.is_empty()
+                        && anonymized != literal;
+                    all_detections.extend(dets);
+
+                    if changed {
+                        output.push_str(&text[copied_until..cursor]);
+                        if anonymized.contains(delimiter) {
+                            output.push('\'');
+                            output.push_str(&anonymized.replace('\'', "''"));
+                            output.push('\'');
+                        } else {
+                            output.push_str(delimiter);
+                            output.push_str(&anonymized);
+                            output.push_str(delimiter);
+                        }
+                        copied_until = literal_end;
+                    }
+                    cursor = literal_end;
+                    continue;
+                }
+            }
+            if bytes[cursor] != b'\'' {
+                cursor += 1;
+                continue;
+            }
+
+            let literal_start = cursor;
+            let backslash_escapes = sql_uses_backslash_escapes(text, literal_start);
+            cursor += 1;
+            let content_start = cursor;
+            let mut closed_at = None;
+            while cursor < bytes.len() {
+                if backslash_escapes
+                    && bytes[cursor] == b'\\'
+                    && matches!(bytes.get(cursor + 1), Some(b'\\' | b'\''))
+                {
+                    cursor += 2;
+                } else if bytes[cursor] == b'\'' {
+                    if bytes.get(cursor + 1) == Some(&b'\'') {
+                        cursor += 2;
+                    } else {
+                        closed_at = Some(cursor);
+                        break;
+                    }
+                } else {
+                    cursor += 1;
+                }
+            }
+
+            // Invalid SQL is left byte-identical. In particular, never invent a
+            // closing quote for an unterminated literal.
+            let Some(content_end) = closed_at else {
+                break;
+            };
+
+            let raw_literal = &text[content_start..content_end];
+            // For PostgreSQL E-strings, keep the original escape spelling when
+            // the selected operator cannot introduce quote/backslash syntax.
+            // This makes the default token round trip byte-exact instead of
+            // canonicalizing `\'` to `''` as a side effect.
+            let preserve_e_string_spelling = backslash_escapes
+                && match self.operator {
+                    Operator::Token
+                    | Operator::Redact
+                    | Operator::Keep
+                    | Operator::Hash
+                    | Operator::Encrypt => true,
+                    Operator::Mask => !matches!(self.mask_config.mask_char, '\'' | '\\'),
+                    Operator::Custom => self.replace_with.as_deref().is_some_and(|replacement| {
+                        !replacement.contains('\'') && !replacement.contains('\\')
+                    }),
+                };
+            let literal = if preserve_e_string_spelling {
+                Cow::Borrowed(raw_literal)
+            } else {
+                Cow::Owned(decode_sql_single_quoted(raw_literal, backslash_escapes))
+            };
+            let (anonymized, dets) = self.anonymize_text(&literal);
+            let changed = self.operator != Operator::Keep
+                && !dets.is_empty()
+                && anonymized != literal.as_ref();
+            all_detections.extend(dets);
+
+            if changed {
+                output.push_str(&text[copied_until..literal_start]);
+                output.push('\'');
+                if preserve_e_string_spelling {
+                    output.push_str(&anonymized);
+                } else {
+                    output.push_str(&anonymized.replace('\'', "''"));
+                }
+                output.push('\'');
+                copied_until = content_end + 1;
+            }
+            cursor = content_end + 1;
         }
+
+        output.push_str(&text[copied_until..]);
 
         (output, all_detections)
     }
@@ -242,11 +388,7 @@ impl Anonymizer {
             Value::Object(map) => {
                 let new_map = map
                     .iter()
-                    .map(|(k, v)| {
-                        let (anon_key, key_dets) = self.anonymize_text(k);
-                        detections.extend(key_dets);
-                        (anon_key, self.walk_json(v, detections, depth + 1))
-                    })
+                    .map(|(k, v)| (k.clone(), self.walk_json(v, detections, depth + 1)))
                     .collect();
                 Value::Object(new_map)
             }
@@ -312,6 +454,38 @@ impl NerDetector for CachedNerDetector {
     fn detect_persons(&self, _text: &str) -> Vec<NerSpan> {
         self.spans.clone()
     }
+}
+
+fn sql_uses_backslash_escapes(source: &str, quote_start: usize) -> bool {
+    let prefix = &source.as_bytes()[..quote_start];
+    let Some((&marker, before_marker)) = prefix.split_last() else {
+        return false;
+    };
+    if !matches!(marker, b'E' | b'e') {
+        return false;
+    }
+    before_marker
+        .last()
+        .is_none_or(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'$'))
+}
+
+fn decode_sql_single_quoted(raw: &str, backslash_escapes: bool) -> String {
+    let mut decoded = String::with_capacity(raw.len());
+    let mut characters = raw.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\'' && characters.peek() == Some(&'\'') {
+            characters.next();
+            decoded.push('\'');
+        } else if backslash_escapes
+            && character == '\\'
+            && matches!(characters.peek(), Some('\'' | '\\'))
+        {
+            decoded.push(characters.next().expect("peeked SQL escape"));
+        } else {
+            decoded.push(character);
+        }
+    }
+    decoded
 }
 
 #[cfg(test)]
