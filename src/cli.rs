@@ -25,15 +25,15 @@ pub struct Cli {
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
-    /// Save mapping to file for later restoration
+    /// Save the current token mapping to a file for later restoration
     #[arg(short, long)]
     pub mapping: Option<PathBuf>,
 
-    /// Output mapping to stderr
+    /// Output the current token mapping to stderr
     #[arg(long)]
     pub mapping_stderr: bool,
 
-    /// Include mapping as comment in output
+    /// Include the current token mapping as a comment in output
     #[arg(long)]
     pub include_mapping: bool,
 

@@ -51,6 +51,7 @@ fn restore_defaults_to_bracketed_tokens_only() {
         String::from_utf8_lossy(&output.stdout),
         "Contact alice@example.com; ignore EMAIL_ADDRESS_deadbeef\n"
     );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Restored 1 token replacement"));
 }
 
 #[test]
@@ -82,6 +83,57 @@ fn restore_bare_flag_enables_legacy_bare_token_restore() {
         String::from_utf8_lossy(&output.stdout),
         "Contact alice@example.com; legacy alice@example.com\n"
     );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Restored 2 token replacements"));
+}
+
+#[test]
+fn restore_reports_zero_for_unused_mapping_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let mapping = write_mapping(dir.path());
+    let input = dir.path().join("response.txt");
+    fs::write(&input, "No known token appears here").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_anon-pii"))
+        .arg("restore")
+        .arg("--mapping")
+        .arg(mapping)
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "No known token appears here\n"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Restored 0 token replacements"));
+}
+
+#[test]
+fn restore_counts_each_repeated_token_occurrence() {
+    let dir = tempfile::tempdir().unwrap();
+    let mapping = write_mapping(dir.path());
+    let input = dir.path().join("response.txt");
+    fs::write(
+        &input,
+        "[EMAIL_ADDRESS_deadbeef] and [EMAIL_ADDRESS_deadbeef]",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_anon-pii"))
+        .arg("restore")
+        .arg("--mapping")
+        .arg(mapping)
+        .arg(&input)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "alice@example.com and alice@example.com\n"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Restored 2 token replacements"));
 }
 
 #[test]

@@ -383,6 +383,13 @@ fn write_mapping_file(path: &PathBuf, content: &str) -> io::Result<()> {
         let _ = fs::remove_file(&tmp_path);
         return Err(e);
     }
+
+    // Persist the renamed directory entry before any tokenized output is exposed.
+    // Directory fsync is supported on Unix; opening directories as files is not
+    // portable to every Windows filesystem.
+    #[cfg(unix)]
+    fs::File::open(dir)?.sync_all()?;
+
     Ok(())
 }
 
@@ -565,15 +572,19 @@ fn main() -> io::Result<()> {
                         "Warning: legacy unsigned mapping file loaded; re-save the mapping to add integrity metadata"
                     );
                 }
-                result = if restore_bare {
+                let (restored, replacement_count) = if restore_bare {
                     eprintln!(
                         "Warning: --restore-bare restores unbracketed tokens from untrusted model output; use only for trusted legacy content"
                     );
-                    m.restore(&result)
+                    m.restore_with_count(&result)
                 } else {
-                    m.restore_bracketed(&result)
+                    m.restore_bracketed_with_count(&result)
                 };
-                eprintln!("Restored {} entities from mapping", m.mappings.len());
+                result = restored;
+                eprintln!(
+                    "Restored {replacement_count} token replacement{}",
+                    if replacement_count == 1 { "" } else { "s" }
+                );
             }
 
             if let Some(key) = &dk {
@@ -1203,6 +1214,23 @@ fn main() -> io::Result<()> {
                 result
             };
 
+            // A tokenized payload is only useful if its mapping is durable. Persist
+            // before stdout, output files, clipboard writes, or share-event logging.
+            // Non-token operators and zero-detection runs must not replace a useful
+            // mapping with a fresh empty session.
+            let persisted_mapping_path =
+                if cli.operator == Operator::Token && !anonymizer.mapping.mappings.is_empty() {
+                    let (mapping_path, private_parent) = match cli.mapping {
+                        Some(path) => (path, false),
+                        None => (default_mapping_path(), true),
+                    };
+                    prepare_mapping_parent(&mapping_path, private_parent)?;
+                    write_mapping_file(&mapping_path, &mapping_json)?;
+                    Some(mapping_path)
+                } else {
+                    None
+                };
+
             if cli.share {
                 let share_md = render_share_markdown(&final_output, &detections, format_name);
                 let mut copy_ok = false;
@@ -1237,15 +1265,10 @@ fn main() -> io::Result<()> {
                 write_output(cli.output.as_ref(), &final_output)?;
             }
 
-            // Save mapping file (contains original PII — restrict permissions)
-            let (mapping_path, private_parent) = match cli.mapping {
-                Some(path) => (path, false),
-                None => (default_mapping_path(), true),
-            };
-            prepare_mapping_parent(&mapping_path, private_parent)?;
-            write_mapping_file(&mapping_path, &mapping_json)?;
             if cli.verbose {
-                eprintln!("Mapping saved to {:?}", mapping_path);
+                if let Some(mapping_path) = persisted_mapping_path {
+                    eprintln!("Mapping saved to {:?}", mapping_path);
+                }
             }
 
             // Output mapping to stderr
