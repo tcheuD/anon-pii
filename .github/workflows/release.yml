@@ -8,14 +8,88 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  # Reject invalid tags before starting expensive test and build jobs.
+  preflight:
+    name: Release Preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Fetch main
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Validate tag provenance and version
+        run: ./scripts/release-preflight.sh "${GITHUB_REF_NAME}" "${GITHUB_SHA}" refs/remotes/origin/main
+
+  # Re-run the required portable CI checks at the tagged commit. This avoids a
+  # race where a tag is pushed before the main-branch CI run has completed.
+  verify:
+    name: Release Verification
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: v1-release-verify
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Run Clippy
+        run: |
+          cargo clippy --locked -- -D warnings
+          cargo clippy --locked --features ner-lite,proxy -- -D warnings
+
+      - name: Run required tests
+        run: |
+          cargo test --locked
+          cargo test --locked --features ner-lite,proxy
+          cargo test --locked --features xlsx
+          cargo test --locked --features pdf
+
+      - name: Verify crate package
+        run: cargo package --locked
+
+  msrv:
+    name: Release MSRV (1.88)
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust 1.88
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: v1-release-msrv
+
+      - name: Check supported feature set
+        run: cargo check --locked --all-targets --features ner-lite,proxy,pdf,xlsx
+
   # ============================================================================
   # Build Binaries
   # ============================================================================
   build:
     name: Build (${{ matrix.target }})
+    needs: [verify, msrv]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -39,7 +113,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} --features ner-lite,proxy,pdf
+        run: cargo build --locked --release --target ${{ matrix.target }} --features ner-lite,proxy,pdf
 
       - name: Package
         run: |
@@ -61,6 +135,8 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

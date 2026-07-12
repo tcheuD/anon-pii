@@ -41,6 +41,27 @@ The ML `ner` feature requires ONNX Runtime and `ORT_DYLIB_PATH`; it is not part
 of the required PR gate. Validate it manually before a release when NER model
 or ONNX Runtime integration changes.
 
+## Automated Tag Gates
+
+The release workflow fails before starting builds unless all of these are true:
+
+- the tag is a `v`-prefixed semantic version and exactly matches
+  `package.version` in `Cargo.toml` at the tagged commit
+- the tag resolves to the commit that triggered the workflow
+- the tagged commit is contained in `main`
+
+Containment is deliberate rather than requiring the tag to equal the latest
+`main` commit. It rejects tags created from side branches while allowing `main`
+to advance after a valid tag is pushed. The workflow then re-runs the portable
+format, Clippy, test, package, and MSRV gates at the tagged commit before any
+release binary is built or published.
+
+To check a proposed tag locally after fetching `main` and creating the tag:
+
+```bash
+./scripts/release-preflight.sh vX.Y.Z <tag-commit> origin/main
+```
+
 ## First Release Checklist
 
 - Confirm `Cargo.toml` package metadata, repository URL, license, README, and
@@ -62,6 +83,7 @@ or ONNX Runtime integration changes.
 - Draft the changelog from Conventional Commit history.
 - Draft release notes that include supported artifacts, feature flags, known
   limitations, and security/privacy caveats.
+- Run the local release preflight against the proposed tag and commit.
 - Tag the release as `vX.Y.Z` only after the checklist is complete.
 - After the GitHub release workflow finishes, confirm each archive contains the
   `anon-pii` binary plus README and LICENSE.
