@@ -46,7 +46,7 @@ fn extract_words_from_page(
     page_id: (u32, u16),
 ) -> Result<Vec<PdfWord>, PdfError> {
     let content_data = doc
-        .get_page_content(page_id)
+        .get_page_content_with_limit(page_id, MAX_INPUT_SIZE as usize)
         .map_err(|e| PdfError::Extraction(e.to_string()))?;
 
     let content = lopdf::content::Content::decode(&content_data)

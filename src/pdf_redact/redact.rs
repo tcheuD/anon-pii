@@ -672,7 +672,12 @@ fn redact_pdf_with_mode(
         };
 
         // Get existing content
-        let existing_content = doc.get_page_content(page_id).unwrap_or_default();
+        let existing_content = doc
+            .get_page_content_with_limit(page_id, MAX_INPUT_SIZE as usize)
+            .map_err(|e| RedactError::PdfLoad {
+                path: input.to_path_buf(),
+                source: format!("failed to read page content: {e}"),
+            })?;
         let mut content = if existing_content.is_empty() {
             Content { operations: vec![] }
         } else {
@@ -1390,7 +1395,7 @@ mod tests {
         let pages = doc.get_pages();
         let page1_id = pages.get(&1).unwrap();
 
-        let content_data = doc.get_page_content(*page1_id).unwrap();
+        let content_data = doc.get_page_content(*page1_id);
         let content = Content::decode(&content_data).unwrap();
 
         // Look for rectangle and fill operations (re, f)
@@ -1439,7 +1444,7 @@ mod tests {
         let doc = Document::load(&output).unwrap();
         let pages = doc.get_pages();
         let page1_id = pages.get(&1).unwrap();
-        let content_data = doc.get_page_content(*page1_id).unwrap();
+        let content_data = doc.get_page_content(*page1_id);
         let content = Content::decode(&content_data).unwrap();
         let text_operands = content_text_operands(&content);
 
@@ -1593,7 +1598,7 @@ mod tests {
         let doc = Document::load(&output).unwrap();
         let pages = doc.get_pages();
         let page1_id = pages.get(&1).unwrap();
-        let content_data = doc.get_page_content(*page1_id).unwrap();
+        let content_data = doc.get_page_content(*page1_id);
         let content = Content::decode(&content_data).unwrap();
         let text_operands = content_text_operands(&content);
 
@@ -1712,7 +1717,7 @@ mod tests {
         let redacted_doc = Document::load(&output).unwrap();
         let pages = redacted_doc.get_pages();
         let page1_id = pages.get(&1).unwrap();
-        let content_data = redacted_doc.get_page_content(*page1_id).unwrap();
+        let content_data = redacted_doc.get_page_content(*page1_id);
         let content = Content::decode(&content_data).unwrap();
         let text_operands = content_text_operands(&content);
 
@@ -1790,7 +1795,7 @@ mod tests {
         let redacted_doc = Document::load(&output).unwrap();
         let pages = redacted_doc.get_pages();
         let page1_id = pages.get(&1).unwrap();
-        let content_data = redacted_doc.get_page_content(*page1_id).unwrap();
+        let content_data = redacted_doc.get_page_content(*page1_id);
         let content = Content::decode(&content_data).unwrap();
         let text_operands = content_text_operands(&content);
 
