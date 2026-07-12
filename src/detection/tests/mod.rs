@@ -20,6 +20,7 @@ mod kr;
 mod mac;
 mod multiline;
 mod names;
+mod normalization;
 mod operators;
 mod phone;
 mod pl;
