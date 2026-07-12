@@ -3,15 +3,76 @@ use super::super::*;
 #[test]
 fn test_fr_iban() {
     let mut a = Anonymizer::new(0.0);
-    let (result, _) = a.anonymize_text("IBAN: FR76 1234 5678 9012 3456 7890 123");
+    let (result, dets) = a.anonymize_text("IBAN: FR14 2004 1010 0505 0001 3M02 606");
+    assert!(
+        dets.iter().any(|d| d.entity_type == "FR_IBAN"),
+        "canonical French IBAN not detected: {dets:?}"
+    );
     assert!(result.contains("[FR_IBAN_"));
 }
 
 #[test]
 fn test_fr_iban_compact() {
+    for iban in ["FR1420041010050500013M02606", "FR7630006000011234567890189"] {
+        let mut a = Anonymizer::new(0.0);
+        let (result, dets) = a.anonymize_text(&format!("IBAN: {iban}"));
+        assert!(
+            dets.iter().any(|d| d.entity_type == "FR_IBAN"),
+            "valid French IBAN rejected: {iban}; detections: {dets:?}"
+        );
+        assert!(result.contains("[FR_IBAN_"));
+    }
+}
+
+#[test]
+fn test_fr_iban_invalid_checksums_rejected() {
+    for iban in [
+        "FR7612345678901234567890123",
+        "FR1520041010050500013M02606",
+        "FR1420041010050500013M02607",
+        "FR1420041010050500013N02606",
+    ] {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text(&format!("IBAN: {iban}"));
+        assert!(
+            !dets
+                .iter()
+                .any(|d| matches!(d.entity_type.as_ref(), "FR_IBAN" | "IBAN_CODE")),
+            "invalid French IBAN accepted: {iban}; detections: {dets:?}"
+        );
+    }
+}
+
+#[test]
+fn test_fr_iban_url_inner_checksum_validation() {
+    let mut valid = Anonymizer::new(0.0);
+    let (_, valid_dets) =
+        valid.anonymize_text("visit https://example.com/pay?iban=FR1420041010050500013%4D02606");
+    assert!(
+        valid_dets.iter().any(|d| d.entity_type == "FR_IBAN"),
+        "valid URL-encoded French IBAN not reported: {valid_dets:?}"
+    );
+
+    let mut invalid = Anonymizer::new(0.0);
+    let (_, invalid_dets) =
+        invalid.anonymize_text("visit https://example.com/pay?iban=FR1520041010050500013%4D02606");
+    assert!(
+        !invalid_dets
+            .iter()
+            .any(|d| matches!(d.entity_type.as_ref(), "FR_IBAN" | "IBAN_CODE")),
+        "invalid URL-encoded French IBAN reported: {invalid_dets:?}"
+    );
+}
+
+#[test]
+fn test_fr_iban_roundtrip_preserves_alphanumeric_account() {
     let mut a = Anonymizer::new(0.0);
-    let (result, _) = a.anonymize_text("IBAN: FR7630006000011234567890189");
-    assert!(result.contains("[FR_IBAN_"));
+    let input = "virement sur IBAN FR14 2004 1010 0505 0001 3M02 606";
+    let (anon, dets) = a.anonymize_text(input);
+    assert!(dets.iter().any(|d| {
+        d.entity_type == "FR_IBAN" && d.original == "FR14 2004 1010 0505 0001 3M02 606"
+    }));
+    assert_eq!(a.mapping.restore(&anon), input);
 }
 
 // -- Generic IBAN tests --
@@ -78,7 +139,7 @@ fn test_iban_context_required() {
 fn test_iban_fr_stays_fr_iban() {
     // French IBANs should still be detected as FR_IBAN (higher confidence)
     let mut a = Anonymizer::new(0.0);
-    let (result, dets) = a.anonymize_text("IBAN: FR76 1234 5678 9012 3456 7890 123");
+    let (result, dets) = a.anonymize_text("IBAN: FR14 2004 1010 0505 0001 3M02 606");
     assert!(
         dets.iter().any(|d| d.entity_type == "FR_IBAN"),
         "French IBAN should stay FR_IBAN: {dets:?}"

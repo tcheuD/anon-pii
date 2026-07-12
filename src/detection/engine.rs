@@ -20,6 +20,10 @@ use crate::patterns::{
     valid_si_tax_number, valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn,
 };
 
+fn has_valid_iban_checksum(entity_type: &str, value: &str) -> bool {
+    !matches!(entity_type, "IBAN_CODE" | "FR_IBAN") || iban_mod97(value)
+}
+
 impl Anonymizer {
     pub fn anonymize_text(&mut self, text: &str) -> (String, Vec<Detection>) {
         // NFKC normalization converts fullwidth digits, confusable homoglyphs,
@@ -85,7 +89,7 @@ impl Anonymizer {
                         continue;
                     }
                 }
-                if pat.entity_type == "IBAN_CODE" && !iban_mod97(mat.as_str()) {
+                if !has_valid_iban_checksum(&pat.entity_type, mat.as_str()) {
                     continue;
                 }
                 if pat.entity_type == "MAC_ADDRESS" && !valid_mac(mat.as_str()) {
@@ -234,7 +238,7 @@ impl Anonymizer {
                     {
                         continue;
                     }
-                    if pat.entity_type == "IBAN_CODE" && !iban_mod97(matched) {
+                    if !has_valid_iban_checksum(&pat.entity_type, matched) {
                         continue;
                     }
                     if pat.entity_type == "MAC_ADDRESS" && !valid_mac(matched) {
@@ -532,7 +536,7 @@ impl Anonymizer {
                                     {
                                         continue;
                                     }
-                                    if pat.entity_type == "IBAN_CODE" && !iban_mod97(mat.as_str()) {
+                                    if !has_valid_iban_checksum(&pat.entity_type, mat.as_str()) {
                                         continue;
                                     }
                                     if pat.entity_type == "CREW_CODE"
