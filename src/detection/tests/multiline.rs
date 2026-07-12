@@ -19,7 +19,7 @@ fn test_multiline_credit_card_detected() {
 #[test]
 fn test_multiline_iban_detected() {
     let mut a = Anonymizer::new(0.0);
-    let input = "IBAN: FR76 3000\n6000 0112 3456 7890 123";
+    let input = "IBAN: FR14 2004\n1010 0505 0001 3M02 606";
     let (result, dets) = a.anonymize_text(input);
     assert!(
         dets.iter().any(|d| d.entity_type == "FR_IBAN"),
@@ -60,7 +60,7 @@ fn test_multiline_credit_card_indented_continuation() {
 #[test]
 fn test_multiline_iban_trailing_space() {
     let mut a = Anonymizer::new(0.0);
-    let input = "IBAN: FR76 3000 \n6000 0112 3456 7890 123";
+    let input = "IBAN: FR14 2004 \n1010 0505 0001 3M02 606";
     let (result, dets) = a.anonymize_text(input);
     assert!(
         dets.iter().any(|d| d.entity_type == "FR_IBAN"),
@@ -68,6 +68,20 @@ fn test_multiline_iban_trailing_space() {
         dets
     );
     assert!(result.contains("[FR_IBAN_"));
+}
+
+#[test]
+fn test_multiline_iban_invalid_checksum_rejected() {
+    let mut a = Anonymizer::new(0.0);
+    let input = "IBAN: FR15 2004\n1010 0505 0001 3M02 606";
+    let (result, dets) = a.anonymize_text(input);
+    assert!(
+        !dets
+            .iter()
+            .any(|d| matches!(d.entity_type.as_ref(), "FR_IBAN" | "IBAN_CODE")),
+        "multiline IBAN with invalid checksum should be rejected: {dets:?}"
+    );
+    assert_eq!(result, input);
 }
 
 #[test]
