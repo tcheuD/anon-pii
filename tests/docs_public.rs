@@ -199,6 +199,32 @@ fn release_workflow_packages_current_binary_name() {
 }
 
 #[test]
+fn release_workflow_is_gated_before_build_and_publish() {
+    let release = read_workflow(".github/workflows/release.yml");
+
+    for snippet in [
+        "preflight:",
+        "./scripts/release-preflight.sh",
+        "verify:",
+        "msrv:",
+        "needs: [verify, msrv]",
+        "cargo clippy --locked -- -D warnings",
+        "cargo clippy --locked --features ner-lite,proxy -- -D warnings",
+        "cargo test --locked",
+        "cargo test --locked --features ner-lite,proxy",
+        "cargo test --locked --features xlsx",
+        "cargo test --locked --features pdf",
+        "cargo package --locked",
+        "cargo build --locked --release",
+    ] {
+        assert!(
+            release.contains(snippet),
+            "release workflow should contain gate `{snippet}`"
+        );
+    }
+}
+
+#[test]
 fn first_release_checklist_is_documented() {
     let readme = read_doc("README.md");
     let contributing = read_doc("CONTRIBUTING.md");
