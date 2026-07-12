@@ -252,6 +252,27 @@ jobs:
         run: cargo build --release
 
   # ============================================================================
+  # Minimum Supported Rust Version
+  # ============================================================================
+  rust-msrv:
+    name: Rust MSRV (1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust 1.88
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: v1-msrv
+
+      - name: Check supported feature set
+        run: cargo check --locked --all-targets --features ner-lite,proxy,pdf,xlsx
+
+  # ============================================================================
   # Security: cargo-deny
   # ============================================================================
   security-deny:
@@ -313,6 +334,7 @@ jobs:
       - rust-test-image
       - rust-build
       - rust-build-macos
+      - rust-msrv
       - security-deny
       - security-audit
     runs-on: ubuntu-latest
@@ -321,13 +343,14 @@ jobs:
       - name: Check all jobs
         run: |
           # Always required
-          for job in rust-fmt rust-test rust-test-xlsx rust-test-pdf rust-build; do
+          for job in rust-fmt rust-test rust-test-xlsx rust-test-pdf rust-build rust-msrv; do
             result="${{ needs.rust-fmt.result }}"
             case "$job" in
               rust-test) result="${{ needs.rust-test.result }}" ;;
               rust-test-xlsx) result="${{ needs.rust-test-xlsx.result }}" ;;
               rust-test-pdf) result="${{ needs.rust-test-pdf.result }}" ;;
               rust-build) result="${{ needs.rust-build.result }}" ;;
+              rust-msrv) result="${{ needs.rust-msrv.result }}" ;;
             esac
             if [[ "$result" != "success" ]]; then
               echo "Required job $job failed: $result"
