@@ -33,7 +33,9 @@ and restores the real values in Claude's reply. The PII never leaves your machin
 
 - **Mapping files contain original PII.** The default token operator saves
   reversible token mappings to `~/.anon-pii/mapping.json` so `anon-pii restore` can put
-  values back. Protect this file like the original data and never commit it.
+  values back. Protect this file like the original data and never commit it. The
+  default path represents the most recent token-producing standalone run; use a
+  unique `--mapping` path for each overlapping manual workflow.
 - **False negatives are possible.** Pattern and NER-based detection can miss
   unusual identifiers, domain-specific formats, non-Latin text, split secrets,
   or ambiguous names.
@@ -166,7 +168,9 @@ More runnable examples are in [demo/README.md](demo/README.md).
 
 Default token mode persists a reversible mapping so `anon-pii restore` can put
 original values back after an AI round trip. Use `--mapping` to choose a
-different file. Bare tokens remain unchanged unless explicitly enabled; use
+different file. The mapping is made durable before tokenized output is written.
+Non-token operators and runs with no detected PII leave existing mapping files
+unchanged. Bare tokens remain unchanged unless explicitly enabled; use
 `--restore-bare` only for trusted legacy output that needs unbracketed token
 restoration. Use `--mapping-stderr` for review pipelines, or
 `--include-mapping` only when you intentionally want the sensitive map embedded
@@ -238,9 +242,9 @@ sequenceDiagram
 |--------|-------|---------|-------------|
 | `--input` | `-i` |  | Input file (reads from stdin if not provided) |
 | `--output` | `-o` |  | Output file (writes to stdout if not provided) |
-| `--mapping` | `-m` |  | Save mapping to file for later restoration |
-| `--mapping-stderr` |  |  | Output mapping to stderr |
-| `--include-mapping` |  |  | Include mapping as comment in output |
+| `--mapping` | `-m` |  | Save the current token mapping to a file for later restoration |
+| `--mapping-stderr` |  |  | Output the current token mapping to stderr |
+| `--include-mapping` |  |  | Include the current token mapping as a comment in output |
 | `--share` |  |  | Output a share-ready Markdown snippet (safe to paste into issues / AI tools) |
 | `--copy` |  |  | Copy output to clipboard (best effort). Requires --share |
 | `--verbose` | `-v` |  | Show detected entities |

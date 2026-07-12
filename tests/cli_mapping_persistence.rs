@@ -1,5 +1,6 @@
 #![cfg(unix)]
 
+use anon_pii::mapping::Mapping;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs as unix_fs;
@@ -16,7 +17,7 @@ fn sample_input() -> String {
     format!("Contact {}\n", sample_value())
 }
 
-fn run_anonymize(mut cmd: Command) -> Output {
+fn run_anonymize_with_input(mut cmd: Command, input: &str) -> Output {
     cmd.arg("--format")
         .arg("text")
         .stdin(Stdio::piped())
@@ -28,11 +29,15 @@ fn run_anonymize(mut cmd: Command) -> Output {
         .stdin
         .as_mut()
         .expect("stdin should be piped")
-        .write_all(sample_input().as_bytes())
+        .write_all(input.as_bytes())
         .expect("failed to write stdin");
     child
         .wait_with_output()
         .expect("failed to wait for anon-pii")
+}
+
+fn run_anonymize(cmd: Command) -> Output {
+    run_anonymize_with_input(cmd, &sample_input())
 }
 
 fn anon_command() -> Command {
@@ -58,6 +63,12 @@ fn mapping_file(parent: &Path) -> PathBuf {
 
 fn legacy_tmp_file(parent: &Path) -> PathBuf {
     parent.join([".mapping", "json", "tmp"].join("."))
+}
+
+fn persisted_mapping() -> String {
+    let mut mapping = Mapping::new();
+    mapping.add("EMAIL_ADDRESS", "saved@example.com");
+    mapping.to_persisted_json_pretty().unwrap()
 }
 
 #[test]
@@ -115,9 +126,87 @@ fn custom_mapping_parent_symlink_is_rejected() {
         "custom symlink parent should be rejected"
     );
     assert!(
+        output.stdout.is_empty(),
+        "tokenized stdout must not be emitted before mapping persistence succeeds"
+    );
+    assert!(
         !mapping_file(&real_parent).exists(),
         "mapping should not be written through a symlinked parent"
     );
+}
+
+#[test]
+fn mapping_failure_leaves_output_file_untouched() {
+    let temp = tempfile::tempdir().unwrap();
+    let real_parent = temp.path().join("real-parent");
+    fs::create_dir(&real_parent).unwrap();
+    let linked_parent = temp.path().join("linked-parent");
+    unix_fs::symlink(&real_parent, &linked_parent).unwrap();
+
+    let output_path = temp.path().join("output.txt");
+    fs::write(&output_path, "sentinel").unwrap();
+
+    let mut cmd = anon_command();
+    cmd.arg("--mapping")
+        .arg(mapping_file(&linked_parent))
+        .arg("--output")
+        .arg(&output_path);
+
+    let output = run_anonymize(cmd);
+    assert!(!output.status.success());
+    assert_eq!(fs::read_to_string(output_path).unwrap(), "sentinel");
+}
+
+#[test]
+fn zero_detection_run_preserves_existing_mapping() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = mapping_file(temp.path());
+    let original_mapping = persisted_mapping();
+    fs::write(&path, &original_mapping).unwrap();
+
+    let mut cmd = anon_command();
+    cmd.arg("--mapping").arg(&path);
+    let output = run_anonymize_with_input(cmd, "Nothing sensitive in this line.\n");
+
+    assert_success(&output);
+    assert_eq!(fs::read_to_string(path).unwrap(), original_mapping);
+}
+
+#[test]
+fn non_token_operators_preserve_existing_mapping() {
+    let operators: [(&str, &[&str]); 6] = [
+        ("keep", &[]),
+        ("redact", &[]),
+        ("mask", &[]),
+        ("hash", &[]),
+        ("custom", &["--replace-with", "REDACTED"]),
+        (
+            "encrypt",
+            &["--encrypt-key", "00000000000000000000000000000000"],
+        ),
+    ];
+
+    for (operator, extra_args) in operators {
+        let temp = tempfile::tempdir().unwrap();
+        let path = mapping_file(temp.path());
+        let original_mapping = persisted_mapping();
+        fs::write(&path, &original_mapping).unwrap();
+
+        let mut cmd = anon_command();
+        cmd.arg("--mapping")
+            .arg(&path)
+            .arg("--operator")
+            .arg(operator)
+            .args(extra_args);
+        let output = run_anonymize(cmd);
+
+        assert_success(&output);
+        assert_eq!(
+            fs::read_to_string(path).unwrap(),
+            original_mapping,
+            "{operator} must not replace a reversible token mapping"
+        );
+    }
 }
 
 #[test]

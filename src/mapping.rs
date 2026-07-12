@@ -332,10 +332,11 @@ impl Mapping {
 
     /// Restore only bracket-delimited tokens: `[EMAIL_ADDRESS_a1b2c3d4]` → original.
     /// Safe for use in proxy responses where bare token injection is a risk.
-    pub fn restore_bracketed(&self, text: &str) -> String {
+    pub fn restore_bracketed_with_count(&self, text: &str) -> (String, usize) {
         let mut result = String::with_capacity(text.len());
         let bytes = text.as_bytes();
         let mut i = 0;
+        let mut replacements = 0;
 
         while i < bytes.len() {
             if bytes[i] == b'[' {
@@ -344,6 +345,7 @@ impl Mapping {
                     if let Some(original) = self.mappings.get(candidate) {
                         result.push_str(original);
                         i += close + 1;
+                        replacements += 1;
                         continue;
                     }
                 }
@@ -353,14 +355,18 @@ impl Mapping {
             i += ch.len_utf8();
         }
 
-        result
+        (result, replacements)
+    }
+
+    pub fn restore_bracketed(&self, text: &str) -> String {
+        self.restore_bracketed_with_count(text).0
     }
 
     /// Restore both bracket-delimited and bare tokens.
     /// Bare tokens use word-boundary matching to avoid partial/injected replacements.
     /// Use for CLI restore where the user explicitly wants full restoration.
-    pub fn restore(&self, text: &str) -> String {
-        let mut result = self.restore_bracketed(text);
+    pub fn restore_with_count(&self, text: &str) -> (String, usize) {
+        let (mut result, mut replacements) = self.restore_bracketed_with_count(text);
 
         let bare_map = self.bare_token_map();
         if !bare_map.is_empty() {
@@ -382,6 +388,7 @@ impl Mapping {
                         let matched = &result[start..end];
                         if let Some(original) = bare_map.get(matched) {
                             output.push_str(original);
+                            replacements += 1;
                         } else {
                             output.push_str(matched);
                         }
@@ -393,7 +400,11 @@ impl Mapping {
             }
         }
 
-        result
+        (result, replacements)
+    }
+
+    pub fn restore(&self, text: &str) -> String {
+        self.restore_with_count(text).0
     }
 }
 
@@ -483,6 +494,27 @@ mod tests {
     }
 
     #[test]
+    fn test_restore_bracketed_with_count_counts_occurrences() {
+        let (m, token) = make_mapping_with_email();
+        let input = format!("{token}, then {token}; unknown [EMAIL_ADDRESS_cafebabe]");
+        let (result, count) = m.restore_bracketed_with_count(&input);
+        assert_eq!(
+            result,
+            "john@example.com, then john@example.com; unknown [EMAIL_ADDRESS_cafebabe]"
+        );
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_restore_bracketed_with_count_preserves_utf8() {
+        let (m, token) = make_mapping_with_email();
+        let input = format!("Réponse pour {token} — 東京");
+        let (result, count) = m.restore_bracketed_with_count(&input);
+        assert_eq!(result, "Réponse pour john@example.com — 東京");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
     fn test_restore_bracketed_ignores_bare_tokens() {
         let (m, token) = make_mapping_with_email();
         let bare = &token[1..token.len() - 1];
@@ -498,6 +530,19 @@ mod tests {
         let input = format!("The entity {bare} was detected");
         let result = m.restore(&input);
         assert_eq!(result, "The entity john@example.com was detected");
+    }
+
+    #[test]
+    fn test_restore_with_count_totals_bracketed_and_bare() {
+        let (m, token) = make_mapping_with_email();
+        let bare = &token[1..token.len() - 1];
+        let input = format!("Bracketed {token}; legacy {bare}; partial {bare}X");
+        let (result, count) = m.restore_with_count(&input);
+        assert_eq!(
+            result,
+            format!("Bracketed john@example.com; legacy john@example.com; partial {bare}X")
+        );
+        assert_eq!(count, 2);
     }
 
     #[test]
