@@ -493,9 +493,6 @@ def build_report(args):
         input_text = corpus_case.get("input")
         if not isinstance(input_text, str):
             raise ComparisonError("comparison case {!r} must contain text".format(case_id))
-        if anon_case.get("expected") != corpus_case.get("expected"):
-            raise ComparisonError("anon report labels differ for case {!r}".format(case_id))
-
         expected, _ = normalize_spans(
             input_text,
             corpus_case.get("expected"),
@@ -504,6 +501,16 @@ def build_report(args):
             "{} expected".format(case_id),
             strict_types=True,
         )
+        reported_expected, _ = normalize_spans(
+            input_text,
+            anon_case.get("expected"),
+            family_maps["expected"],
+            "raw",
+            "{} anon expected".format(case_id),
+            strict_types=True,
+        )
+        if reported_expected != expected:
+            raise ComparisonError("anon report labels differ for case {!r}".format(case_id))
         anon_predictions, anon_unknown = normalize_spans(
             input_text,
             anon_case.get("predicted", []),
