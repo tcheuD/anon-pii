@@ -442,7 +442,10 @@ fn public_positioning_rejects_absolute_or_unqualified_claims() {
     let forbidden = [
         (
             "absolute locality",
-            Regex::new(r"(?i)\bPII never leaves\b").unwrap(),
+            Regex::new(
+                r"(?i)\b(?:PII|nothing)\s+(?:ever\s+|never\s+)?leaves\s+(?:your|the)\s+machine\b",
+            )
+            .unwrap(),
         ),
         (
             "project superiority",

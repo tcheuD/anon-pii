@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>anon-pii — redact PII before it reaches the model</title>
-<meta name="description" content="A single-binary Rust CLI that redacts PII before it reaches an LLM, then restores real values in the reply. Reversible. Nothing leaves your machine.">
+<meta name="description" content="A Rust CLI that tokenizes recognized PII locally before an LLM call, keeps the reversible mapping on your machine, and restores recognized values in the reply.">
 <style>
 :root{
   --paper:#F6F5F1;
