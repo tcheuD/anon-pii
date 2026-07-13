@@ -4,10 +4,11 @@
 means that a documented workflow behaves predictably on representative inputs;
 it does not mean that every sensitive value will be detected.
 
-This policy was written against `anon-pii` commit
-`5e69c281b82f4d40a19d3951f94b1e5b76dc6785`. That pin is an evidence baseline,
-not a claim about every later revision. The transaction-owned `run` command is
-layered after that baseline and must pass the same gates before release.
+The automated contract is versioned in
+[`testdata/quality/v1.json`](../testdata/quality/v1.json), with ratcheted limits
+in [`v1-baseline.json`](../testdata/quality/v1-baseline.json). The corpus hash
+binds the labels and baseline together; changing either is an explicit reviewed
+change rather than an invisible score reset.
 
 ## Scope tiers
 
@@ -61,6 +62,32 @@ result must include:
 Results from different configurations are separate measurements. They must not
 be merged into a single project-wide accuracy number.
 
+Rates with no denominator are reported as `null`, not as 100%. Raw TP, FP, and
+FN counts remain authoritative.
+
+### Default-feature corpus v1
+
+`debug-pii-v1` currently contains 62 fictional cases, 46 annotated exact
+spans, 18 negative cases, 16 expected entity types, and both contract and
+challenge tiers. Matching requires the entity type, UTF-8 byte range, and raw
+source bytes to agree. The current report is 41 TP, 0 FP, and 5 FN: 100%
+measured precision and 89.1304% measured recall on this project-owned corpus.
+Those numbers are not estimates for arbitrary production data.
+
+All contract cases and every non-exempt case must remain exact. The five
+reviewed challenge exceptions are intentionally visible in the baseline:
+
+- context-free phone;
+- context-free IBAN;
+- lowercase IBAN;
+- Basic authentication header; and
+- newline-split email.
+
+An improvement to an exception passes. Moving a miss to any other case does
+not. Baseline limits also apply overall, by tier, category, and entity type.
+The separate `debug-workflows-v1` corpus covers eight reversible text, JSON,
+CSV, SQL, and restore workflows.
+
 ### Correctness invariants
 
 The release gate for the core workflow must cover:
@@ -87,6 +114,11 @@ cargo test --locked
 cargo test --locked --features ner-lite,proxy
 cargo clippy --locked -- -D warnings
 cargo clippy --locked --features ner-lite,proxy -- -D warnings
+
+# Deterministic default-feature product contract
+cargo test --locked --test quality_corpus
+cargo test --locked --test quality_workflows
+cargo run --locked --example quality_report -- --check
 ```
 
 Optional features need their own documented environment and tests. A passing
@@ -105,10 +137,12 @@ measurement boundary. If one command performs structural parsing or reversible
 mapping work and another does not, publish the raw observations but do not turn
 them into a speed ranking.
 
-## Current comparison status
+## Cross-project measurements
 
-The pinned [`censgate/redact` comparison](comparison-redact.md) contains a small
-default-configuration functional smoke check and source-inspected workflow
-differences. It is not an accuracy or performance benchmark. No cross-project
-precision/recall ranking is published until both tools are evaluated through
-documented adapters on the same reviewed corpus.
+The pinned [`censgate/redact` comparison](comparison-redact.md) includes a
+reproducible same-corpus diagnostic through documented adapters. Its shared
+subset comes from this project's corpus, uses a predeclared neutral family map,
+and retains every native label and raw source span without using native labels
+as a comparative score.
+It is not an accuracy or performance benchmark, and the selected cases are not
+independent test data.

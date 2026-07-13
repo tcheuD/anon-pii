@@ -43,8 +43,8 @@ fn run() -> Result<(), String> {
             report.metrics.tp,
             report.metrics.fp,
             report.metrics.fn_count,
-            report.metrics.precision_ppm,
-            report.metrics.recall_ppm
+            display_rate(report.metrics.precision_ppm),
+            display_rate(report.metrics.recall_ppm)
         );
     } else {
         println!(
@@ -54,4 +54,8 @@ fn run() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+fn display_rate(value: Option<u64>) -> String {
+    value.map_or_else(|| "undefined".to_string(), |value| value.to_string())
 }

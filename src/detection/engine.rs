@@ -5,8 +5,7 @@ use regex::Regex;
 use super::Anonymizer;
 use super::names::{build_byte_offset_map, extend_person_span, is_name_like_word};
 use super::normalize::{
-    MULTILINE_ENTITY_TYPES, NormalizedText, collapse_newlines, decode_percent_encoding,
-    strip_diacritics,
+    MULTILINE_ENTITY_TYPES, NormalizedText, collapse_newlines, strip_diacritics,
 };
 use super::operators::{apply_custom_replacement, apply_encrypt, apply_hash, apply_mask};
 use super::types::{Detection, Operator};
@@ -22,6 +21,40 @@ use crate::patterns::{
 
 fn has_valid_iban_checksum(entity_type: &str, value: &str) -> bool {
     !matches!(entity_type, "IBAN_CODE" | "FR_IBAN") || iban_mod97(value)
+}
+
+fn has_valid_pattern_value(entity_type: &str, value: &str) -> bool {
+    match entity_type {
+        "CREW_CODE" => !CREW_CODE_BLOCKLIST.contains(&value),
+        "CREDIT_CARD" => luhn_check(value) && valid_card_prefix(value),
+        "IBAN_CODE" | "FR_IBAN" => has_valid_iban_checksum(entity_type, value),
+        "MAC_ADDRESS" => valid_mac(value),
+        "DATE_TIME" => valid_calendar_date(value),
+        "US_SSN" => valid_us_ssn(value),
+        "US_ITIN" => valid_us_itin(value),
+        "ABA_ROUTING" => valid_aba_routing(value),
+        "UK_NHS" => valid_uk_nhs(value),
+        "UK_NINO" => valid_uk_nino(value),
+        "ES_NIF" => valid_es_nif(value),
+        "ES_NIE" => valid_es_nie(value),
+        "IT_FISCAL_CODE" => valid_it_fiscal_code(value),
+        "IN_AADHAAR" => valid_in_aadhaar(value),
+        "IN_GSTIN" => valid_in_gstin(value),
+        "AU_ABN" => valid_au_abn(value),
+        "AU_ACN" => valid_au_acn(value),
+        "AU_TFN" => valid_au_tfn(value),
+        "AU_MEDICARE" => valid_au_medicare(value),
+        "KR_RRN" => valid_kr_rrn(value),
+        "KR_FRN" => valid_kr_frn(value),
+        "KR_BRN" => valid_kr_brn(value),
+        "SG_NRIC_FIN" => valid_sg_nric_fin(value),
+        "PL_PESEL" => valid_pl_pesel(value),
+        "SI_EMSO" => valid_si_emso(value),
+        "SI_TAX_NUMBER" => valid_si_tax_number(value),
+        "FI_PERSONAL_IDENTITY_CODE" => valid_fi_identity_code(value),
+        "TH_TNIN" => valid_th_tnin(value),
+        _ => true,
+    }
 }
 
 fn locate_ner_span(
@@ -85,99 +118,7 @@ impl Anonymizer {
                     }
                 }
 
-                // Crew code blocklist
-                if pat.entity_type == "CREW_CODE" {
-                    let matched = mat.as_str();
-                    if CREW_CODE_BLOCKLIST.contains(&matched) {
-                        continue;
-                    }
-                }
-
-                // Credit card validation: Luhn checksum + known issuer prefix
-                if pat.entity_type == "CREDIT_CARD" {
-                    let matched = mat.as_str();
-                    if !luhn_check(matched) || !valid_card_prefix(matched) {
-                        continue;
-                    }
-                }
-                if !has_valid_iban_checksum(&pat.entity_type, mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "MAC_ADDRESS" && !valid_mac(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "DATE_TIME" && !valid_calendar_date(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "US_SSN" && !valid_us_ssn(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "US_ITIN" && !valid_us_itin(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "ABA_ROUTING" && !valid_aba_routing(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "UK_NHS" && !valid_uk_nhs(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "UK_NINO" && !valid_uk_nino(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "ES_NIF" && !valid_es_nif(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "ES_NIE" && !valid_es_nie(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "IT_FISCAL_CODE" && !valid_it_fiscal_code(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "IN_AADHAAR" && !valid_in_aadhaar(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "IN_GSTIN" && !valid_in_gstin(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "AU_ABN" && !valid_au_abn(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "AU_ACN" && !valid_au_acn(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "AU_TFN" && !valid_au_tfn(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "AU_MEDICARE" && !valid_au_medicare(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "KR_RRN" && !valid_kr_rrn(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "KR_FRN" && !valid_kr_frn(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "KR_BRN" && !valid_kr_brn(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "SG_NRIC_FIN" && !valid_sg_nric_fin(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "PL_PESEL" && !valid_pl_pesel(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "SI_EMSO" && !valid_si_emso(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "SI_TAX_NUMBER" && !valid_si_tax_number(mat.as_str()) {
-                    continue;
-                }
-                if pat.entity_type == "FI_PERSONAL_IDENTITY_CODE"
-                    && !valid_fi_identity_code(mat.as_str())
-                {
-                    continue;
-                }
-                if pat.entity_type == "TH_TNIN" && !valid_th_tnin(mat.as_str()) {
+                if !has_valid_pattern_value(&pat.entity_type, mat.as_str()) {
                     continue;
                 }
 
@@ -242,86 +183,7 @@ impl Anonymizer {
 
                     let matched = mat.as_str();
 
-                    if pat.entity_type == "CREDIT_CARD"
-                        && (!luhn_check(matched) || !valid_card_prefix(matched))
-                    {
-                        continue;
-                    }
-                    if !has_valid_iban_checksum(&pat.entity_type, matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "MAC_ADDRESS" && !valid_mac(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "US_SSN" && !valid_us_ssn(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "US_ITIN" && !valid_us_itin(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "ABA_ROUTING" && !valid_aba_routing(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "UK_NHS" && !valid_uk_nhs(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "UK_NINO" && !valid_uk_nino(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "ES_NIF" && !valid_es_nif(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "ES_NIE" && !valid_es_nie(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "IT_FISCAL_CODE" && !valid_it_fiscal_code(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "IN_AADHAAR" && !valid_in_aadhaar(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "IN_GSTIN" && !valid_in_gstin(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "AU_ABN" && !valid_au_abn(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "AU_ACN" && !valid_au_acn(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "AU_TFN" && !valid_au_tfn(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "AU_MEDICARE" && !valid_au_medicare(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "KR_RRN" && !valid_kr_rrn(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "KR_FRN" && !valid_kr_frn(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "KR_BRN" && !valid_kr_brn(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "SG_NRIC_FIN" && !valid_sg_nric_fin(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "PL_PESEL" && !valid_pl_pesel(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "SI_EMSO" && !valid_si_emso(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "SI_TAX_NUMBER" && !valid_si_tax_number(matched) {
-                        continue;
-                    }
-                    if pat.entity_type == "FI_PERSONAL_IDENTITY_CODE"
-                        && !valid_fi_identity_code(matched)
-                    {
-                        continue;
-                    }
-                    if pat.entity_type == "TH_TNIN" && !valid_th_tnin(matched) {
+                    if !has_valid_pattern_value(&pat.entity_type, matched) {
                         continue;
                     }
 
@@ -541,137 +403,121 @@ impl Anonymizer {
         for det in &filtered {
             if det.entity_type == "URL" {
                 if let Some(qpos) = det.original.find('?') {
-                    let query = &det.original[qpos + 1..];
+                    let query_start = qpos + 1;
+                    let query = &det.original[query_start..];
+                    let mut param_start = query_start;
                     for param in query.split('&') {
                         if let Some(eq) = param.find('=') {
                             let value = &param[eq + 1..];
                             if value.is_empty() {
+                                param_start += param.len() + 1;
                                 continue;
                             }
-                            let decoded = decode_percent_encoding(value);
+                            let value_start = param_start + eq + 1;
+                            let normalized_value = NormalizedText::new(value);
+                            let decoded = normalized_value.as_str();
                             for pat in &self.patterns {
                                 if pat.entity_type == "URL" {
                                     continue;
                                 }
-                                for mat in pat.regex.find_iter(&decoded) {
-                                    if pat.entity_type == "CREDIT_CARD"
-                                        && (!luhn_check(mat.as_str())
-                                            || !valid_card_prefix(mat.as_str()))
+                                let max_score =
+                                    if !pat.context_keywords.is_empty() && !pat.context_required {
+                                        (pat.score + self.context_boost).min(1.0)
+                                    } else {
+                                        pat.score
+                                    };
+                                if max_score < self.threshold {
+                                    continue;
+                                }
+                                for mat in pat.regex.find_iter(decoded) {
+                                    if !has_valid_pattern_value(&pat.entity_type, mat.as_str()) {
+                                        continue;
+                                    }
+
+                                    let value_range = normalized_value
+                                        .project_range(mat.start()..mat.end())
+                                        .expect("URL value match must project to raw value");
+                                    if pat.entity_type == "FR_SSN" {
+                                        let bytes = decoded.as_bytes();
+                                        if (mat.start() > 0
+                                            && bytes[mat.start() - 1].is_ascii_digit())
+                                            || (mat.end() < bytes.len()
+                                                && bytes[mat.end()].is_ascii_digit())
+                                        {
+                                            continue;
+                                        }
+                                    }
+
+                                    let local_start = value_start + value_range.start;
+                                    let local_end = value_start + value_range.end;
+                                    let has_ctx = if !pat.context_keywords.is_empty() {
+                                        self.has_context(
+                                            &det.original,
+                                            local_start,
+                                            local_end,
+                                            &pat.context_keywords,
+                                        )
+                                    } else {
+                                        false
+                                    };
+                                    if pat.context_required
+                                        && !pat.context_keywords.is_empty()
+                                        && !has_ctx
                                     {
                                         continue;
                                     }
-                                    if !has_valid_iban_checksum(&pat.entity_type, mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "CREW_CODE"
-                                        && CREW_CODE_BLOCKLIST.contains(&mat.as_str())
+                                    let boosted = !pat.context_required
+                                        && !pat.context_keywords.is_empty()
+                                        && has_ctx;
+                                    let score = if boosted {
+                                        (pat.score + self.context_boost).min(1.0)
+                                    } else {
+                                        pat.score
+                                    };
+                                    if score < self.threshold
+                                        || (boosted
+                                            && self.min_score_with_context > 0.0
+                                            && score < self.min_score_with_context)
                                     {
                                         continue;
                                     }
-                                    if pat.entity_type == "US_ITIN" && !valid_us_itin(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "ABA_ROUTING"
-                                        && !valid_aba_routing(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "UK_NHS" && !valid_uk_nhs(mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "UK_NINO" && !valid_uk_nino(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "ES_NIF" && !valid_es_nif(mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "ES_NIE" && !valid_es_nie(mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "IT_FISCAL_CODE"
-                                        && !valid_it_fiscal_code(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "IN_AADHAAR"
-                                        && !valid_in_aadhaar(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "IN_GSTIN"
-                                        && !valid_in_gstin(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "AU_ABN" && !valid_au_abn(mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "AU_ACN" && !valid_au_acn(mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "AU_TFN" && !valid_au_tfn(mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "AU_MEDICARE"
-                                        && !valid_au_medicare(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "KR_RRN" && !valid_kr_rrn(mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "KR_FRN" && !valid_kr_frn(mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "KR_BRN" && !valid_kr_brn(mat.as_str()) {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "SG_NRIC_FIN"
-                                        && !valid_sg_nric_fin(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "PL_PESEL"
-                                        && !valid_pl_pesel(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "SI_EMSO" && !valid_si_emso(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "SI_TAX_NUMBER"
-                                        && !valid_si_tax_number(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "FI_PERSONAL_IDENTITY_CODE"
-                                        && !valid_fi_identity_code(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    if pat.entity_type == "TH_TNIN" && !valid_th_tnin(mat.as_str())
-                                    {
-                                        continue;
-                                    }
-                                    let score = pat.score;
-                                    if score < self.threshold {
-                                        continue;
-                                    }
+
+                                    let raw_start = det.start + local_start;
+                                    let raw_end = det.start + local_end;
                                     url_inner_detections.push(Detection {
                                         entity_type: pat.entity_type.clone(),
-                                        original: mat.as_str().to_string(),
-                                        start: det.start,
-                                        end: det.start,
+                                        original: raw_text[raw_start..raw_end].to_string(),
+                                        start: raw_start,
+                                        end: raw_end,
                                         score,
                                     });
                                 }
                             }
                         }
+                        param_start += param.len() + 1;
                     }
                 }
+            }
+        }
+
+        url_inner_detections.sort_by(|a, b| {
+            a.start
+                .cmp(&b.start)
+                .then_with(|| (b.end - b.start).cmp(&(a.end - a.start)))
+                .then_with(|| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| a.entity_type.cmp(&b.entity_type))
+        });
+        let mut filtered_url_inner: Vec<Detection> = Vec::new();
+        for det in url_inner_detections {
+            let overlaps = filtered_url_inner
+                .iter()
+                .any(|kept| det.start < kept.end && det.end > kept.start);
+            if !overlaps {
+                filtered_url_inner.push(det);
             }
         }
 
@@ -706,7 +552,7 @@ impl Anonymizer {
             );
         }
 
-        filtered.extend(url_inner_detections);
+        filtered.extend(filtered_url_inner);
         (result, filtered)
     }
 }

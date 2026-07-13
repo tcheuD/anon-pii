@@ -2,7 +2,11 @@
 
 [Back to README](../README.md)
 
-Anonymizing reverse proxy that sits between AI coding tools and LLM APIs. PII is stripped from outgoing prompts and restored in incoming responses — including SSE streams. Supports Anthropic, OpenAI, and generic LLM providers.
+Anonymizing reverse proxy that sits between AI coding tools and LLM APIs.
+Recognized values in supported request fields are tokenized before forwarding,
+and known tokens are restored in supported responses, including SSE streams.
+False negatives and unsupported payload shapes can still pass through. Supports
+Anthropic, OpenAI, and generic LLM providers.
 
 ## Supported Providers
 

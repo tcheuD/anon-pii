@@ -62,6 +62,12 @@ jobs:
           cargo test --locked --features xlsx
           cargo test --locked --features pdf
 
+      - name: Check versioned quality contract
+        run: |
+          cargo test --locked --test quality_corpus
+          cargo test --locked --test quality_workflows
+          cargo run --locked --example quality_report -- --check
+
       - name: Verify crate package
         run: cargo package --locked
 

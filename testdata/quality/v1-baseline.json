@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "corpus_version": "debug-pii-v1",
-  "corpus_sha256": "9617b2793f2f46a04d0f41b3148391c5b603e57f9aec630fa00ebdf3016ceba5",
+  "corpus_sha256": "866c2292a7c0b5b06fb26b9bab32228dac64b5bb0c6b389ef4102194da3f03e7",
   "metrics": {
-    "min_tp": 38,
+    "min_tp": 41,
     "max_fp": 0,
     "max_fn": 5,
     "min_precision_ppm": 1000000,
-    "min_recall_ppm": 883720
+    "min_recall_ppm": 891304
   },
   "tiers": {
     "challenge": {
@@ -18,7 +18,7 @@
       "min_recall_ppm": 687500
     },
     "contract": {
-      "min_tp": 27,
+      "min_tp": 30,
       "max_fp": 0,
       "max_fn": 0,
       "min_precision_ppm": 1000000,
@@ -30,8 +30,8 @@
       "min_tp": 0,
       "max_fp": 0,
       "max_fn": 0,
-      "min_precision_ppm": 1000000,
-      "min_recall_ppm": 1000000
+      "min_precision_ppm": null,
+      "min_recall_ppm": null
     },
     "contact": {
       "min_tp": 7,
@@ -55,7 +55,7 @@
       "min_recall_ppm": 1000000
     },
     "network": {
-      "min_tp": 7,
+      "min_tp": 10,
       "max_fp": 0,
       "max_fn": 0,
       "min_precision_ppm": 1000000,
@@ -88,6 +88,157 @@
       "max_fn": 0,
       "min_precision_ppm": 1000000,
       "min_recall_ppm": 1000000
+    }
+  },
+  "entity_types": {
+    "AUTH_TOKEN": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 500000
+    },
+    "CONNECTION_STRING": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "CREDIT_CARD": {
+      "min_tp": 4,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "DATE_TIME": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "EMAIL_ADDRESS": {
+      "min_tp": 8,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 888888
+    },
+    "FR_IBAN": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "FR_PHONE_NUMBER": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "IBAN_CODE": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 2,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 333333
+    },
+    "IP_ADDRESS": {
+      "min_tp": 4,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "MAC_ADDRESS": {
+      "min_tp": 2,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "PASSWORD": {
+      "min_tp": 3,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "PHONE_EXTENSION": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "PHONE_NUMBER": {
+      "min_tp": 3,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 750000
+    },
+    "SECRET_KEY": {
+      "min_tp": 5,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "URL": {
+      "min_tp": 4,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "UUID": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    }
+  },
+  "case_exceptions": {
+    "basic-auth-header": {
+      "min_tp": 0,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": null,
+      "min_recall_ppm": 0
+    },
+    "email-split-newline": {
+      "min_tp": 0,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": null,
+      "min_recall_ppm": 0
+    },
+    "iban-lowercase": {
+      "min_tp": 0,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": null,
+      "min_recall_ppm": 0
+    },
+    "iban-without-context": {
+      "min_tp": 0,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": null,
+      "min_recall_ppm": 0
+    },
+    "phone-without-context": {
+      "min_tp": 0,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": null,
+      "min_recall_ppm": 0
     }
   }
 }

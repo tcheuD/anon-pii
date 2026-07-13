@@ -24,12 +24,14 @@ impl Tier {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Profile {
     pub features: String,
     pub threshold: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Corpus {
     pub schema_version: u32,
     pub corpus_version: String,
@@ -38,17 +40,18 @@ pub struct Corpus {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Case {
     pub id: String,
     pub tier: Tier,
     pub category: String,
     pub input: String,
-    #[serde(default)]
     pub expected: Vec<Span>,
     pub provenance: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
 pub struct Span {
     pub entity_type: String,
     pub start: usize,
@@ -57,13 +60,14 @@ pub struct Span {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Metrics {
     pub tp: u64,
     pub fp: u64,
     #[serde(rename = "fn")]
     pub fn_count: u64,
-    pub precision_ppm: u64,
-    pub recall_ppm: u64,
+    pub precision_ppm: Option<u64>,
+    pub recall_ppm: Option<u64>,
 }
 
 impl Metrics {
@@ -102,19 +106,22 @@ pub struct QualityReport {
     pub metrics: Metrics,
     pub tiers: BTreeMap<String, Metrics>,
     pub categories: BTreeMap<String, Metrics>,
+    pub entity_types: BTreeMap<String, Metrics>,
     pub cases: Vec<CaseReport>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Gate {
     pub min_tp: u64,
     pub max_fp: u64,
     pub max_fn: u64,
-    pub min_precision_ppm: u64,
-    pub min_recall_ppm: u64,
+    pub min_precision_ppm: Option<u64>,
+    pub min_recall_ppm: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Baseline {
     pub schema_version: u32,
     pub corpus_version: String,
@@ -122,6 +129,8 @@ pub struct Baseline {
     pub metrics: Gate,
     pub tiers: BTreeMap<String, Gate>,
     pub categories: BTreeMap<String, Gate>,
+    pub entity_types: BTreeMap<String, Gate>,
+    pub case_exceptions: BTreeMap<String, Gate>,
 }
 
 pub fn load_corpus(path: &Path) -> Result<(Corpus, String), String> {
@@ -222,6 +231,7 @@ pub fn evaluate(corpus: &Corpus, corpus_sha256: String) -> QualityReport {
     let mut total = Counts::default();
     let mut tiers: BTreeMap<String, Counts> = BTreeMap::new();
     let mut categories: BTreeMap<String, Counts> = BTreeMap::new();
+    let mut entity_types: BTreeMap<String, Counts> = BTreeMap::new();
 
     for case in &corpus.cases {
         let mut anonymizer = Anonymizer::new(corpus.profile.threshold);
@@ -249,6 +259,27 @@ pub fn evaluate(corpus: &Corpus, corpus_sha256: String) -> QualityReport {
             .entry(case.category.clone())
             .or_default()
             .add(counts);
+        let case_entity_types: BTreeSet<&str> = expected
+            .iter()
+            .chain(&predicted)
+            .map(|span| span.entity_type.as_str())
+            .collect();
+        for entity_type in case_entity_types {
+            let expected_for_type: Vec<Span> = expected
+                .iter()
+                .filter(|span| span.entity_type == entity_type)
+                .cloned()
+                .collect();
+            let predicted_for_type: Vec<Span> = predicted
+                .iter()
+                .filter(|span| span.entity_type == entity_type)
+                .cloned()
+                .collect();
+            entity_types
+                .entry(entity_type.to_string())
+                .or_default()
+                .add(compare_multisets(&expected_for_type, &predicted_for_type));
+        }
         cases.push(CaseReport {
             id: case.id.clone(),
             tier: case.tier,
@@ -274,6 +305,10 @@ pub fn evaluate(corpus: &Corpus, corpus_sha256: String) -> QualityReport {
             .map(|(key, value)| (key, value.metrics()))
             .collect(),
         categories: categories
+            .into_iter()
+            .map(|(key, value)| (key, value.metrics()))
+            .collect(),
+        entity_types: entity_types
             .into_iter()
             .map(|(key, value)| (key, value.metrics()))
             .collect(),
@@ -326,6 +361,33 @@ pub fn check_baseline(report: &QualityReport, baseline: &Baseline) -> Result<(),
     check_gate("overall", report.metrics, baseline.metrics)?;
     check_group_gates("tier", &report.tiers, &baseline.tiers)?;
     check_group_gates("category", &report.categories, &baseline.categories)?;
+    check_group_gates("entity type", &report.entity_types, &baseline.entity_types)?;
+    check_case_gates(&report.cases, &baseline.case_exceptions)?;
+    Ok(())
+}
+
+fn check_case_gates(
+    cases: &[CaseReport],
+    exceptions: &BTreeMap<String, Gate>,
+) -> Result<(), String> {
+    let case_ids: BTreeSet<&str> = cases.iter().map(|case| case.id.as_str()).collect();
+    let exception_ids: BTreeSet<&str> = exceptions.keys().map(String::as_str).collect();
+    if !exception_ids.is_subset(&case_ids) {
+        return Err(format!(
+            "case exception ids {exception_ids:?} are not a subset of report ids {case_ids:?}"
+        ));
+    }
+
+    for case in cases {
+        if let Some(gate) = exceptions.get(&case.id) {
+            check_gate(&format!("case {:?}", case.id), case.metrics, *gate)?;
+        } else if case.metrics.fp != 0 || case.metrics.fn_count != 0 {
+            return Err(format!(
+                "case {:?} regressed outside the reviewed exception list: {:?}",
+                case.id, case.metrics
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -352,11 +414,17 @@ fn check_group_gates(
 }
 
 fn check_gate(label: &str, actual: Metrics, gate: Gate) -> Result<(), String> {
+    let precision_regressed = gate
+        .min_precision_ppm
+        .is_some_and(|minimum| actual.precision_ppm.is_none_or(|value| value < minimum));
+    let recall_regressed = gate
+        .min_recall_ppm
+        .is_some_and(|minimum| actual.recall_ppm.is_none_or(|value| value < minimum));
     if actual.tp < gate.min_tp
         || actual.fp > gate.max_fp
         || actual.fn_count > gate.max_fn
-        || actual.precision_ppm < gate.min_precision_ppm
-        || actual.recall_ppm < gate.min_recall_ppm
+        || precision_regressed
+        || recall_regressed
     {
         return Err(format!(
             "{label} regressed: actual={actual:?}, required={gate:?}"
@@ -407,11 +475,11 @@ fn frequencies(spans: &[Span]) -> BTreeMap<Span, u64> {
     frequencies
 }
 
-fn ratio_ppm(numerator: u64, denominator: u64) -> u64 {
+fn ratio_ppm(numerator: u64, denominator: u64) -> Option<u64> {
     if denominator == 0 {
-        SCORE_SCALE
+        None
     } else {
-        numerator.saturating_mul(SCORE_SCALE) / denominator
+        Some(numerator.saturating_mul(SCORE_SCALE) / denominator)
     }
 }
 
@@ -458,10 +526,67 @@ mod tests {
     }
 
     #[test]
-    fn empty_expected_and_predicted_sets_are_perfect_not_nan() {
+    fn empty_expected_and_predicted_sets_have_undefined_rates() {
         let metrics = compare_multisets(&[], &[]).metrics();
 
-        assert_eq!(metrics.precision_ppm, SCORE_SCALE);
-        assert_eq!(metrics.recall_ppm, SCORE_SCALE);
+        assert_eq!(metrics.precision_ppm, None);
+        assert_eq!(metrics.recall_ppm, None);
+    }
+
+    #[test]
+    fn corpus_schema_rejects_a_misspelled_expected_field() {
+        let source = r#"{
+            "schema_version": 1,
+            "corpus_version": "typo-test",
+            "profile": {"features": "default", "threshold": 0.5},
+            "cases": [{
+                "id": "email",
+                "tier": "contract",
+                "category": "contact",
+                "input": "ada@example.com",
+                "expectd": [],
+                "provenance": "synthetic"
+            }]
+        }"#;
+
+        let error = serde_json::from_str::<Corpus>(source).unwrap_err();
+        assert!(error.to_string().contains("expectd"));
+    }
+
+    #[test]
+    fn unreviewed_case_misses_cannot_hide_behind_an_exception_improvement() {
+        let exact = Metrics::from_counts(1, 0, 0);
+        let missed = Metrics::from_counts(0, 0, 1);
+        let cases = vec![
+            CaseReport {
+                id: "reviewed-miss".to_string(),
+                tier: Tier::Challenge,
+                category: "contact".to_string(),
+                expected: Vec::new(),
+                predicted: Vec::new(),
+                metrics: exact,
+            },
+            CaseReport {
+                id: "previously-exact".to_string(),
+                tier: Tier::Challenge,
+                category: "contact".to_string(),
+                expected: Vec::new(),
+                predicted: Vec::new(),
+                metrics: missed,
+            },
+        ];
+        let exceptions = BTreeMap::from([(
+            "reviewed-miss".to_string(),
+            Gate {
+                min_tp: 0,
+                max_fp: 0,
+                max_fn: 1,
+                min_precision_ppm: None,
+                min_recall_ppm: Some(0),
+            },
+        )]);
+
+        let error = check_case_gates(&cases, &exceptions).unwrap_err();
+        assert!(error.contains("previously-exact"));
     }
 }

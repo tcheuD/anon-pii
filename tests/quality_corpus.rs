@@ -54,25 +54,41 @@ fn quality_corpus_is_large_and_balanced_enough_to_be_a_gate() {
         .iter()
         .map(|case| case.category.as_str())
         .collect();
+    let expected_span_count: usize = corpus.cases.iter().map(|case| case.expected.len()).sum();
+    let expected_entity_types: std::collections::BTreeSet<&str> = corpus
+        .cases
+        .iter()
+        .flat_map(|case| case.expected.iter())
+        .map(|span| span.entity_type.as_str())
+        .collect();
 
     assert!(
-        corpus.cases.len() >= 60,
-        "quality-v1 needs at least 60 cases"
+        corpus.cases.len() >= 62,
+        "quality-v1 needs at least 62 cases"
     );
     assert!(
-        contract_cases >= 40,
-        "quality-v1 needs at least 40 contract cases"
+        contract_cases >= 46,
+        "quality-v1 needs at least 46 contract cases"
     );
     assert!(
         challenge_cases >= 15,
         "quality-v1 needs at least 15 challenge cases"
     );
     assert!(
-        negative_cases >= 15,
+        negative_cases >= 18,
         "quality-v1 needs adversarial negatives"
     );
     assert!(
         categories.len() >= 8,
         "quality-v1 needs broad debug-data coverage"
+    );
+
+    assert!(
+        expected_span_count >= 46,
+        "quality-v1 needs at least 46 explicitly annotated spans"
+    );
+    assert!(
+        expected_entity_types.len() >= 16,
+        "quality-v1 needs broad entity-type coverage"
     );
 }

@@ -463,6 +463,7 @@ pub(super) fn decode_unicode_escapes(input: &str) -> String {
 /// Decode URL percent-encoded sequences (`%XX`) into their UTF-8 equivalents.
 /// Only decodes valid two-hex-digit sequences for ASCII-range bytes (0x00-0x7F).
 /// Malformed sequences and non-ASCII encodings are left as-is.
+#[cfg(test)]
 pub(super) fn decode_percent_encoding(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars();

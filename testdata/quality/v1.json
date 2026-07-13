@@ -31,6 +31,25 @@
       "provenance": "Synthetic URL on the RFC-reserved example.com domain"
     },
     {
+      "id": "url-inner-email-percent",
+      "tier": "contract",
+      "category": "network",
+      "input": "Referer: https://site.com/search?email=user%40example.com&id=123",
+      "expected": [
+        { "entity_type": "URL", "start": 9, "end": 64, "raw": "https://site.com/search?email=user%40example.com&id=123" },
+        { "entity_type": "EMAIL_ADDRESS", "start": 39, "end": 57, "raw": "user%40example.com" }
+      ],
+      "provenance": "Synthetic URL query value covering decoded matching with raw source-span provenance"
+    },
+    {
+      "id": "url-inner-invalid-date",
+      "tier": "contract",
+      "category": "network",
+      "input": "See https://example.com/debug?date=2026-02-31",
+      "expected": [{ "entity_type": "URL", "start": 4, "end": 45, "raw": "https://example.com/debug?date=2026-02-31" }],
+      "provenance": "Synthetic URL query near-miss proving calendar validation is shared by nested detection"
+    },
+    {
       "id": "ipv4-documentation-range",
       "tier": "contract",
       "category": "network",

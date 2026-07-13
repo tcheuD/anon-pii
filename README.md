@@ -192,9 +192,10 @@ from stdin, enforces the input-size limit, anonymizes it, and only then starts
 the child. The payload side is buffered rather than streamed, so `run` is not
 for unbounded log tails or interactive stdin.
 
-Child stdout is streamed through the bracketed-token restorer. Child stderr is
-inherited unchanged and is not restored. The command is launched directly,
-without a shell, and returns a shell-compatible child exit code. Unknown or
+Child stdout is streamed through the bracketed-token restorer.
+Child stderr is inherited unchanged and is not restored. The command is
+launched directly, without a shell, and returns a shell-compatible child exit
+code. Unknown or
 malformed tokens and non-UTF-8 output bytes pass through unchanged. The mapping
 exists only in memory for that invocation.
 
@@ -298,7 +299,7 @@ sequenceDiagram
 | `--mapping` | `-m` |  | Save the current token mapping to a file for later restoration |
 | `--mapping-stderr` |  |  | Output the current token mapping to stderr |
 | `--include-mapping` |  |  | Include the current token mapping as a comment in output |
-| `--share` |  |  | Output a share-ready Markdown snippet (safe to paste into issues / AI tools) |
+| `--share` |  |  | Output a review-ready Markdown snippet; inspect it for missed sensitive values before sharing |
 | `--copy` |  |  | Copy output to clipboard (best effort). Requires --share |
 | `--verbose` | `-v` |  | Show detected entities |
 | `--format` | `-f` | `auto` | Force input format |
@@ -351,9 +352,9 @@ anon-pii proxy                 # Start anonymizing proxy server (requires `proxy
 ## Detected entities
 
 <!-- BEGIN ENTITIES -->
-63 entity types across 99 patterns covering 13 countries: emails, URLs, IPs, UUIDs, credit cards, IBANs, phones, dates, crypto addresses, MAC addresses, secrets/tokens, and person names (with `--ner`). Country-specific patterns include SSNs, passports, driver's licenses, tax IDs, and national IDs for AU, ES, FI, FR, IN, IT, KR, PL, SG, SI, TH, UK, US — each with checksum validation where applicable. Detection works through URL-encoded and Unicode-escaped text.
+The default recognizers cover common contact, network, payment, credential, and country-specific identifiers. Some formats use checksum or context validation; others remain heuristic. Optional name detection changes the configuration and must be evaluated separately. Detection also inspects supported normalized and encoded representations while applying replacements to the original spans.
 
-See [docs/entities.md](docs/entities.md) for the full reference with confidence scores and context keywords.
+See [docs/entities.md](docs/entities.md) for the exact entity inventory, confidence scores, validators, and context requirements in this revision.
 <!-- END ENTITIES -->
 
 ## Known Limitations
@@ -449,6 +450,11 @@ cargo test --features pdf
 
 # Run XLSX detection scaffold tests
 cargo test --features xlsx
+
+# Check the versioned default-feature quality contract
+cargo test --locked --test quality_corpus
+cargo test --locked --test quality_workflows
+cargo run --locked --example quality_report -- --check
 
 # Build release binary
 cargo build --release

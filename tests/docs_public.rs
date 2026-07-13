@@ -20,6 +20,7 @@ fn public_doc_paths() -> &'static [&'static str] {
         "docs/api.md",
         "docs/dependency-policy.md",
         "docs/entities.md",
+        "docs/index.html",
         "docs/proxy.md",
         "docs/ner.md",
         "docs/image-redaction.md",
@@ -66,6 +67,11 @@ fn ci_covers_documented_public_feature_set() {
     let ci = read_workflow(".github/workflows/ci.yml");
 
     assert!(
+        !ci.contains("paths-ignore:"),
+        "CI must validate documentation-only changes because docs carry product claims"
+    );
+
+    assert!(
         ci.contains("features: ['', 'ner-lite,proxy']"),
         "CI should include the default and ner-lite,proxy test matrix"
     );
@@ -88,6 +94,35 @@ fn ci_covers_documented_public_feature_set() {
         assert!(
             ci.contains(phrase),
             "CI should document feature-gate exclusion: {phrase}"
+        );
+    }
+}
+
+#[test]
+fn quality_contract_is_a_required_ci_and_release_gate() {
+    let ci = read_workflow(".github/workflows/ci.yml");
+    let release = read_workflow(".github/workflows/release.yml");
+
+    for snippet in [
+        "quality-contract:",
+        "name: Quality Contract",
+        "- quality-contract",
+        "needs.quality-contract.result",
+        "cargo test --locked --test quality_corpus",
+        "cargo test --locked --test quality_workflows",
+        "cargo run --locked --example quality_report -- --check",
+    ] {
+        assert!(ci.contains(snippet), "CI should require `{snippet}`");
+    }
+
+    for command in [
+        "cargo test --locked --test quality_corpus",
+        "cargo test --locked --test quality_workflows",
+        "cargo run --locked --example quality_report -- --check",
+    ] {
+        assert!(
+            release.contains(command),
+            "release verification should run `{command}`"
         );
     }
 }
@@ -222,6 +257,9 @@ fn release_workflow_is_gated_before_build_and_publish() {
         "cargo test --locked --features ner-lite,proxy",
         "cargo test --locked --features xlsx",
         "cargo test --locked --features pdf",
+        "cargo test --locked --test quality_corpus",
+        "cargo test --locked --test quality_workflows",
+        "cargo run --locked --example quality_report -- --check",
         "cargo package --locked",
         "cargo build --locked --release",
     ] {
@@ -566,6 +604,9 @@ fn readme_links_all_feature_guides_and_verification_commands() {
         "cargo test --features image",
         "cargo test --features pdf",
         "cargo test --features xlsx",
+        "cargo test --locked --test quality_corpus",
+        "cargo test --locked --test quality_workflows",
+        "cargo run --locked --example quality_report -- --check",
         "cargo run --features ner-lite,proxy,image,pdf,xlsx --example update_readme",
     ] {
         assert!(

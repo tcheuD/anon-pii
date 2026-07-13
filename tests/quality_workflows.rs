@@ -7,6 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorkflowCorpus {
     schema_version: u32,
     corpus_version: String,
@@ -15,6 +16,7 @@ struct WorkflowCorpus {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorkflowCase {
     id: String,
     format: WorkflowFormat,
