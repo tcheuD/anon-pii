@@ -365,7 +365,7 @@ fn product_positioning_is_pinned_and_quality_scoped() {
     }
 
     for pin in [
-        "5e69c281b82f4d40a19d3951f94b1e5b76dc6785",
+        "1a22680e43b29c80e141a39b0a66eb3dcafb7522",
         "123e1a955d43797d65fa9c4f342131a68d8af6d6",
     ] {
         assert!(comparison.contains(pin), "comparison should pin {pin}");
@@ -380,6 +380,59 @@ fn product_positioning_is_pinned_and_quality_scoped() {
         assert!(
             quality.contains(phrase) || comparison.contains(phrase),
             "quality docs should require evidence: {phrase}"
+        );
+    }
+}
+
+#[test]
+fn comparison_evidence_is_pinned_and_matches_public_summary() {
+    let report_source = read_doc("testdata/quality/comparison-redact-v1-report.json");
+    let report: serde_json::Value = serde_json::from_str(&report_source).unwrap();
+    let comparison = read_doc("docs/comparison-redact.md");
+
+    assert_eq!(report["scope"]["case_count"], 50);
+    assert_eq!(
+        report["tools"]["anon_pii"]["revision"],
+        "1a22680e43b29c80e141a39b0a66eb3dcafb7522"
+    );
+    assert_eq!(
+        report["tools"]["censgate_redact"]["revision"],
+        "123e1a955d43797d65fa9c4f342131a68d8af6d6"
+    );
+    assert_eq!(
+        report["inputs"]["corpus"]["sha256"],
+        "866c2292a7c0b5b06fb26b9bab32228dac64b5bb0c6b389ef4102194da3f03e7"
+    );
+    assert_eq!(
+        report["metrics"]["anon_pii"]["overall"],
+        serde_json::json!({
+            "fn": 4,
+            "fp": 0,
+            "precision_ppm": 1_000_000,
+            "recall_ppm": 882_352,
+            "tp": 30
+        })
+    );
+    assert_eq!(
+        report["metrics"]["censgate_redact"]["overall"],
+        serde_json::json!({
+            "fn": 19,
+            "fp": 14,
+            "precision_ppm": 517_241,
+            "recall_ppm": 441_176,
+            "tp": 15
+        })
+    );
+
+    for evidence in [
+        "comparison-redact-v1-report.json",
+        "| `anon-pii` | 30 | 0 | 4 | 100.0000% | 88.2352% |",
+        "| `censgate/redact` | 15 | 14 | 19 | 51.7241% | 44.1176% |",
+        "not an independent holdout",
+    ] {
+        assert!(
+            comparison.contains(evidence),
+            "comparison should publish evidence: {evidence}"
         );
     }
 }

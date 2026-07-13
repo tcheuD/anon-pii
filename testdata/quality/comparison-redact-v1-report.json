@@ -1,0 +1,2723 @@
+{
+  "cases": [
+    {
+      "expected": [
+        {
+          "end": 21,
+          "entity_type": "EMAIL_ADDRESS",
+          "family": "email",
+          "raw": "ada@example.com",
+          "start": 6
+        }
+      ],
+      "id": "email-basic",
+      "input": "Email ada@example.com",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 21,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "raw": "ada@example.com",
+            "start": 6
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 21,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.8
+            },
+            "raw": "ada@example.com",
+            "start": 6
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 30,
+          "entity_type": "EMAIL_ADDRESS",
+          "family": "email",
+          "raw": "dev+alerts@example.org",
+          "start": 8
+        }
+      ],
+      "id": "email-plus-tag",
+      "input": "Contact dev+alerts@example.org",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 30,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "raw": "dev+alerts@example.org",
+            "start": 8
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 30,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.8
+            },
+            "raw": "dev+alerts@example.org",
+            "start": 8
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 39,
+          "entity_type": "URL",
+          "family": "url",
+          "raw": "https://example.com/debug?id=42",
+          "start": 8
+        }
+      ],
+      "id": "url-debug-query",
+      "input": "Request https://example.com/debug?id=42 failed",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 39,
+            "entity_type": "URL",
+            "family": "url",
+            "raw": "https://example.com/debug?id=42",
+            "start": 8
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 39,
+            "entity_type": "URL",
+            "family": "url",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "https://example.com/debug?id=42",
+            "start": 8
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 64,
+          "entity_type": "URL",
+          "family": "url",
+          "raw": "https://site.com/search?email=user%40example.com&id=123",
+          "start": 9
+        },
+        {
+          "end": 57,
+          "entity_type": "EMAIL_ADDRESS",
+          "family": "email",
+          "raw": "user%40example.com",
+          "start": 39
+        }
+      ],
+      "id": "url-inner-email-percent",
+      "input": "Referer: https://site.com/search?email=user%40example.com&id=123",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 2
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 500000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 64,
+            "entity_type": "URL",
+            "family": "url",
+            "raw": "https://site.com/search?email=user%40example.com&id=123",
+            "start": 9
+          },
+          {
+            "end": 57,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "raw": "user%40example.com",
+            "start": 39
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 64,
+            "entity_type": "URL",
+            "family": "url",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "https://site.com/search?email=user%40example.com&id=123",
+            "start": 9
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 45,
+          "entity_type": "URL",
+          "family": "url",
+          "raw": "https://example.com/debug?date=2026-02-31",
+          "start": 4
+        }
+      ],
+      "id": "url-inner-invalid-date",
+      "input": "See https://example.com/debug?date=2026-02-31",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 45,
+            "entity_type": "URL",
+            "family": "url",
+            "raw": "https://example.com/debug?date=2026-02-31",
+            "start": 4
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 45,
+            "entity_type": "URL",
+            "family": "url",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "https://example.com/debug?date=2026-02-31",
+            "start": 4
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 20,
+          "entity_type": "IP_ADDRESS",
+          "family": "ip_address",
+          "raw": "192.0.2.44",
+          "start": 10
+        }
+      ],
+      "id": "ipv4-documentation-range",
+      "input": "client_ip=192.0.2.44",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 20,
+            "entity_type": "IP_ADDRESS",
+            "family": "ip_address",
+            "raw": "192.0.2.44",
+            "start": 10
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 20,
+            "entity_type": "IP_ADDRESS",
+            "family": "ip_address",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.8
+            },
+            "raw": "192.0.2.44",
+            "start": 10
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 16,
+          "entity_type": "IP_ADDRESS",
+          "family": "ip_address",
+          "raw": "2001:db8::7",
+          "start": 5
+        }
+      ],
+      "id": "ipv6-documentation-range",
+      "input": "peer=2001:db8::7",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 16,
+            "entity_type": "IP_ADDRESS",
+            "family": "ip_address",
+            "raw": "2001:db8::7",
+            "start": 5
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 21,
+          "entity_type": "PHONE_NUMBER",
+          "family": "phone",
+          "raw": "(202) 555-0142",
+          "start": 7
+        }
+      ],
+      "id": "phone-us-fictional",
+      "input": "Phone: (202) 555-0142",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 21,
+            "entity_type": "PHONE_NUMBER",
+            "family": "phone",
+            "raw": "(202) 555-0142",
+            "start": 7
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 21,
+            "entity_type": "PHONE_NUMBER",
+            "family": "phone",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "(202) 555-0142",
+            "start": 7
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 21,
+          "entity_type": "PHONE_NUMBER",
+          "family": "phone",
+          "raw": "+44 20 7946 0958",
+          "start": 5
+        }
+      ],
+      "id": "phone-international-context",
+      "input": "Call +44 20 7946 0958",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 21,
+            "entity_type": "PHONE_NUMBER",
+            "family": "phone",
+            "raw": "+44 20 7946 0958",
+            "start": 5
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 22,
+          "entity_type": "CREDIT_CARD",
+          "family": "payment_card",
+          "raw": "4111111111111111",
+          "start": 6
+        }
+      ],
+      "id": "card-visa-compact",
+      "input": "Card: 4111111111111111",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 22,
+            "entity_type": "CREDIT_CARD",
+            "family": "payment_card",
+            "raw": "4111111111111111",
+            "start": 6
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 22,
+            "entity_type": "CREDIT_CARD",
+            "family": "payment_card",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.9
+            },
+            "raw": "4111111111111111",
+            "start": 6
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 32,
+          "entity_type": "CREDIT_CARD",
+          "family": "payment_card",
+          "raw": "4111 1111 1111 1111",
+          "start": 13
+        }
+      ],
+      "id": "card-visa-spaced",
+      "input": "Payment card 4111 1111 1111 1111",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 32,
+            "entity_type": "CREDIT_CARD",
+            "family": "payment_card",
+            "raw": "4111 1111 1111 1111",
+            "start": 13
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 31,
+          "entity_type": "CREDIT_CARD",
+          "family": "payment_card",
+          "raw": "5555-5555-5555-4444",
+          "start": 12
+        }
+      ],
+      "id": "card-mastercard-hyphenated",
+      "input": "Credit card 5555-5555-5555-4444",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 31,
+            "entity_type": "CREDIT_CARD",
+            "family": "payment_card",
+            "raw": "5555-5555-5555-4444",
+            "start": 12
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 27,
+          "entity_type": "IBAN_CODE",
+          "family": "iban",
+          "raw": "GB82WEST12345698765432",
+          "start": 5
+        }
+      ],
+      "id": "iban-gb-compact",
+      "input": "IBAN GB82WEST12345698765432",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 27,
+            "entity_type": "IBAN_CODE",
+            "family": "iban",
+            "raw": "GB82WEST12345698765432",
+            "start": 5
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 27,
+            "entity_type": "IBAN_CODE",
+            "family": "iban",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.75
+            },
+            "raw": "GB82WEST12345698765432",
+            "start": 5
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 38,
+          "entity_type": "FR_IBAN",
+          "family": "iban",
+          "raw": "FR76 3000 6000 0112 3456 7890 189",
+          "start": 5
+        }
+      ],
+      "id": "iban-fr-spaced",
+      "input": "IBAN FR76 3000 6000 0112 3456 7890 189",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 38,
+            "entity_type": "FR_IBAN",
+            "family": "iban",
+            "raw": "FR76 3000 6000 0112 3456 7890 189",
+            "start": 5
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 47,
+          "entity_type": "UUID",
+          "family": "uuid",
+          "raw": "550e8400-e29b-41d4-a716-446655440000",
+          "start": 11
+        }
+      ],
+      "id": "uuid-request-id",
+      "input": "request_id=550e8400-e29b-41d4-a716-446655440000",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 47,
+            "entity_type": "UUID",
+            "family": "uuid",
+            "raw": "550e8400-e29b-41d4-a716-446655440000",
+            "start": 11
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 47,
+            "entity_type": "GUID",
+            "family": "uuid",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.9
+            },
+            "raw": "550e8400-e29b-41d4-a716-446655440000",
+            "start": 11
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 24,
+          "entity_type": "MAC_ADDRESS",
+          "family": "mac_address",
+          "raw": "02:42:ac:11:00:02",
+          "start": 7
+        }
+      ],
+      "id": "mac-locally-administered",
+      "input": "device=02:42:ac:11:00:02",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 24,
+            "entity_type": "MAC_ADDRESS",
+            "family": "mac_address",
+            "raw": "02:42:ac:11:00:02",
+            "start": 7
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 24,
+            "entity_type": "MAC_ADDRESS",
+            "family": "mac_address",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.9
+            },
+            "raw": "02:42:ac:11:00:02",
+            "start": 7
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 21,
+          "entity_type": "MAC_ADDRESS",
+          "family": "mac_address",
+          "raw": "0242.ac11.0002",
+          "start": 7
+        }
+      ],
+      "id": "mac-cisco-notation",
+      "input": "switch 0242.ac11.0002",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 21,
+            "entity_type": "MAC_ADDRESS",
+            "family": "mac_address",
+            "raw": "0242.ac11.0002",
+            "start": 7
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 31,
+          "entity_type": "DATE_TIME",
+          "family": "date_time",
+          "raw": "2026-07-13T08:15:30Z",
+          "start": 11
+        }
+      ],
+      "id": "date-iso-timestamp",
+      "input": "created_at=2026-07-13T08:15:30Z",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 31,
+            "entity_type": "DATE_TIME",
+            "family": "date_time",
+            "raw": "2026-07-13T08:15:30Z",
+            "start": 11
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 27,
+            "entity_type": "DATE_TIME",
+            "family": "date_time",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.5
+            },
+            "raw": "2026-07-13T08:15",
+            "start": 11
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 27,
+          "entity_type": "FR_PHONE_NUMBER",
+          "family": "phone",
+          "raw": "+33 6 39 98 00 01",
+          "start": 10
+        }
+      ],
+      "id": "french-phone-context",
+      "input": "Telephone +33 6 39 98 00 01",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 27,
+            "entity_type": "FR_PHONE_NUMBER",
+            "family": "phone",
+            "raw": "+33 6 39 98 00 01",
+            "start": 10
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-email-missing-tld",
+      "input": "Email ada@example",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-ipv4-out-of-range",
+      "input": "client_ip=999.999.999.999",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-card-luhn",
+      "input": "Card: 4111111111111112",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-iban-checksum",
+      "input": "IBAN GB82WEST12345698765433",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-date-month",
+      "input": "created_at=2026-99-13",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 21,
+            "entity_type": "DATE_TIME",
+            "family": "date_time",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.5
+            },
+            "raw": "2026-99-13",
+            "start": 11
+          }
+        ]
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-mac-null",
+      "input": "device=00:00:00:00:00:00",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 24,
+            "entity_type": "MAC_ADDRESS",
+            "family": "mac_address",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.9
+            },
+            "raw": "00:00:00:00:00:00",
+            "start": 7
+          }
+        ]
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-mac-broadcast",
+      "input": "device=ff:ff:ff:ff:ff:ff",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 24,
+            "entity_type": "MAC_ADDRESS",
+            "family": "mac_address",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.9
+            },
+            "raw": "ff:ff:ff:ff:ff:ff",
+            "start": 7
+          }
+        ]
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-uuid-short",
+      "input": "request_id=550e8400-e29b-41d4-a716-44665544000",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-github-token-short",
+      "input": "label=ghp_EXAMPLE",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-phone-like-order",
+      "input": "order 202-555-0142",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 18,
+            "entity_type": "PHONE_NUMBER",
+            "family": "phone",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "202-555-0142",
+            "start": 6
+          }
+        ]
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-card-like-order",
+      "input": "order_id=4111111111111111",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 25,
+            "entity_type": "CREDIT_CARD",
+            "family": "payment_card",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.9
+            },
+            "raw": "4111111111111111",
+            "start": 9
+          }
+        ]
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-semantic-version",
+      "input": "version=1.2.3",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-commit-hash",
+      "input": "commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 47,
+            "entity_type": "SHA1_HASH",
+            "family": "unmapped:SHA1_HASH",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.6
+            },
+            "raw": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "start": 7
+          }
+        ]
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-us-ssn-area",
+      "input": "SSN 000-12-3456",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-fr-iban-short",
+      "input": "IBAN FR763000600001123456789018",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-random-dotted-number",
+      "input": "metric=999.999.999.999",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-private-key-lookalike",
+      "input": "-----BEGIN PUBLIC KEY-----",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 25,
+          "entity_type": "EMAIL_ADDRESS",
+          "family": "email",
+          "raw": "ada%40example.com",
+          "start": 8
+        }
+      ],
+      "id": "encoded-email-percent",
+      "input": "contact=ada%40example.com",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 25,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "raw": "ada%40example.com",
+            "start": 8
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 25,
+            "entity_type": "DOMAIN_NAME",
+            "family": "domain",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "40example.com",
+            "start": 12
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 28,
+          "entity_type": "EMAIL_ADDRESS",
+          "family": "email",
+          "raw": "ada\\u0040example.com",
+          "start": 8
+        }
+      ],
+      "id": "encoded-email-unicode-escape",
+      "input": "contact=ada\\u0040example.com",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 28,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "raw": "ada\\u0040example.com",
+            "start": 8
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 28,
+            "entity_type": "DOMAIN_NAME",
+            "family": "domain",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "u0040example.com",
+            "start": 12
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 53,
+          "entity_type": "EMAIL_ADDRESS",
+          "family": "email",
+          "raw": "\uff41\uff44\uff41\uff20\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d",
+          "start": 8
+        }
+      ],
+      "id": "normalized-email-fullwidth",
+      "input": "contact=\uff41\uff44\uff41\uff20\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 53,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "raw": "\uff41\uff44\uff41\uff20\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d",
+            "start": 8
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 23,
+          "entity_type": "EMAIL_ADDRESS",
+          "family": "email",
+          "raw": "i\u00f1es@example.com",
+          "start": 6
+        }
+      ],
+      "id": "unicode-email-local-part",
+      "input": "Email i\u00f1es@example.com",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 23,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "raw": "i\u00f1es@example.com",
+            "start": 6
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 23,
+            "entity_type": "DOMAIN_NAME",
+            "family": "domain",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "example.com",
+            "start": 12
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 21,
+          "entity_type": "PHONE_NUMBER",
+          "family": "phone",
+          "raw": "+1 202 555 0142",
+          "start": 6
+        }
+      ],
+      "id": "phone-without-context",
+      "input": "value=+1 202 555 0142",
+      "metrics": {
+        "anon_pii": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 21,
+            "entity_type": "PHONE_NUMBER",
+            "family": "phone",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "202 555 0142",
+            "start": 9
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 28,
+          "entity_type": "IBAN_CODE",
+          "family": "iban",
+          "raw": "GB82WEST12345698765432",
+          "start": 6
+        }
+      ],
+      "id": "iban-without-context",
+      "input": "value=GB82WEST12345698765432",
+      "metrics": {
+        "anon_pii": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 28,
+            "entity_type": "IBAN_CODE",
+            "family": "iban",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.75
+            },
+            "raw": "GB82WEST12345698765432",
+            "start": 6
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 25,
+          "entity_type": "CREDIT_CARD",
+          "family": "payment_card",
+          "raw": "4111\n1111 1111 1111",
+          "start": 6
+        }
+      ],
+      "id": "card-split-newline",
+      "input": "Card: 4111\n1111 1111 1111",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 25,
+            "entity_type": "CREDIT_CARD",
+            "family": "payment_card",
+            "raw": "4111\n1111 1111 1111",
+            "start": 6
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 15,
+          "entity_type": "EMAIL_ADDRESS",
+          "family": "email",
+          "raw": "ada@example.com",
+          "start": 0
+        },
+        {
+          "end": 26,
+          "entity_type": "IP_ADDRESS",
+          "family": "ip_address",
+          "raw": "192.0.2.44",
+          "start": 16
+        }
+      ],
+      "id": "adjacent-email-and-ip",
+      "input": "ada@example.com@192.0.2.44",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 2
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 2
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 15,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "raw": "ada@example.com",
+            "start": 0
+          },
+          {
+            "end": 26,
+            "entity_type": "IP_ADDRESS",
+            "family": "ip_address",
+            "raw": "192.0.2.44",
+            "start": 16
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 15,
+            "entity_type": "EMAIL_ADDRESS",
+            "family": "email",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.8
+            },
+            "raw": "ada@example.com",
+            "start": 0
+          },
+          {
+            "end": 26,
+            "entity_type": "IP_ADDRESS",
+            "family": "ip_address",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.8
+            },
+            "raw": "192.0.2.44",
+            "start": 16
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 35,
+          "entity_type": "URL",
+          "family": "url",
+          "raw": "https://example.com/debug?id=42",
+          "start": 4
+        }
+      ],
+      "id": "url-trailing-punctuation",
+      "input": "See https://example.com/debug?id=42, then retry.",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 35,
+            "entity_type": "URL",
+            "family": "url",
+            "raw": "https://example.com/debug?id=42",
+            "start": 4
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 35,
+            "entity_type": "URL",
+            "family": "url",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "https://example.com/debug?id=42",
+            "start": 4
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 18,
+          "entity_type": "PHONE_NUMBER",
+          "family": "phone",
+          "raw": "+12025550142",
+          "start": 6
+        }
+      ],
+      "id": "phone-e164-compact-context",
+      "input": "phone +12025550142",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 18,
+            "entity_type": "PHONE_NUMBER",
+            "family": "phone",
+            "raw": "+12025550142",
+            "start": 6
+          }
+        ],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 27,
+          "entity_type": "IBAN_CODE",
+          "family": "iban",
+          "raw": "gb82west12345698765432",
+          "start": 5
+        }
+      ],
+      "id": "iban-lowercase",
+      "input": "IBAN gb82west12345698765432",
+      "metrics": {
+        "anon_pii": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": []
+      }
+    },
+    {
+      "expected": [],
+      "id": "negative-impossible-calendar-date",
+      "input": "created_at=2026-02-31",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 0,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": null,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 21,
+            "entity_type": "DATE_TIME",
+            "family": "date_time",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.5
+            },
+            "raw": "2026-02-31",
+            "start": 11
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 22,
+          "entity_type": "IP_ADDRESS",
+          "family": "ip_address",
+          "raw": "::ffff:192.0.2.44",
+          "start": 5
+        }
+      ],
+      "id": "ipv4-mapped-ipv6",
+      "input": "peer=::ffff:192.0.2.44",
+      "metrics": {
+        "anon_pii": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [
+          {
+            "end": 22,
+            "entity_type": "IP_ADDRESS",
+            "family": "ip_address",
+            "raw": "::ffff:192.0.2.44",
+            "start": 5
+          }
+        ],
+        "censgate_redact": [
+          {
+            "end": 22,
+            "entity_type": "IP_ADDRESS",
+            "family": "ip_address",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.8
+            },
+            "raw": "192.0.2.44",
+            "start": 12
+          }
+        ]
+      }
+    },
+    {
+      "expected": [
+        {
+          "end": 24,
+          "entity_type": "EMAIL_ADDRESS",
+          "family": "email",
+          "raw": "ada@\nexample.com",
+          "start": 8
+        }
+      ],
+      "id": "email-split-newline",
+      "input": "contact ada@\nexample.com",
+      "metrics": {
+        "anon_pii": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": null,
+          "recall_ppm": 0,
+          "tp": 0
+        },
+        "censgate_redact": {
+          "fn": 1,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": 0,
+          "tp": 0
+        }
+      },
+      "native_metadata": {
+        "censgate_redact": {
+          "language": "en",
+          "recognizers_used": 1
+        }
+      },
+      "predictions": {
+        "anon_pii": [],
+        "censgate_redact": [
+          {
+            "end": 24,
+            "entity_type": "DOMAIN_NAME",
+            "family": "domain",
+            "native": {
+              "recognizer_name": "PatternRecognizer",
+              "score": 0.7
+            },
+            "raw": "example.com",
+            "start": 13
+          }
+        ]
+      }
+    }
+  ],
+  "comparison_version": "anon-pii-redact-shared-families-v1",
+  "environment": {
+    "architecture": "arm64",
+    "operating_system": "Darwin",
+    "python": "3.11.1",
+    "rustc": "rustc 1.93.0 (254b59607 2026-01-19)"
+  },
+  "inputs": {
+    "anon_report_sha256": "82f61c6bc302cbd4dd067d7a87c8a4a4be0a4f1f0aac4b8020bd9433292f229c",
+    "corpus": {
+      "path": "testdata/quality/v1.json",
+      "sha256": "866c2292a7c0b5b06fb26b9bab32228dac64b5bb0c6b389ef4102194da3f03e7",
+      "version": "debug-pii-v1"
+    },
+    "manifest": {
+      "path": "testdata/quality/comparison-redact-v1.json",
+      "sha256": "4872b79318776c6fbfdd64abc430b8c6989fc8a75b4cce9339f37ac46a0f510b"
+    }
+  },
+  "metrics": {
+    "anon_pii": {
+      "by_label": {
+        "date_time": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        },
+        "email": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 888888,
+          "tp": 8
+        },
+        "iban": {
+          "fn": 2,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 500000,
+          "tp": 2
+        },
+        "ip_address": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 4
+        },
+        "mac_address": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 2
+        },
+        "payment_card": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 4
+        },
+        "phone": {
+          "fn": 1,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 800000,
+          "tp": 4
+        },
+        "url": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 4
+        },
+        "uuid": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "overall": {
+        "fn": 4,
+        "fp": 0,
+        "precision_ppm": 1000000,
+        "recall_ppm": 882352,
+        "tp": 30
+      }
+    },
+    "censgate_redact": {
+      "by_label": {
+        "date_time": {
+          "fn": 1,
+          "fp": 3,
+          "precision_ppm": 0,
+          "recall_ppm": 0,
+          "tp": 0
+        },
+        "domain": {
+          "fn": 0,
+          "fp": 4,
+          "precision_ppm": 0,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "email": {
+          "fn": 6,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 333333,
+          "tp": 3
+        },
+        "iban": {
+          "fn": 2,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 500000,
+          "tp": 2
+        },
+        "ip_address": {
+          "fn": 2,
+          "fp": 1,
+          "precision_ppm": 666666,
+          "recall_ppm": 500000,
+          "tp": 2
+        },
+        "mac_address": {
+          "fn": 1,
+          "fp": 2,
+          "precision_ppm": 333333,
+          "recall_ppm": 500000,
+          "tp": 1
+        },
+        "payment_card": {
+          "fn": 3,
+          "fp": 1,
+          "precision_ppm": 500000,
+          "recall_ppm": 250000,
+          "tp": 1
+        },
+        "phone": {
+          "fn": 4,
+          "fp": 2,
+          "precision_ppm": 333333,
+          "recall_ppm": 200000,
+          "tp": 1
+        },
+        "unmapped:SHA1_HASH": {
+          "fn": 0,
+          "fp": 1,
+          "precision_ppm": 0,
+          "recall_ppm": null,
+          "tp": 0
+        },
+        "url": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 4
+        },
+        "uuid": {
+          "fn": 0,
+          "fp": 0,
+          "precision_ppm": 1000000,
+          "recall_ppm": 1000000,
+          "tp": 1
+        }
+      },
+      "overall": {
+        "fn": 19,
+        "fp": 14,
+        "precision_ppm": 517241,
+        "recall_ppm": 441176,
+        "tp": 15
+      }
+    }
+  },
+  "schema_version": 1,
+  "scope": {
+    "case_count": 50,
+    "excluded_case_ids": [
+      "phone-extension",
+      "jwt-synthetic",
+      "openai-key-synthetic",
+      "github-key-synthetic",
+      "aws-access-key-example",
+      "stripe-key-synthetic",
+      "slack-token-synthetic",
+      "database-connection-string",
+      "quoted-password-assignment",
+      "environment-password-assignment",
+      "json-style-secret-assignment",
+      "basic-auth-header"
+    ],
+    "included_case_ids": [
+      "email-basic",
+      "email-plus-tag",
+      "url-debug-query",
+      "url-inner-email-percent",
+      "url-inner-invalid-date",
+      "ipv4-documentation-range",
+      "ipv6-documentation-range",
+      "phone-us-fictional",
+      "phone-international-context",
+      "card-visa-compact",
+      "card-visa-spaced",
+      "card-mastercard-hyphenated",
+      "iban-gb-compact",
+      "iban-fr-spaced",
+      "uuid-request-id",
+      "mac-locally-administered",
+      "mac-cisco-notation",
+      "date-iso-timestamp",
+      "french-phone-context",
+      "negative-email-missing-tld",
+      "negative-ipv4-out-of-range",
+      "negative-card-luhn",
+      "negative-iban-checksum",
+      "negative-date-month",
+      "negative-mac-null",
+      "negative-mac-broadcast",
+      "negative-uuid-short",
+      "negative-github-token-short",
+      "negative-phone-like-order",
+      "negative-card-like-order",
+      "negative-semantic-version",
+      "negative-commit-hash",
+      "negative-us-ssn-area",
+      "negative-fr-iban-short",
+      "negative-random-dotted-number",
+      "negative-private-key-lookalike",
+      "encoded-email-percent",
+      "encoded-email-unicode-escape",
+      "normalized-email-fullwidth",
+      "unicode-email-local-part",
+      "phone-without-context",
+      "iban-without-context",
+      "card-split-newline",
+      "adjacent-email-and-ip",
+      "url-trailing-punctuation",
+      "phone-e164-compact-context",
+      "iban-lowercase",
+      "negative-impossible-calendar-date",
+      "ipv4-mapped-ipv6",
+      "email-split-newline"
+    ],
+    "included_expected_entity_types": [
+      "CREDIT_CARD",
+      "DATE_TIME",
+      "EMAIL_ADDRESS",
+      "FR_IBAN",
+      "FR_PHONE_NUMBER",
+      "IBAN_CODE",
+      "IP_ADDRESS",
+      "MAC_ADDRESS",
+      "PHONE_NUMBER",
+      "URL",
+      "UUID"
+    ],
+    "matching": "exact neutral-family and UTF-8 byte span",
+    "ranking": "none",
+    "selection_note": "All corpus cases whose expected spans use only predeclared shared detector families; negative cases are included by the same rule. This project-owned corpus is not an independent benchmark.",
+    "selection_rule": "include a case when every expected entity type is in included_expected_entity_types"
+  },
+  "tools": {
+    "anon_pii": {
+      "command": "cargo run --locked --quiet --example quality_report -- --json",
+      "configuration": {
+        "adapter": "quality_report example",
+        "features": "default",
+        "threshold": 0.5
+      },
+      "prediction_fields": [
+        "entity_type",
+        "start",
+        "end",
+        "raw"
+      ],
+      "repository": "https://github.com/tcheuD/anon-pii",
+      "revision": "1a22680e43b29c80e141a39b0a66eb3dcafb7522",
+      "unmapped_entity_types": []
+    },
+    "censgate_redact": {
+      "binary_sha256": "6e1e7318dfe478a86aff91e8ee7a7ab87b79a583474a45332b408d43094d71e9",
+      "build_command": "cargo build --locked --release -p redact-cli --bin redact",
+      "command": "redact --format json --language en analyze < case-input",
+      "configuration": {
+        "adapter": "redact --format json analyze",
+        "entity_filter": "none",
+        "features": "redact-cli default pattern registry; no NER recognizer registered",
+        "language": "en",
+        "threshold": "native pattern-registry minimum 0.5; no CLI threshold override"
+      },
+      "prediction_fields": [
+        "entity_type",
+        "start",
+        "end",
+        "text",
+        "score",
+        "recognizer_name"
+      ],
+      "repository": "https://github.com/censgate/redact",
+      "revision": "123e1a955d43797d65fa9c4f342131a68d8af6d6",
+      "unmapped_entity_types": [
+        "SHA1_HASH"
+      ]
+    }
+  }
+}

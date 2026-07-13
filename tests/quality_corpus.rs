@@ -1,6 +1,7 @@
 #[path = "../examples/support/quality.rs"]
 mod quality;
 
+use std::fs;
 use std::path::PathBuf;
 
 fn quality_paths() -> (PathBuf, PathBuf) {
@@ -91,4 +92,31 @@ fn quality_corpus_is_large_and_balanced_enough_to_be_a_gate() {
         expected_entity_types.len() >= 16,
         "quality-v1 needs broad entity-type coverage"
     );
+}
+
+#[test]
+fn published_quality_claim_matches_the_generated_report() {
+    let (corpus_path, _) = quality_paths();
+    let (corpus, corpus_sha256) = quality::load_corpus(&corpus_path).unwrap();
+    quality::validate_corpus(&corpus).unwrap();
+    let report = quality::evaluate(&corpus, corpus_sha256.clone());
+    let quality_doc =
+        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/quality.md"))
+            .unwrap();
+
+    assert!(quality_doc.contains(&corpus_sha256));
+    assert!(quality_doc.contains(&format!(
+        "contains {} fictional cases, {} annotated exact spans",
+        report.case_count, report.expected_span_count
+    )));
+    assert!(quality_doc.contains(&format!(
+        "{} TP, {} FP, and {} FN",
+        report.metrics.tp, report.metrics.fp, report.metrics.fn_count
+    )));
+    assert!(quality_doc.contains(&format!(
+        "{:.4}% measured precision and {:.4}% measured recall",
+        report.metrics.precision_ppm.unwrap() as f64 / 10_000.0,
+        report.metrics.recall_ppm.unwrap() as f64 / 10_000.0
+    )));
+    assert!(quality_doc.contains("1a22680e43b29c80e141a39b0a66eb3dcafb7522"));
 }

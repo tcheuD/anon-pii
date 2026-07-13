@@ -67,12 +67,17 @@ FN counts remain authoritative.
 
 ### Default-feature corpus v1
 
-`debug-pii-v1` currently contains 62 fictional cases, 46 annotated exact
-spans, 18 negative cases, 16 expected entity types, and both contract and
-challenge tiers. Matching requires the entity type, UTF-8 byte range, and raw
-source bytes to agree. The current report is 41 TP, 0 FP, and 5 FN: 100%
-measured precision and 89.1304% measured recall on this project-owned corpus.
-Those numbers are not estimates for arbitrary production data.
+`debug-pii-v1` (SHA-256
+`866c2292a7c0b5b06fb26b9bab32228dac64b5bb0c6b389ef4102194da3f03e7`)
+contains 62 fictional cases, 46 annotated exact spans, 18 negative cases, 16
+expected entity types, and both contract and challenge tiers. Matching requires
+the entity type, UTF-8 byte range, and raw source bytes to agree.
+
+At `anon-pii` revision
+`1a22680e43b29c80e141a39b0a66eb3dcafb7522`, default features, threshold `0.5`,
+and no NER, `cargo run --locked --example quality_report -- --check` reports
+41 TP, 0 FP, and 5 FN: 100.0000% measured precision and 89.1304% measured recall. Those
+numbers describe this project-owned corpus, not arbitrary production data.
 
 All contract cases and every non-exempt case must remain exact. The five
 reviewed challenge exceptions are intentionally visible in the baseline:
