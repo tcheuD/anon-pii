@@ -5,6 +5,7 @@
 //! so that examples and tools can use `clap::CommandFactory` for introspection.
 
 use clap::{Parser, Subcommand, ValueEnum};
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::detection::{HashAlgo, Operator};
@@ -117,6 +118,17 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Anonymize stdin, run a command, and restore tokens from its stdout in memory
+    Run {
+        /// Command and arguments to execute (place after --)
+        #[arg(
+            value_name = "COMMAND",
+            required = true,
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
+        command: Vec<OsString>,
+    },
     /// Restore original values from anonymized data
     Restore {
         /// Input file (positional, optional)

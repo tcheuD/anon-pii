@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
+use std::io::{self, Read, Write};
 
 const MAPPING_INTEGRITY_VERSION: u8 = 1;
 const MAPPING_INTEGRITY_ALGORITHM: &str = "sha256";
@@ -362,6 +363,78 @@ impl Mapping {
         self.restore_bracketed_with_count(text).0
     }
 
+    /// Restore bracket-delimited tokens from an arbitrary byte stream.
+    ///
+    /// The scanner retains at most one maximum-length token between reads, so
+    /// tokens split across child-process stdout chunks are restored without
+    /// buffering the whole response. Bytes outside known tokens are copied
+    /// unchanged, including non-UTF-8 output.
+    pub fn restore_bracketed_stream<R: Read, W: Write>(
+        &self,
+        mut reader: R,
+        mut writer: W,
+    ) -> io::Result<usize> {
+        let Some(max_token_len) = self.mappings.keys().map(String::len).max() else {
+            io::copy(&mut reader, &mut writer)?;
+            return Ok(0);
+        };
+
+        let retained_suffix = max_token_len.saturating_sub(1);
+        let mut read_buffer = [0_u8; 8 * 1024];
+        let mut pending = Vec::with_capacity(read_buffer.len() + retained_suffix);
+        let mut replacements = 0;
+
+        loop {
+            let read = match reader.read(&mut read_buffer) {
+                Ok(read) => read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            let at_eof = read == 0;
+            pending.extend_from_slice(&read_buffer[..read]);
+
+            let safe_end = if at_eof {
+                pending.len()
+            } else {
+                pending.len().saturating_sub(retained_suffix)
+            };
+            let mut cursor = 0;
+            let mut literal_start = 0;
+
+            while cursor < safe_end {
+                if pending[cursor] == b'[' {
+                    let search_end = (cursor + max_token_len).min(pending.len());
+                    if let Some(relative_close) = pending[cursor..search_end]
+                        .iter()
+                        .position(|byte| *byte == b']')
+                    {
+                        let token_end = cursor + relative_close + 1;
+                        if let Ok(candidate) = std::str::from_utf8(&pending[cursor..token_end]) {
+                            if let Some(original) = self.mappings.get(candidate) {
+                                writer.write_all(&pending[literal_start..cursor])?;
+                                writer.write_all(original.as_bytes())?;
+                                replacements += 1;
+                                cursor = token_end;
+                                literal_start = cursor;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                cursor += 1;
+            }
+
+            let processed_end = safe_end.max(literal_start);
+            writer.write_all(&pending[literal_start..processed_end])?;
+            pending.drain(..processed_end);
+            if at_eof {
+                break;
+            }
+        }
+
+        Ok(replacements)
+    }
+
     /// Restore both bracket-delimited and bare tokens.
     /// Bare tokens use word-boundary matching to avoid partial/injected replacements.
     /// Use for CLI restore where the user explicitly wants full restoration.
@@ -424,6 +497,27 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    struct ChunkedReader {
+        bytes: Vec<u8>,
+        cursor: usize,
+        chunk_size: usize,
+    }
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.cursor == self.bytes.len() {
+                return Ok(0);
+            }
+            let length = self
+                .chunk_size
+                .min(buffer.len())
+                .min(self.bytes.len() - self.cursor);
+            buffer[..length].copy_from_slice(&self.bytes[self.cursor..self.cursor + length]);
+            self.cursor += length;
+            Ok(length)
+        }
+    }
 
     /// Helper: check if a token matches the expected format [ENTITY_TYPE_xxxxxxxx]
     fn is_valid_token(token: &str, entity_type: &str) -> bool {
@@ -512,6 +606,66 @@ mod tests {
         let (result, count) = m.restore_bracketed_with_count(&input);
         assert_eq!(result, "Réponse pour john@example.com — 東京");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_restore_bracketed_stream_handles_every_token_split() {
+        let (mapping, token) = make_mapping_with_email();
+        let input = format!("before {token} after").into_bytes();
+
+        for chunk_size in 1..=token.len() + 2 {
+            let reader = ChunkedReader {
+                bytes: input.clone(),
+                cursor: 0,
+                chunk_size,
+            };
+            let mut output = Vec::new();
+            let count = mapping
+                .restore_bracketed_stream(reader, &mut output)
+                .unwrap();
+
+            assert_eq!(
+                output, b"before john@example.com after",
+                "chunk {chunk_size}"
+            );
+            assert_eq!(count, 1, "chunk {chunk_size}");
+        }
+    }
+
+    #[test]
+    fn test_restore_bracketed_stream_preserves_unknown_malformed_and_binary_bytes() {
+        let (mapping, token) = make_mapping_with_email();
+        let mut input = b"binary \xff unknown [EMAIL_ADDRESS_cafebabe] partial [EMAIL_".to_vec();
+        input.extend_from_slice(token.as_bytes());
+        let reader = ChunkedReader {
+            bytes: input,
+            cursor: 0,
+            chunk_size: 3,
+        };
+        let mut output = Vec::new();
+
+        let count = mapping
+            .restore_bracketed_stream(reader, &mut output)
+            .unwrap();
+
+        let mut expected = b"binary \xff unknown [EMAIL_ADDRESS_cafebabe] partial [EMAIL_".to_vec();
+        expected.extend_from_slice(b"john@example.com");
+        assert_eq!(output, expected);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_restore_bracketed_stream_without_mapping_copies_bytes() {
+        let mapping = Mapping::new();
+        let input = vec![0, 0xff, b'[', b'x', b']'];
+        let mut output = Vec::new();
+
+        let count = mapping
+            .restore_bracketed_stream(input.as_slice(), &mut output)
+            .unwrap();
+
+        assert_eq!(output, input);
+        assert_eq!(count, 0);
     }
 
     #[test]
