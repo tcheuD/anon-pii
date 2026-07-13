@@ -24,10 +24,16 @@ fn test_url_inner_pii_reported_in_detections() {
         dets.iter().any(|d| d.entity_type == "URL"),
         "URL detection missing"
     );
+    let expected = "user%40example.com";
+    let start = input.find(expected).unwrap();
     assert!(
-        dets.iter()
-            .any(|d| d.entity_type == "EMAIL_ADDRESS" && d.original == "user@example.com"),
-        "Inner email not reported in detections: {:?}",
+        dets.iter().any(|d| {
+            d.entity_type == "EMAIL_ADDRESS"
+                && d.original == expected
+                && d.start == start
+                && d.end == start + expected.len()
+        }),
+        "Inner email did not retain its exact raw source span: {:?}",
         dets
     );
 }
@@ -38,10 +44,30 @@ fn test_url_inner_pii_phone_reported() {
     let input = "visit https://example.com/contact?tel=%2B33612345678";
     let (result, dets) = a.anonymize_text(input);
     assert!(result.contains("[URL_"));
+    let expected = "%2B33612345678";
+    let start = input.find(expected).unwrap();
     assert!(
-        dets.iter().any(|d| d.entity_type == "FR_PHONE_NUMBER"),
-        "Inner phone not reported in detections: {:?}",
+        dets.iter().any(|d| {
+            d.entity_type == "FR_PHONE_NUMBER"
+                && d.original == expected
+                && d.start == start
+                && d.end == start + expected.len()
+        }),
+        "Inner phone did not retain its exact raw source span: {:?}",
         dets
+    );
+}
+
+#[test]
+fn test_url_inner_invalid_calendar_date_is_rejected() {
+    let mut a = Anonymizer::new(0.0);
+    let input = "See https://example.com/debug?date=2026-02-31";
+    let (_, dets) = a.anonymize_text(input);
+
+    assert!(dets.iter().any(|d| d.entity_type == "URL"));
+    assert!(
+        !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+        "invalid URL query date reported: {dets:?}"
     );
 }
 

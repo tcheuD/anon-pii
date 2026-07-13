@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>anon-pii — redact PII before it reaches the model</title>
-<meta name="description" content="A single-binary Rust CLI that redacts PII before it reaches an LLM, then restores real values in the reply. Reversible. Nothing leaves your machine.">
+<meta name="description" content="A Rust CLI that tokenizes recognized PII locally before an LLM call, keeps the reversible mapping on your machine, and restores recognized values in the reply.">
 <style>
 :root{
   --paper:#F6F5F1;
@@ -122,7 +122,7 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
       <div>
         <p class="eyebrow">Reversible redaction for LLM workflows</p>
         <h1>Hand the model the <span class="redact" data-real="evidence" tabindex="0">[REDACTED]</span>. Keep the <span class="redact" data-real="names" tabindex="0">[REDACTED]</span>.</h1>
-        <p class="sub">anon-pii redacts PII on the way out and <b>lifts the redaction</b> to restore real values in the reply. The originals never leave your machine.</p>
+        <p class="sub">anon-pii tokenizes recognized values on the way out and <b>lifts the redaction</b> in the reply. Pattern detection can miss sensitive data, so review the result before sharing it.</p>
         <p class="hint">↗ that is what the model sees — click a bar to see what you keep</p>
       </div>
     </div>
@@ -153,10 +153,10 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
         <h2>Why not just sed it out.</h2>
         <p class="lede">Because a black marker is permanent, and four of these are things a regex in your shell history will not give you.</p>
         <div class="reasons">
-          <div class="reason"><span class="idx">01</span><div><h3>The redaction lifts</h3><p>Tokens go to the model; <span class="mono">anon-pii restore</span> puts the real values back into its reply. The mapping stays on disk, owner-only (0600 on Unix).</p></div></div>
-          <div class="reason"><span class="idx">02</span><div><h3>One file, no runtime</h3><p>A single static binary. No Python environment, no Docker, no server to babysit — the whole friction with Presidio and llm-guard.</p></div></div>
-          <div class="reason"><span class="idx">03</span><div><h3>Detection that checks itself</h3><p>63 entity types, 99 patterns, 13 countries. Luhn and IBAN checksums plus context scoring cut the false positives that corrupt clean data.</p></div></div>
-          <div class="reason"><span class="idx">04</span><div><h3>Built for real log volume</h3><p>About 59k lines a second regex-only, reproducible with the bundled benchmark. JSON, CSV and SQL keep their structure through the pass.</p></div></div>
+          <div class="reason"><span class="idx">01</span><div><h3>One owned roundtrip</h3><p><span class="mono">anon-pii run</span> sends tokens to one child process and restores known tokens from stdout. That invocation's mapping stays in memory.</p></div></div>
+          <div class="reason"><span class="idx">02</span><div><h3>One native CLI</h3><p>The default path needs no Python environment, Docker container, long-running service, or ML runtime.</p></div></div>
+          <div class="reason"><span class="idx">03</span><div><h3>Validation where formats allow it</h3><p>Checksum-backed identifiers use validators such as Luhn and IBAN mod-97; ambiguous patterns use context. Neither removes false positives or false negatives.</p></div></div>
+          <div class="reason"><span class="idx">04</span><div><h3>A versioned quality contract</h3><p>Synthetic positive, negative, normalization and structured-format cases run in CI. Claims stay tied to a corpus and revision instead of a blanket accuracy ranking.</p></div></div>
         </div>
       </div>
     </div>
@@ -171,8 +171,8 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
         <div class="cmd"><div class="lbl">Pre-built binary — linux x86_64, macos x86_64 / aarch64</div><pre>curl -L https://github.com/tcheuD/anon-pii/releases/latest/download/anon-pii-macos-aarch64.tar.gz | tar xz
 sudo mv anon-pii /usr/local/bin/</pre></div>
         <div class="cmd"><div class="lbl">From source</div><pre>git clone https://github.com/tcheuD/anon-pii && cd anon-pii
-cargo install --path . --features ner-lite,proxy</pre></div>
-        <div class="cmd"><div class="lbl">The whole point, in one pipe</div><pre>cat error.log | anon-pii | claude -p <span class="g">"what failed?"</span> | anon-pii restore</pre></div>
+cargo install --path .</pre></div>
+        <div class="cmd"><div class="lbl">The whole point, in one command</div><pre>cat error.log | anon-pii run -- claude -p <span class="g">"what failed?"</span></pre></div>
       </div>
     </div>
   </section>
@@ -181,7 +181,7 @@ cargo install --path . --features ner-lite,proxy</pre></div>
 <footer>
   <div class="wrap">
     <span>anon-pii · MIT · <a href="https://github.com/tcheuD/anon-pii/releases" style="border-bottom:1px solid var(--red)">releases</a></span>
-    <span>originals sealed locally · v0.1.0</span>
+    <span>recognized values tokenized locally · v0.1.1</span>
   </div>
 </footer>
 

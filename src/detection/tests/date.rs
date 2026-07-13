@@ -123,6 +123,34 @@ fn test_date_iso8601_date_only() {
 }
 
 #[test]
+fn test_date_rejects_impossible_calendar_days() {
+    for input in [
+        "created 2026-02-31",
+        "created 2025-02-29",
+        "created 2026-04-31",
+        "birth date 31/04/2026",
+    ] {
+        let mut a = Anonymizer::new(0.0);
+        let (_, dets) = a.anonymize_text(input);
+        assert!(
+            !dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+            "impossible date detected in {input:?}: {dets:?}"
+        );
+    }
+}
+
+#[test]
+fn test_date_accepts_valid_leap_day() {
+    let mut a = Anonymizer::new(0.0);
+    let (_, dets) = a.anonymize_text("created 2024-02-29");
+
+    assert!(
+        dets.iter().any(|d| d.entity_type == "DATE_TIME"),
+        "valid leap day was rejected: {dets:?}"
+    );
+}
+
+#[test]
 fn test_date_iso8601_space_separator() {
     let mut a = Anonymizer::new(0.0);
     // Space instead of T between date and time (common in logs)

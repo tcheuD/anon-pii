@@ -5,14 +5,8 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -108,6 +102,30 @@ jobs:
           else
             cargo test
           fi
+
+  # ============================================================================
+  # Versioned product-quality contract
+  # ============================================================================
+  quality-contract:
+    name: Quality Contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: v1-quality
+
+      - name: Check versioned quality corpus
+        run: |
+          cargo test --locked --test quality_corpus
+          cargo test --locked --test quality_workflows
+          cargo run --locked --example quality_report -- --check
 
   rust-test-macos:
     name: Rust Test macOS (${{ matrix.features || 'default' }})
@@ -328,6 +346,7 @@ jobs:
       - rust-fmt
       - rust-clippy
       - rust-test
+      - quality-contract
       - rust-test-xlsx
       - rust-test-pdf
       - rust-test-macos
@@ -343,10 +362,11 @@ jobs:
       - name: Check all jobs
         run: |
           # Always required
-          for job in rust-fmt rust-test rust-test-xlsx rust-test-pdf rust-build rust-msrv; do
+          for job in rust-fmt rust-test quality-contract rust-test-xlsx rust-test-pdf rust-build rust-msrv; do
             result="${{ needs.rust-fmt.result }}"
             case "$job" in
               rust-test) result="${{ needs.rust-test.result }}" ;;
+              quality-contract) result="${{ needs.quality-contract.result }}" ;;
               rust-test-xlsx) result="${{ needs.rust-test-xlsx.result }}" ;;
               rust-test-pdf) result="${{ needs.rust-test-pdf.result }}" ;;
               rust-build) result="${{ needs.rust-build.result }}" ;;

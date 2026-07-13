@@ -28,6 +28,9 @@ Every pull request must pass:
 - `cargo test --features ner-lite,proxy`
 - `cargo test --features xlsx`
 - `cargo test --features pdf`
+- `cargo test --locked --test quality_corpus`
+- `cargo test --locked --test quality_workflows`
+- `cargo run --locked --example quality_report -- --check`
 - `cargo build --release`
 
 Main branch or manual checks additionally run:
@@ -73,6 +76,10 @@ To check a proposed tag locally after fetching `main` and creating the tag:
 - Run `cargo test --features ner-lite,proxy`.
 - Run `cargo test --features xlsx`.
 - Run `cargo test --features pdf`.
+- Run `cargo test --locked --test quality_corpus`.
+- Run `cargo test --locked --test quality_workflows`.
+- Run `cargo run --locked --example quality_report -- --check` and inspect the
+  version, corpus hash, and integer metrics.
 - Run image checks on a host with Tesseract: `cargo test --features image` and
   `cargo test --features image -- --ignored`.
 - Run `cargo audit`.

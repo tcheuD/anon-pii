@@ -29,6 +29,13 @@ fn test_ipv6_collapsed() {
         "collapsed IPv6 not detected: {dets:?}"
     );
     assert!(result.contains("[IP_ADDRESS_"));
+    assert_eq!(
+        dets.iter()
+            .find(|d| d.entity_type == "IP_ADDRESS")
+            .map(|d| d.original.as_str()),
+        Some("2001:db8::1"),
+        "collapsed IPv6 detection must cover the complete address"
+    );
 }
 
 #[test]
@@ -62,6 +69,13 @@ fn test_ipv6_mapped_v4() {
         "IPv4-mapped IPv6 not detected: {dets:?}"
     );
     assert!(result.contains("[IP_ADDRESS_"));
+    assert_eq!(
+        dets.iter()
+            .find(|d| d.entity_type == "IP_ADDRESS")
+            .map(|d| d.original.as_str()),
+        Some("::ffff:192.168.1.1"),
+        "IPv4-mapped IPv6 detection must cover the complete address"
+    );
 }
 
 #[test]

@@ -61,6 +61,69 @@ pub fn iban_mod97(iban: &str) -> bool {
     remainder == 1
 }
 
+/// Validate the calendar portion of numeric date/time patterns.
+///
+/// Recognized layouts are ISO `yyyy-mm-dd` (with an optional time suffix) and
+/// context-gated European `dd/mm/yyyy` or `dd.mm.yyyy`. Written dates keep their
+/// existing pattern validation because they need locale-aware parsing.
+pub fn valid_calendar_date(value: &str) -> bool {
+    let Some(date) = value.get(..10) else {
+        return true;
+    };
+    let bytes = date.as_bytes();
+
+    if bytes.get(4) == Some(&b'-') && bytes.get(7) == Some(&b'-') {
+        let Some(year) = parse_ascii_number(&bytes[0..4]) else {
+            return false;
+        };
+        let Some(month) = parse_ascii_number(&bytes[5..7]) else {
+            return false;
+        };
+        let Some(day) = parse_ascii_number(&bytes[8..10]) else {
+            return false;
+        };
+        return valid_ymd(year, month, day);
+    }
+
+    if matches!(bytes.get(2), Some(b'/' | b'.')) && bytes.get(5) == bytes.get(2) {
+        let Some(day) = parse_ascii_number(&bytes[0..2]) else {
+            return false;
+        };
+        let Some(month) = parse_ascii_number(&bytes[3..5]) else {
+            return false;
+        };
+        let Some(year) = parse_ascii_number(&bytes[6..10]) else {
+            return false;
+        };
+        return valid_ymd(year, month, day);
+    }
+
+    true
+}
+
+fn parse_ascii_number(bytes: &[u8]) -> Option<u32> {
+    bytes.iter().try_fold(0u32, |value, byte| {
+        if byte.is_ascii_digit() {
+            Some(value * 10 + u32::from(byte - b'0'))
+        } else {
+            None
+        }
+    })
+}
+
+fn valid_ymd(year: u32, month: u32, day: u32) -> bool {
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => {
+            29
+        }
+        2 => 28,
+        _ => return false,
+    };
+    (1..=max_day).contains(&day)
+}
+
 /// Luhn algorithm validation for credit card numbers.
 pub fn luhn_check(number: &str) -> bool {
     let digits: Vec<u32> = number
@@ -871,6 +934,22 @@ pub fn valid_fi_identity_code(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_valid_calendar_date_numeric_layouts() {
+        assert!(valid_calendar_date("2024-02-29"));
+        assert!(valid_calendar_date("29/02/2024"));
+        assert!(valid_calendar_date("29.02.2024"));
+        assert!(!valid_calendar_date("2025-02-29"));
+        assert!(!valid_calendar_date("31/04/2026"));
+        assert!(!valid_calendar_date("31.04.2026"));
+    }
+
+    #[test]
+    fn test_valid_calendar_date_rejects_non_digits_without_panicking() {
+        assert!(!valid_calendar_date("....-..-.."));
+        assert!(!valid_calendar_date("../../...."));
+    }
 
     #[test]
     fn test_iban_mod97_valid() {

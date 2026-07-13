@@ -10,7 +10,9 @@ pub const GLOBAL_PATTERNS: &[PiiPattern] = &[
     PiiPattern {
         name: "email",
         entity_type: "EMAIL_ADDRESS",
-        pattern: r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+        // Unicode letters and numbers in the local part avoid dangerous suffix-only
+        // matches such as detecting only `es@example.com` inside `iñes@example.com`.
+        pattern: r"[\p{L}\p{N}._%+\-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
         score: 0.9,
         context_keywords: &[],
         context_required: false,
@@ -137,16 +139,16 @@ pub const GLOBAL_PATTERNS: &[PiiPattern] = &[
             "(?i)",
             "(?:",
             r"\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){7}\b", // full 8-group
-            r"|\b(?:[0-9a-f]{1,4}:){1,7}:",            // trailing ::
+            r"|::(?:ffff:)?(?:(?:25[0-5]|(?:2[0-4]|1?[0-9])?[0-9])\.){3}", // ::ffff:IPv4
+            r"(?:25[0-5]|(?:2[0-4]|1?[0-9])?[0-9])",
             r"|\b(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}\b", // 6+::1
             r"|\b(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}\b", // 5+::2
             r"|\b(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}\b", // 4+::3
             r"|\b(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}\b", // 3+::4
             r"|\b(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}\b", // 2+::5
             r"|\b[0-9a-f]{1,4}:(?::[0-9a-f]{1,4}){1,6}\b", // 1+::6
-            r"|::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}\b", // ::prefix
-            r"|::(?:ffff:)?(?:(?:25[0-5]|(?:2[0-4]|1?[0-9])?[0-9])\.){3}", // ::ffff:IPv4
-            r"(?:25[0-5]|(?:2[0-4]|1?[0-9])?[0-9])",
+            r"|::(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}\b",  // ::prefix
+            r"|\b(?:[0-9a-f]{1,4}:){1,7}:", // trailing ::; keep last to avoid prefix matches
             ")",
         ),
         score: 0.9,

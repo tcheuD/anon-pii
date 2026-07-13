@@ -2,6 +2,11 @@
 
 [Back to README](../README.md)
 
+This is an implementation inventory, not a claim that every value of each type
+will be detected. Scores, context, thresholds, normalization, and optional
+features all affect results. The release-gated synthetic subset and its limits
+are documented in [Quality and claim policy](quality.md).
+
 ## Common
 
 | Entity | Description | Score |
@@ -49,9 +54,9 @@ Enabled with `--ner`. See [NER setup](ner.md).
 
 Format is auto-detected by default (`--format auto`):
 
-- **JSON** — Detected when content starts with `{` or `[` and parses as valid JSON. Recursively processes the JSON tree, anonymizing only string values. Numbers, booleans, and structure are preserved. Original indentation is maintained.
-- **SQL** — Detected when the first word is a SQL keyword (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP). Processed as text.
-- **CSV** — Detected when multiple lines have consistent comma counts. Processed as text.
+- **JSON** — Detected when content starts with `{` or `[` and parses as valid JSON. Recursively processes string values while leaving keys and non-string values unchanged. Output is reserialized, so insignificant whitespace and object-key order may change.
+- **SQL** — Detected when the first word is a SQL keyword (SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP). Only supported quoted, PostgreSQL E-string, and dollar-quoted literal bodies are anonymized; syntax and spelling outside those spans are copied from the source.
+- **CSV** — Parsed as a complete document so quoted commas, multiline fields, CRLF line endings, and escaped quotes keep their source representation outside anonymized field spans.
 - **Text** — Default fallback. Applies regex patterns across the full text.
 
 Force a format with `--format json`, `--format text`, `--format sql`, or `--format csv`.

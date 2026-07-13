@@ -31,10 +31,11 @@ pub mod validators;
 pub use aviation::CREW_CODE_BLOCKLIST;
 pub use validators::{
     iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare,
-    valid_au_tfn, valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code,
-    valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn,
-    valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number,
-    valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn, verhoeff_check,
+    valid_au_tfn, valid_calendar_date, valid_card_prefix, valid_es_nie, valid_es_nif,
+    valid_fi_identity_code, valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code, valid_kr_brn,
+    valid_kr_frn, valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso,
+    valid_si_tax_number, valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn,
+    verhoeff_check,
 };
 
 /// A PII pattern definition with regex, entity type, score, and context configuration.

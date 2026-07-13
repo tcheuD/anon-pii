@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "comparison_version": "anon-pii-redact-shared-families-v1",
+  "corpus_version": "debug-pii-v1",
+  "selection_note": "All corpus cases whose expected spans use only predeclared shared detector families; negative cases are included by the same rule. This project-owned corpus is not an independent benchmark.",
+  "matching": "exact neutral-family and UTF-8 byte span",
+  "selection": {
+    "rule": "include a case when every expected entity type is in included_expected_entity_types",
+    "expected_case_count": 50,
+    "included_expected_entity_types": [
+      "CREDIT_CARD",
+      "DATE_TIME",
+      "EMAIL_ADDRESS",
+      "FR_IBAN",
+      "FR_PHONE_NUMBER",
+      "IBAN_CODE",
+      "IP_ADDRESS",
+      "MAC_ADDRESS",
+      "PHONE_NUMBER",
+      "URL",
+      "UUID"
+    ]
+  },
+  "family_maps": {
+    "expected": {
+      "EMAIL_ADDRESS": "email",
+      "URL": "url",
+      "IP_ADDRESS": "ip_address",
+      "PHONE_NUMBER": "phone",
+      "CREDIT_CARD": "payment_card",
+      "IBAN_CODE": "iban",
+      "FR_IBAN": "iban",
+      "FR_PHONE_NUMBER": "phone",
+      "UUID": "uuid",
+      "MAC_ADDRESS": "mac_address",
+      "DATE_TIME": "date_time",
+      "SECRET_KEY": "secret"
+    },
+    "anon_pii": {
+      "EMAIL_ADDRESS": "email",
+      "URL": "url",
+      "IP_ADDRESS": "ip_address",
+      "PHONE_NUMBER": "phone",
+      "CREDIT_CARD": "payment_card",
+      "IBAN_CODE": "iban",
+      "FR_IBAN": "iban",
+      "FR_PHONE_NUMBER": "phone",
+      "UUID": "uuid",
+      "MAC_ADDRESS": "mac_address",
+      "DATE_TIME": "date_time",
+      "SECRET_KEY": "secret"
+    },
+    "censgate_redact": {
+      "EMAIL_ADDRESS": "email",
+      "URL": "url",
+      "IP_ADDRESS": "ip_address",
+      "PHONE_NUMBER": "phone",
+      "UK_PHONE_NUMBER": "phone",
+      "UK_MOBILE_NUMBER": "phone",
+      "CREDIT_CARD": "payment_card",
+      "IBAN_CODE": "iban",
+      "GUID": "uuid",
+      "MAC_ADDRESS": "mac_address",
+      "DATE_TIME": "date_time",
+      "DOMAIN_NAME": "domain"
+    }
+  },
+  "configurations": {
+    "anon_pii": {
+      "features": "default",
+      "threshold": 0.5,
+      "adapter": "quality_report example"
+    },
+    "censgate_redact": {
+      "features": "redact-cli default pattern registry; no NER recognizer registered",
+      "language": "en",
+      "threshold": "native pattern-registry minimum 0.5; no CLI threshold override",
+      "entity_filter": "none",
+      "adapter": "redact --format json analyze"
+    }
+  }
+}

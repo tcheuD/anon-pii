@@ -1,0 +1,512 @@
+{
+  "schema_version": 1,
+  "corpus_version": "debug-pii-v1",
+  "profile": {
+    "features": "default",
+    "threshold": 0.5
+  },
+  "cases": [
+    {
+      "id": "email-basic",
+      "tier": "contract",
+      "category": "contact",
+      "input": "Email ada@example.com",
+      "expected": [{ "entity_type": "EMAIL_ADDRESS", "start": 6, "end": 21, "raw": "ada@example.com" }],
+      "provenance": "Synthetic address on the RFC-reserved example.com domain"
+    },
+    {
+      "id": "email-plus-tag",
+      "tier": "contract",
+      "category": "contact",
+      "input": "Contact dev+alerts@example.org",
+      "expected": [{ "entity_type": "EMAIL_ADDRESS", "start": 8, "end": 30, "raw": "dev+alerts@example.org" }],
+      "provenance": "Synthetic address on the RFC-reserved example.org domain"
+    },
+    {
+      "id": "url-debug-query",
+      "tier": "contract",
+      "category": "network",
+      "input": "Request https://example.com/debug?id=42 failed",
+      "expected": [{ "entity_type": "URL", "start": 8, "end": 39, "raw": "https://example.com/debug?id=42" }],
+      "provenance": "Synthetic URL on the RFC-reserved example.com domain"
+    },
+    {
+      "id": "url-inner-email-percent",
+      "tier": "contract",
+      "category": "network",
+      "input": "Referer: https://site.com/search?email=user%40example.com&id=123",
+      "expected": [
+        { "entity_type": "URL", "start": 9, "end": 64, "raw": "https://site.com/search?email=user%40example.com&id=123" },
+        { "entity_type": "EMAIL_ADDRESS", "start": 39, "end": 57, "raw": "user%40example.com" }
+      ],
+      "provenance": "Synthetic URL query value covering decoded matching with raw source-span provenance"
+    },
+    {
+      "id": "url-inner-invalid-date",
+      "tier": "contract",
+      "category": "network",
+      "input": "See https://example.com/debug?date=2026-02-31",
+      "expected": [{ "entity_type": "URL", "start": 4, "end": 45, "raw": "https://example.com/debug?date=2026-02-31" }],
+      "provenance": "Synthetic URL query near-miss proving calendar validation is shared by nested detection"
+    },
+    {
+      "id": "ipv4-documentation-range",
+      "tier": "contract",
+      "category": "network",
+      "input": "client_ip=192.0.2.44",
+      "expected": [{ "entity_type": "IP_ADDRESS", "start": 10, "end": 20, "raw": "192.0.2.44" }],
+      "provenance": "RFC 5737 TEST-NET-1 address"
+    },
+    {
+      "id": "ipv6-documentation-range",
+      "tier": "contract",
+      "category": "network",
+      "input": "peer=2001:db8::7",
+      "expected": [{ "entity_type": "IP_ADDRESS", "start": 5, "end": 16, "raw": "2001:db8::7" }],
+      "provenance": "RFC 3849 documentation prefix"
+    },
+    {
+      "id": "phone-us-fictional",
+      "tier": "contract",
+      "category": "contact",
+      "input": "Phone: (202) 555-0142",
+      "expected": [{ "entity_type": "PHONE_NUMBER", "start": 7, "end": 21, "raw": "(202) 555-0142" }],
+      "provenance": "North American 555-01xx fictional-use range"
+    },
+    {
+      "id": "phone-international-context",
+      "tier": "contract",
+      "category": "contact",
+      "input": "Call +44 20 7946 0958",
+      "expected": [{ "entity_type": "PHONE_NUMBER", "start": 5, "end": 21, "raw": "+44 20 7946 0958" }],
+      "provenance": "UK Ofcom drama-use London number range"
+    },
+    {
+      "id": "phone-extension",
+      "tier": "contract",
+      "category": "contact",
+      "input": "Contact extension 4821",
+      "expected": [{ "entity_type": "PHONE_EXTENSION", "start": 8, "end": 22, "raw": "extension 4821" }],
+      "provenance": "Synthetic extension used only as a format vector"
+    },
+    {
+      "id": "card-visa-compact",
+      "tier": "contract",
+      "category": "financial",
+      "input": "Card: 4111111111111111",
+      "expected": [{ "entity_type": "CREDIT_CARD", "start": 6, "end": 22, "raw": "4111111111111111" }],
+      "provenance": "Published payment-processor test card number"
+    },
+    {
+      "id": "card-visa-spaced",
+      "tier": "contract",
+      "category": "financial",
+      "input": "Payment card 4111 1111 1111 1111",
+      "expected": [{ "entity_type": "CREDIT_CARD", "start": 13, "end": 32, "raw": "4111 1111 1111 1111" }],
+      "provenance": "Published payment-processor test card number"
+    },
+    {
+      "id": "card-mastercard-hyphenated",
+      "tier": "contract",
+      "category": "financial",
+      "input": "Credit card 5555-5555-5555-4444",
+      "expected": [{ "entity_type": "CREDIT_CARD", "start": 12, "end": 31, "raw": "5555-5555-5555-4444" }],
+      "provenance": "Published payment-processor test card number"
+    },
+    {
+      "id": "iban-gb-compact",
+      "tier": "contract",
+      "category": "financial",
+      "input": "IBAN GB82WEST12345698765432",
+      "expected": [{ "entity_type": "IBAN_CODE", "start": 5, "end": 27, "raw": "GB82WEST12345698765432" }],
+      "provenance": "Public IBAN validation example"
+    },
+    {
+      "id": "iban-fr-spaced",
+      "tier": "contract",
+      "category": "financial",
+      "input": "IBAN FR76 3000 6000 0112 3456 7890 189",
+      "expected": [{ "entity_type": "FR_IBAN", "start": 5, "end": 38, "raw": "FR76 3000 6000 0112 3456 7890 189" }],
+      "provenance": "Public French IBAN validation example"
+    },
+    {
+      "id": "uuid-request-id",
+      "tier": "contract",
+      "category": "identifiers",
+      "input": "request_id=550e8400-e29b-41d4-a716-446655440000",
+      "expected": [{ "entity_type": "UUID", "start": 11, "end": 47, "raw": "550e8400-e29b-41d4-a716-446655440000" }],
+      "provenance": "Synthetic UUID from common documentation examples"
+    },
+    {
+      "id": "mac-locally-administered",
+      "tier": "contract",
+      "category": "network",
+      "input": "device=02:42:ac:11:00:02",
+      "expected": [{ "entity_type": "MAC_ADDRESS", "start": 7, "end": 24, "raw": "02:42:ac:11:00:02" }],
+      "provenance": "Synthetic locally administered MAC address"
+    },
+    {
+      "id": "mac-cisco-notation",
+      "tier": "contract",
+      "category": "network",
+      "input": "switch 0242.ac11.0002",
+      "expected": [{ "entity_type": "MAC_ADDRESS", "start": 7, "end": 21, "raw": "0242.ac11.0002" }],
+      "provenance": "Same synthetic locally administered MAC in Cisco notation"
+    },
+    {
+      "id": "date-iso-timestamp",
+      "tier": "contract",
+      "category": "temporal",
+      "input": "created_at=2026-07-13T08:15:30Z",
+      "expected": [{ "entity_type": "DATE_TIME", "start": 11, "end": 31, "raw": "2026-07-13T08:15:30Z" }],
+      "provenance": "Synthetic ISO-8601 timestamp"
+    },
+    {
+      "id": "jwt-synthetic",
+      "tier": "contract",
+      "category": "secrets",
+      "input": "Authorization: Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJleGFtcGxlIn0.signatureEXAMPLE",
+      "expected": [{ "entity_type": "AUTH_TOKEN", "start": 22, "end": 82, "raw": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJleGFtcGxlIn0.signatureEXAMPLE" }],
+      "provenance": "Non-functional JWT-shaped synthetic string"
+    },
+    {
+      "id": "openai-key-synthetic",
+      "tier": "contract",
+      "category": "secrets",
+      "input": "api_key=sk-proj-EXAMPLEEXAMPLEEXAMPLE12345",
+      "expected": [{ "entity_type": "SECRET_KEY", "start": 8, "end": 42, "raw": "sk-proj-EXAMPLEEXAMPLEEXAMPLE12345" }],
+      "provenance": "Non-functional prefix-shaped synthetic credential"
+    },
+    {
+      "id": "github-key-synthetic",
+      "tier": "contract",
+      "category": "secrets",
+      "input": "token=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "expected": [{ "entity_type": "SECRET_KEY", "start": 6, "end": 46, "raw": "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }],
+      "provenance": "Non-functional prefix-shaped synthetic credential"
+    },
+    {
+      "id": "aws-access-key-example",
+      "tier": "contract",
+      "category": "secrets",
+      "input": "aws_id=AKIAIOSFODNN7EXAMPLE",
+      "expected": [{ "entity_type": "SECRET_KEY", "start": 7, "end": 27, "raw": "AKIAIOSFODNN7EXAMPLE" }],
+      "provenance": "AWS documentation example access-key identifier"
+    },
+    {
+      "id": "stripe-key-synthetic",
+      "tier": "contract",
+      "category": "secrets",
+      "input": "stripe=sk_test_EXAMPLEEXAMPLE1234",
+      "expected": [{ "entity_type": "SECRET_KEY", "start": 7, "end": 33, "raw": "sk_test_EXAMPLEEXAMPLE1234" }],
+      "provenance": "Non-functional prefix-shaped synthetic credential"
+    },
+    {
+      "id": "slack-token-synthetic",
+      "tier": "contract",
+      "category": "secrets",
+      "input": "slack=xoxb-EXAMPLE-EXAMPLE-1234567890",
+      "expected": [{ "entity_type": "SECRET_KEY", "start": 6, "end": 37, "raw": "xoxb-EXAMPLE-EXAMPLE-1234567890" }],
+      "provenance": "Non-functional prefix-shaped synthetic credential"
+    },
+    {
+      "id": "database-connection-string",
+      "tier": "contract",
+      "category": "secrets",
+      "input": "postgresql://debug:example-password@db.invalid/app",
+      "expected": [{ "entity_type": "CONNECTION_STRING", "start": 0, "end": 50, "raw": "postgresql://debug:example-password@db.invalid/app" }],
+      "provenance": "Synthetic connection URI on the reserved invalid TLD"
+    },
+    {
+      "id": "quoted-password-assignment",
+      "tier": "contract",
+      "category": "secrets",
+      "input": "password=\"example-pass-123\"",
+      "expected": [{ "entity_type": "PASSWORD", "start": 0, "end": 27, "raw": "password=\"example-pass-123\"" }],
+      "provenance": "Non-functional synthetic assignment"
+    },
+    {
+      "id": "environment-password-assignment",
+      "tier": "contract",
+      "category": "secrets",
+      "input": "DB_PASSWORD=example-pass-456",
+      "expected": [{ "entity_type": "PASSWORD", "start": 0, "end": 28, "raw": "DB_PASSWORD=example-pass-456" }],
+      "provenance": "Non-functional synthetic environment assignment"
+    },
+    {
+      "id": "french-phone-context",
+      "tier": "contract",
+      "category": "contact",
+      "input": "Telephone +33 6 39 98 00 01",
+      "expected": [{ "entity_type": "FR_PHONE_NUMBER", "start": 10, "end": 27, "raw": "+33 6 39 98 00 01" }],
+      "provenance": "French ARCEP audiovisual-work number range"
+    },
+    {
+      "id": "negative-email-missing-tld",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "Email ada@example",
+      "expected": [],
+      "provenance": "Malformed email negative"
+    },
+    {
+      "id": "negative-ipv4-out-of-range",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "client_ip=999.999.999.999",
+      "expected": [],
+      "provenance": "Out-of-range IPv4 negative"
+    },
+    {
+      "id": "negative-card-luhn",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "Card: 4111111111111112",
+      "expected": [],
+      "provenance": "Synthetic card number with an invalid Luhn digit"
+    },
+    {
+      "id": "negative-iban-checksum",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "IBAN GB82WEST12345698765433",
+      "expected": [],
+      "provenance": "Public IBAN vector modified to fail mod-97"
+    },
+    {
+      "id": "negative-date-month",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "created_at=2026-99-13",
+      "expected": [],
+      "provenance": "Out-of-range ISO month negative"
+    },
+    {
+      "id": "negative-mac-null",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "device=00:00:00:00:00:00",
+      "expected": [],
+      "provenance": "Null MAC broadcast-control negative"
+    },
+    {
+      "id": "negative-mac-broadcast",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "device=ff:ff:ff:ff:ff:ff",
+      "expected": [],
+      "provenance": "Broadcast MAC negative"
+    },
+    {
+      "id": "negative-uuid-short",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "request_id=550e8400-e29b-41d4-a716-44665544000",
+      "expected": [],
+      "provenance": "Truncated UUID negative"
+    },
+    {
+      "id": "negative-github-token-short",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "label=ghp_EXAMPLE",
+      "expected": [],
+      "provenance": "Too-short credential prefix negative"
+    },
+    {
+      "id": "negative-phone-like-order",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "order 202-555-0142",
+      "expected": [],
+      "provenance": "Phone-shaped order value without phone context"
+    },
+    {
+      "id": "negative-card-like-order",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "order_id=4111111111111111",
+      "expected": [],
+      "provenance": "Luhn-valid order value without payment context"
+    },
+    {
+      "id": "negative-semantic-version",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "version=1.2.3",
+      "expected": [],
+      "provenance": "Semantic version log negative"
+    },
+    {
+      "id": "negative-commit-hash",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": [],
+      "provenance": "Synthetic source-control hash negative"
+    },
+    {
+      "id": "negative-us-ssn-area",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "SSN 000-12-3456",
+      "expected": [],
+      "provenance": "SSA-invalid area-number negative"
+    },
+    {
+      "id": "negative-fr-iban-short",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "IBAN FR763000600001123456789018",
+      "expected": [],
+      "provenance": "Truncated French IBAN negative"
+    },
+    {
+      "id": "negative-random-dotted-number",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "metric=999.999.999.999",
+      "expected": [],
+      "provenance": "Out-of-range dotted metric negative"
+    },
+    {
+      "id": "negative-private-key-lookalike",
+      "tier": "contract",
+      "category": "adversarial",
+      "input": "-----BEGIN PUBLIC KEY-----",
+      "expected": [],
+      "provenance": "Public-key header is not a private-key credential"
+    },
+    {
+      "id": "encoded-email-percent",
+      "tier": "challenge",
+      "category": "normalization",
+      "input": "contact=ada%40example.com",
+      "expected": [{ "entity_type": "EMAIL_ADDRESS", "start": 8, "end": 25, "raw": "ada%40example.com" }],
+      "provenance": "Synthetic RFC-reserved email with URL-encoded at sign"
+    },
+    {
+      "id": "encoded-email-unicode-escape",
+      "tier": "challenge",
+      "category": "normalization",
+      "input": "contact=ada\\u0040example.com",
+      "expected": [{ "entity_type": "EMAIL_ADDRESS", "start": 8, "end": 28, "raw": "ada\\u0040example.com" }],
+      "provenance": "Synthetic RFC-reserved email with a literal Unicode escape"
+    },
+    {
+      "id": "normalized-email-fullwidth",
+      "tier": "challenge",
+      "category": "normalization",
+      "input": "contact=ａｄａ＠ｅｘａｍｐｌｅ．ｃｏｍ",
+      "expected": [{ "entity_type": "EMAIL_ADDRESS", "start": 8, "end": 53, "raw": "ａｄａ＠ｅｘａｍｐｌｅ．ｃｏｍ" }],
+      "provenance": "Synthetic RFC-reserved email represented with fullwidth forms"
+    },
+    {
+      "id": "unicode-email-local-part",
+      "tier": "challenge",
+      "category": "normalization",
+      "input": "Email iñes@example.com",
+      "expected": [{ "entity_type": "EMAIL_ADDRESS", "start": 6, "end": 23, "raw": "iñes@example.com" }],
+      "provenance": "Synthetic internationalized local part on an RFC-reserved domain"
+    },
+    {
+      "id": "phone-without-context",
+      "tier": "challenge",
+      "category": "contact",
+      "input": "value=+1 202 555 0142",
+      "expected": [{ "entity_type": "PHONE_NUMBER", "start": 6, "end": 21, "raw": "+1 202 555 0142" }],
+      "provenance": "North American fictional number without a context keyword"
+    },
+    {
+      "id": "iban-without-context",
+      "tier": "challenge",
+      "category": "financial",
+      "input": "value=GB82WEST12345698765432",
+      "expected": [{ "entity_type": "IBAN_CODE", "start": 6, "end": 28, "raw": "GB82WEST12345698765432" }],
+      "provenance": "Public IBAN vector without a context keyword"
+    },
+    {
+      "id": "card-split-newline",
+      "tier": "challenge",
+      "category": "normalization",
+      "input": "Card: 4111\n1111 1111 1111",
+      "expected": [{ "entity_type": "CREDIT_CARD", "start": 6, "end": 25, "raw": "4111\n1111 1111 1111" }],
+      "provenance": "Published test card split across a debug-log line boundary"
+    },
+    {
+      "id": "adjacent-email-and-ip",
+      "tier": "challenge",
+      "category": "overlap",
+      "input": "ada@example.com@192.0.2.44",
+      "expected": [
+        { "entity_type": "EMAIL_ADDRESS", "start": 0, "end": 15, "raw": "ada@example.com" },
+        { "entity_type": "IP_ADDRESS", "start": 16, "end": 26, "raw": "192.0.2.44" }
+      ],
+      "provenance": "Adjacent synthetic email and RFC 5737 address"
+    },
+    {
+      "id": "url-trailing-punctuation",
+      "tier": "challenge",
+      "category": "network",
+      "input": "See https://example.com/debug?id=42, then retry.",
+      "expected": [{ "entity_type": "URL", "start": 4, "end": 35, "raw": "https://example.com/debug?id=42" }],
+      "provenance": "Synthetic URL next to prose punctuation"
+    },
+    {
+      "id": "phone-e164-compact-context",
+      "tier": "challenge",
+      "category": "contact",
+      "input": "phone +12025550142",
+      "expected": [{ "entity_type": "PHONE_NUMBER", "start": 6, "end": 18, "raw": "+12025550142" }],
+      "provenance": "North American 555-01xx fictional-use range"
+    },
+    {
+      "id": "iban-lowercase",
+      "tier": "challenge",
+      "category": "financial",
+      "input": "IBAN gb82west12345698765432",
+      "expected": [{ "entity_type": "IBAN_CODE", "start": 5, "end": 27, "raw": "gb82west12345698765432" }],
+      "provenance": "Public IBAN vector lowercased as it can appear in logs"
+    },
+    {
+      "id": "negative-impossible-calendar-date",
+      "tier": "challenge",
+      "category": "temporal",
+      "input": "created_at=2026-02-31",
+      "expected": [],
+      "provenance": "Calendar-invalid date challenge negative"
+    },
+    {
+      "id": "json-style-secret-assignment",
+      "tier": "challenge",
+      "category": "secrets",
+      "input": "\"client_secret\": \"EXAMPLE-secret-value-123\"",
+      "expected": [{ "entity_type": "PASSWORD", "start": 1, "end": 43, "raw": "client_secret\": \"EXAMPLE-secret-value-123\"" }],
+      "provenance": "Non-functional JSON-shaped synthetic secret assignment"
+    },
+    {
+      "id": "basic-auth-header",
+      "tier": "challenge",
+      "category": "secrets",
+      "input": "Authorization: Basic ZGVidWc6ZXhhbXBsZS1wYXNzd29yZA==",
+      "expected": [{ "entity_type": "AUTH_TOKEN", "start": 21, "end": 53, "raw": "ZGVidWc6ZXhhbXBsZS1wYXNzd29yZA==" }],
+      "provenance": "Base64 encoding of debug:example-password, not a live credential"
+    },
+    {
+      "id": "ipv4-mapped-ipv6",
+      "tier": "challenge",
+      "category": "network",
+      "input": "peer=::ffff:192.0.2.44",
+      "expected": [{ "entity_type": "IP_ADDRESS", "start": 5, "end": 22, "raw": "::ffff:192.0.2.44" }],
+      "provenance": "IPv4-mapped form using RFC 5737 TEST-NET-1"
+    },
+    {
+      "id": "email-split-newline",
+      "tier": "challenge",
+      "category": "normalization",
+      "input": "contact ada@\nexample.com",
+      "expected": [{ "entity_type": "EMAIL_ADDRESS", "start": 8, "end": 24, "raw": "ada@\nexample.com" }],
+      "provenance": "Synthetic email split across a debug-log line boundary"
+    }
+  ]
+}

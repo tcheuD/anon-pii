@@ -17,10 +17,19 @@ fn public_doc_paths() -> &'static [&'static str] {
     &[
         "README.md",
         "PROXY-MODE.md",
+        "docs/api.md",
+        "docs/dependency-policy.md",
+        "docs/entities.md",
+        "docs/index.html",
         "docs/proxy.md",
         "docs/ner.md",
         "docs/image-redaction.md",
         "docs/pdf-redaction.md",
+        "docs/quality.md",
+        "docs/comparison-redact.md",
+        "docs/release.md",
+        "docs/threat-model.md",
+        "docs/xlsx.md",
         "docs/youtrack.md",
         "docs/openapi.yaml",
     ]
@@ -58,6 +67,11 @@ fn ci_covers_documented_public_feature_set() {
     let ci = read_workflow(".github/workflows/ci.yml");
 
     assert!(
+        !ci.contains("paths-ignore:"),
+        "CI must validate documentation-only changes because docs carry product claims"
+    );
+
+    assert!(
         ci.contains("features: ['', 'ner-lite,proxy']"),
         "CI should include the default and ner-lite,proxy test matrix"
     );
@@ -80,6 +94,35 @@ fn ci_covers_documented_public_feature_set() {
         assert!(
             ci.contains(phrase),
             "CI should document feature-gate exclusion: {phrase}"
+        );
+    }
+}
+
+#[test]
+fn quality_contract_is_a_required_ci_and_release_gate() {
+    let ci = read_workflow(".github/workflows/ci.yml");
+    let release = read_workflow(".github/workflows/release.yml");
+
+    for snippet in [
+        "quality-contract:",
+        "name: Quality Contract",
+        "- quality-contract",
+        "needs.quality-contract.result",
+        "cargo test --locked --test quality_corpus",
+        "cargo test --locked --test quality_workflows",
+        "cargo run --locked --example quality_report -- --check",
+    ] {
+        assert!(ci.contains(snippet), "CI should require `{snippet}`");
+    }
+
+    for command in [
+        "cargo test --locked --test quality_corpus",
+        "cargo test --locked --test quality_workflows",
+        "cargo run --locked --example quality_report -- --check",
+    ] {
+        assert!(
+            release.contains(command),
+            "release verification should run `{command}`"
         );
     }
 }
@@ -214,6 +257,9 @@ fn release_workflow_is_gated_before_build_and_publish() {
         "cargo test --locked --features ner-lite,proxy",
         "cargo test --locked --features xlsx",
         "cargo test --locked --features pdf",
+        "cargo test --locked --test quality_corpus",
+        "cargo test --locked --test quality_workflows",
+        "cargo run --locked --example quality_report -- --check",
         "cargo package --locked",
         "cargo build --locked --release",
     ] {
@@ -259,6 +305,186 @@ fn first_release_checklist_is_documented() {
             "release checklist should mention {phrase}"
         );
     }
+}
+
+#[test]
+fn product_positioning_is_pinned_and_quality_scoped() {
+    let readme = read_doc("README.md");
+    let quality = read_doc("docs/quality.md");
+    let comparison = read_doc("docs/comparison-redact.md");
+
+    for guide in ["docs/quality.md", "docs/comparison-redact.md"] {
+        assert!(readme.contains(guide), "README should link {guide}");
+        assert!(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(guide).exists(),
+            "{guide} should exist"
+        );
+    }
+
+    for tier in ["**Core**", "**Secondary**", "**Experimental**"] {
+        assert!(readme.contains(tier), "README should define {tier} scope");
+        assert!(
+            quality.contains(tier),
+            "quality policy should define {tier} scope"
+        );
+    }
+
+    let headline = readme
+        .split("## Security & Privacy Notice")
+        .next()
+        .expect("README should have a security notice");
+    for (claim, regex) in [
+        (
+            "headline recognizer count",
+            Regex::new(r"(?i)\b[0-9]+\s+entity types\s*/\s*[0-9]+\s+patterns\b").unwrap(),
+        ),
+        (
+            "unscoped headline throughput",
+            Regex::new(r"(?i)~?[0-9]+(?:\.[0-9]+)?k?\s+lines/sec\b").unwrap(),
+        ),
+    ] {
+        assert!(
+            !regex.is_match(headline),
+            "README should not make a {claim} claim without measurement context"
+        );
+    }
+
+    for phrase in [
+        "complete, finite UTF-8 payload",
+        "buffered rather than streamed",
+        "Child stdout is streamed",
+        "Child stderr is inherited unchanged",
+        "not a sandbox",
+        "recognized values only",
+        "not a compliance control",
+    ] {
+        assert!(
+            readme.contains(phrase),
+            "README should state run limitation: {phrase}"
+        );
+    }
+
+    for pin in [
+        "1a22680e43b29c80e141a39b0a66eb3dcafb7522",
+        "123e1a955d43797d65fa9c4f342131a68d8af6d6",
+    ] {
+        assert!(comparison.contains(pin), "comparison should pin {pin}");
+    }
+
+    for phrase in [
+        "does not declare a winner",
+        "not an accuracy or performance benchmark",
+        "repository revision and corpus revision",
+        "true-positive, false-positive, and false-negative counts",
+    ] {
+        assert!(
+            quality.contains(phrase) || comparison.contains(phrase),
+            "quality docs should require evidence: {phrase}"
+        );
+    }
+}
+
+#[test]
+fn comparison_evidence_is_pinned_and_matches_public_summary() {
+    let report_source = read_doc("testdata/quality/comparison-redact-v1-report.json");
+    let report: serde_json::Value = serde_json::from_str(&report_source).unwrap();
+    let comparison = read_doc("docs/comparison-redact.md");
+
+    assert_eq!(report["scope"]["case_count"], 50);
+    assert_eq!(
+        report["tools"]["anon_pii"]["revision"],
+        "1a22680e43b29c80e141a39b0a66eb3dcafb7522"
+    );
+    assert_eq!(
+        report["tools"]["censgate_redact"]["revision"],
+        "123e1a955d43797d65fa9c4f342131a68d8af6d6"
+    );
+    assert_eq!(
+        report["inputs"]["corpus"]["sha256"],
+        "866c2292a7c0b5b06fb26b9bab32228dac64b5bb0c6b389ef4102194da3f03e7"
+    );
+    assert_eq!(
+        report["metrics"]["anon_pii"]["overall"],
+        serde_json::json!({
+            "fn": 4,
+            "fp": 0,
+            "precision_ppm": 1_000_000,
+            "recall_ppm": 882_352,
+            "tp": 30
+        })
+    );
+    assert_eq!(
+        report["metrics"]["censgate_redact"]["overall"],
+        serde_json::json!({
+            "fn": 19,
+            "fp": 14,
+            "precision_ppm": 517_241,
+            "recall_ppm": 441_176,
+            "tp": 15
+        })
+    );
+
+    for evidence in [
+        "comparison-redact-v1-report.json",
+        "| `anon-pii` | 30 | 0 | 4 | 100.0000% | 88.2352% |",
+        "| `censgate/redact` | 15 | 14 | 19 | 51.7241% | 44.1176% |",
+        "not an independent holdout",
+    ] {
+        assert!(
+            comparison.contains(evidence),
+            "comparison should publish evidence: {evidence}"
+        );
+    }
+}
+
+#[test]
+fn public_positioning_rejects_absolute_or_unqualified_claims() {
+    let forbidden = [
+        (
+            "absolute locality",
+            Regex::new(
+                r"(?i)\b(?:PII|nothing)\s+(?:ever\s+|never\s+)?leaves\s+(?:your|the)\s+machine\b",
+            )
+            .unwrap(),
+        ),
+        (
+            "project superiority",
+            Regex::new(
+                r"(?i)\bbetter\s+than\b|\bsuperior\s+(?:to|than)\b|\bmore\s+(?:accurate|complete|capable)\s+than\b|\boutperforms?\b|\bfaster\s+than\b|\b[0-9]+(?:\.[0-9]+)?x\s+faster\b|\bbest[- ]in[- ]class\b",
+            )
+            .unwrap(),
+        ),
+        (
+            "production suitability",
+            Regex::new(
+                r"(?i)\bproduction[- ]ready\b|\bready for production\b|\bproduction[- ]grade\b|\b(?:safe|suitable) for production\b",
+            )
+            .unwrap(),
+        ),
+        (
+            "compliance certification",
+            Regex::new(
+                r"(?i)\b(?:GDPR|HIPAA|CCPA)[ -]compliant\b|\bcompliant\s+with\s+(?:GDPR|HIPAA|CCPA)\b|\bcompliance[- ](?:ready|certified)\b|\b(?:guarantees?|ensures?)\s+compliance\b",
+            )
+            .unwrap(),
+        ),
+    ];
+
+    let mut offenders = Vec::new();
+    for path in public_doc_paths() {
+        let doc = read_doc(path);
+        for (claim, regex) in &forbidden {
+            for mat in regex.find_iter(&doc) {
+                offenders.push(format!("{path}: {claim}: {}", mat.as_str()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "public docs contain absolute or unqualified product claims:\n{}",
+        offenders.join("\n")
+    );
 }
 
 fn user_facing_source_paths() -> &'static [&'static str] {
@@ -434,6 +660,9 @@ fn readme_links_all_feature_guides_and_verification_commands() {
         "cargo test --features image",
         "cargo test --features pdf",
         "cargo test --features xlsx",
+        "cargo test --locked --test quality_corpus",
+        "cargo test --locked --test quality_workflows",
+        "cargo run --locked --example quality_report -- --check",
         "cargo run --features ner-lite,proxy,image,pdf,xlsx --example update_readme",
     ] {
         assert!(

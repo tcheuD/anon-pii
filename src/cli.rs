@@ -38,7 +38,7 @@ pub struct Cli {
     #[arg(long)]
     pub include_mapping: bool,
 
-    /// Output a share-ready Markdown snippet (safe to paste into issues / AI tools)
+    /// Output a review-ready Markdown snippet; inspect it for missed sensitive values before sharing
     #[arg(long)]
     pub share: bool,
 
