@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import subprocess
 import sys
 
@@ -104,6 +105,21 @@ def require_github_remote(repo, project):
             "{} origin {!r} is not github.com/{}".format(repo, remote, project)
         )
     return remote
+
+
+def rustc_version():
+    try:
+        completed = subprocess.run(
+            ["rustc", "--version"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = getattr(error, "stderr", "") or str(error)
+        raise ComparisonError("failed to read rustc version: {}".format(detail.strip())) from error
+    return completed.stdout.strip()
 
 
 def require_object(value, label):
@@ -576,6 +592,12 @@ def build_report(args):
                 "sha256": sha256_file(args.manifest),
             },
             "anon_report_sha256": sha256_bytes(anon_report_bytes),
+        },
+        "environment": {
+            "operating_system": platform.system(),
+            "architecture": platform.machine(),
+            "python": platform.python_version(),
+            "rustc": rustc_version(),
         },
         "tools": {
             "anon_pii": {
