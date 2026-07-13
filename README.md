@@ -3,13 +3,13 @@
 [![CI](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml/badge.svg)](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Fast CLI tool to anonymize PII in debug data before sharing with AI tools.
+Local, reversible PII roundtrips for AI-assisted debugging.
 
-`anon-pii` is a local data-minimization aid. It helps detect, pseudonymize, redact,
-or mask sensitive values before they leave your machine, but it is not a privacy
-compliance guarantee and it cannot prove that a payload is fully anonymized.
-Always evaluate it against your own data, policies, and risk tolerance before
-production use.
+`anon-pii` is a Rust CLI built around one workflow: anonymize a finite debug
+payload, run an AI or diagnostic command with the anonymized input, and restore
+recognized values from its response without sharing a mapping file between
+processes. It is a data-minimization aid, not a privacy compliance guarantee or
+proof that a payload is fully anonymized.
 
 ## Try it in 10 seconds
 
@@ -18,18 +18,33 @@ echo 'Error for user john@acme.com (IP 10.0.0.5) card 4111111111111111' \
   | anon-pii run -- claude -p "what failed?"
 ```
 
-`run` detects the email, IP, and card, sends opaque tokens to Claude, and
-restores them from Claude's stdout. Its mapping lives only for that child
-process. Values that the detector recognizes do not leave your machine; false
-negatives remain possible, so review the caveats below.
+`run` owns the token mapping for that invocation. The child receives the
+anonymized payload on stdin; known tokens in child stdout are restored before
+they reach your terminal. Only values the configured detectors recognize are
+protected, so review the limitations below before using real data.
 
 ## Why anon-pii?
 
-- **One static binary** - no Python, no Docker, no services to run (unlike Presidio / llm-guard).
-- **Reversible by default** - anonymize on the way out, restore original values on the way back from the LLM.
-- **63 entity types / 99 patterns across 13 countries**, with checksum validation (Luhn, IBAN, etc.) and context scoring to reduce false positives.
-- **Fast** - ~59k lines/sec (regex-only), viable for piping production logs. Reproduce with `cargo run --release --example benchmark`.
-- **Format-aware** - JSON / CSV / SQL structure preserved; text, images (OCR), and PDFs supported.
+- **Transaction-owned roundtrip** — `run` keeps one mapping in memory for one
+  child process instead of coordinating a mutable default mapping file.
+- **Fail-safe handoff** — the complete bounded input is read and anonymized
+  before the child starts.
+- **Format-aware core** — text, JSON values, CSV fields, and SQL string literals
+  are transformed without treating the whole payload as an undifferentiated
+  string.
+- **Local default path** — the core CLI needs no service, container, or ML
+  runtime.
+- **Evidence before rankings** — quality claims must identify a revision,
+  configuration, corpus, and command. See the [quality policy](docs/quality.md)
+  and the [pinned comparison with `censgate/redact`](docs/comparison-redact.md).
+
+## Product scope
+
+| Tier | Supported focus | Expectation |
+|------|-----------------|-------------|
+| **Core** | `run`; regex, context, and checksum detection; reversible tokens; text, JSON, CSV, and SQL | Release-gated and suitable for the local AI-debugging workflow, subject to false positives and false negatives |
+| **Secondary** | Detached mapping/restore flows, custom recognizers, heuristic name detection, local API/UI/proxy modes | Supported, but not the primary product path; read the mode-specific threat and persistence notes |
+| **Experimental** | ML NER, OCR image redaction, PDF redaction, and XLSX detection | Optional and dependency- or format-sensitive; validate on representative files before relying on it |
 
 ## Security & Privacy Notice
 
@@ -43,6 +58,9 @@ negatives remain possible, so review the caveats below.
   or ambiguous names.
 - **False positives are possible.** Context-aware patterns and name detection can
   redact benign data, especially in logs with dense identifiers.
+- **`run` is not a sandbox.** It does not restrict the child process's network,
+  filesystem, environment, subprocesses, or side effects. It only transforms
+  the child's stdin and recognized tokens in its stdout.
 - **Local HTTP modes trust the local user session.** Proxy, UI, and REST API
   bind to loopback and validate Host headers, but they do not provide bearer-token
   authentication yet. Do not expose them through tunnels, containers, or port forwards.
@@ -75,29 +93,29 @@ cd anon-pii
 # Default (regex-only, no NER)
 cargo install --path .
 
-# With heuristic name detection (zero deps, +0 binary size)
+# Optional secondary mode: heuristic name detection
 cargo install --path . --features ner-lite
 
-# With reverse proxy + web UI + REST API
+# Optional secondary modes: reverse proxy, web UI, and REST API
 cargo install --path . --features proxy
 
-# Recommended full build (heuristic NER + proxy, no ML deps)
+# Combined secondary build
 cargo install --path . --features ner-lite,proxy
 
-# With ML name detection (requires ONNX Runtime)
+# Experimental: ML name detection (requires ONNX Runtime)
 brew install onnxruntime
 export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
 cargo install --path . --features ner
 anon-pii download-model  # one-time, cached at ~/.anon-pii/models/
 
-# With image redaction (requires Tesseract)
+# Experimental: image redaction (requires Tesseract)
 brew install tesseract  # macOS
 cargo install --path . --features image
 
-# With PDF redaction
+# Experimental: PDF redaction
 cargo install --path . --features pdf
 
-# With XLSX format detection scaffold
+# Experimental: XLSX format detection scaffold
 cargo install --path . --features xlsx
 ```
 
@@ -130,7 +148,10 @@ To update after code changes, re-run the same `cargo install` command.
 ## Quick Start
 
 ```bash
-# Anonymize from stdin
+# Recommended: one in-memory AI roundtrip
+cat debug.json | anon-pii run -- claude -p "explain this error"
+
+# Standalone anonymization from stdin
 echo 'Error for user john@example.com on F-DEMO' | anon-pii
 # Output: Error for user [EMAIL_ADDRESS_a1b2c3d4] on [AIRCRAFT_REGISTRATION_b2c3d4e5]
 
@@ -150,50 +171,55 @@ echo 'User john@example.com logged in' | anon-pii --operator custom --replace-wi
 echo 'Card: 4111111111111111' | anon-pii --operator mask --mask-count 12
 # Output: Card: ************1111
 
-# Roundtrip: anonymize, share, restore
-cat debug.json | anon-pii > safe.json
-cat response.json | anon-pii restore
+# Detached roundtrip: use a workflow-specific mapping path
+anon-pii --mapping ./roundtrip.map < debug.json > safe.json
+anon-pii restore --mapping ./roundtrip.map < response.json
 
-# Transaction-owned AI roundtrip (recommended)
-cat debug.json | anon-pii run -- claude -p "explain this error"
-
-# Share-ready Markdown snippet (safe to paste into issues / AI tools)
+# Review-ready Markdown snippet; inspect for missed sensitive values before sharing
 cat debug.json | anon-pii --share --copy
-
-# Redact PII in images (OCR + fill)
-anon-pii image screenshot.png -o redacted.png
 ```
 
 More runnable examples are in [demo/README.md](demo/README.md).
 
-## Run a command with an in-memory roundtrip
+## `run` contract and limitations
 
 ```bash
 cat debug.json | anon-pii run -- claude -p "explain this error"
 ```
 
-`run` reads the complete payload from stdin and anonymizes it before starting
-the child process. It launches the program directly—without a shell—writes only
-the anonymized payload to child stdin, restores known bracketed tokens while
-streaming child stdout, inherits child stderr, and returns a shell-compatible
-child exit code. Unknown or malformed tokens and non-UTF-8 output bytes pass through
-unchanged.
+`anon-pii run -- <command> [args...]` reads a complete, finite UTF-8 payload
+from stdin, enforces the input-size limit, anonymizes it, and only then starts
+the child. The payload side is buffered rather than streamed, so `run` is not
+for unbounded log tails or interactive stdin.
 
-The token mapping exists only in memory for that invocation, so concurrent AI
-workflows cannot overwrite each other's mapping files. Put detection options
-before the subcommand, and put the child program and its arguments after `--`:
+Child stdout is streamed through the bracketed-token restorer. Child stderr is
+inherited unchanged and is not restored. The command is launched directly,
+without a shell, and returns a shell-compatible child exit code. Unknown or
+malformed tokens and non-UTF-8 output bytes pass through unchanged. The mapping
+exists only in memory for that invocation.
+
+Put detection options before the subcommand, and put the child program and its
+arguments after `--`:
 
 ```bash
 cat incident.txt | anon-pii --threshold 0.7 --format text run -- my-ai-tool --flag
 ```
 
+This is process orchestration, not a sandbox: the child retains its normal
+network, filesystem, environment, and subprocess access.
+
+This contract covers recognized values only. Missed PII, values outside the
+configured recognizers, child-generated sensitive data, and sensitive stderr
+can still leave the intended boundary. `run` is not a compliance control or a
+substitute for reviewing what is sent to a third-party tool.
+
 ## Mapping Persistence
 
-Default token mode persists a reversible mapping so `anon-pii restore` can
-put original values back later. Prefer `anon-pii run -- <command>` for a single
-AI roundtrip: it keeps the mapping in memory and owns both directions of the
-transaction. For standalone workflows, use `--mapping` to choose a different
-file. The mapping is made durable before tokenized output is written.
+`run` keeps its reversible mapping in memory and does not write the default
+mapping file. Default token mode persists a reversible mapping for detached
+workflows so `anon-pii restore` can put original values back later. Use a unique
+`--mapping` path per workflow. The mapping is made durable before tokenized
+output is written.
 Non-token operators and runs with no detected PII leave existing mapping files
 unchanged. Bare tokens remain unchanged unless explicitly enabled; use
 `--restore-bare` only for trusted legacy output that needs unbracketed token
@@ -204,11 +230,13 @@ where the platform supports them. Proxy and UI modes keep mappings in memory by 
 pass `--persist-mapping` when you intentionally need server-side mappings on
 disk for debugging or manual restore workflows.
 
+The following auto-save note applies only to standalone token mode:
+
 Mapping is auto-saved to `~/.anon-pii/mapping.json` — no need to pass `-m` manually.
 
 ## How It Works
 
-### 1) End-to-end anonymization path
+### 1) Standalone anonymization path (secondary)
 
 ```mermaid
 flowchart LR
@@ -243,7 +271,7 @@ flowchart TD
     K --> L[Replace spans with tokens from end to start]
 ```
 
-### 3) Restore flow
+### 3) Detached restore flow (secondary)
 
 ```mermaid
 sequenceDiagram
@@ -332,6 +360,8 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 
 - `anon-pii` is optimized for developer/debug workflows, not legal de-identification
   or formal anonymization.
+- `run` buffers finite stdin before spawn, restores stdout only, inherits stderr,
+  and does not sandbox the child process.
 - Optional NER improves person detection but still depends on model coverage,
   dictionaries, local context, and post-processing heuristics.
 - Image redaction and PDF redaction rely on text extraction/OCR quality.
@@ -351,7 +381,9 @@ See [docs/entities.md](docs/entities.md) for the full reference with confidence 
 
 | Guide | Description |
 |-------|-------------|
-| [Entity types](docs/entities.md) | All 63 entity types, scores, context-aware detection |
+| [Quality and claim policy](docs/quality.md) | Scope tiers, evidence requirements, and quality gates |
+| [Comparison with `censgate/redact`](docs/comparison-redact.md) | Pinned, configuration-specific product comparison without a winner claim |
+| [Entity types](docs/entities.md) | Exact recognizer inventory, scores, validators, and context requirements |
 | [Proxy mode](docs/proxy.md) | Anonymizing reverse proxy for Anthropic, OpenAI, and generic LLM APIs |
 | [REST API](docs/api.md) | Local Presidio-compatible HTTP API |
 | [NER setup](docs/ner.md) | Person name detection — heuristic and ML backends |

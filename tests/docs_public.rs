@@ -17,10 +17,18 @@ fn public_doc_paths() -> &'static [&'static str] {
     &[
         "README.md",
         "PROXY-MODE.md",
+        "docs/api.md",
+        "docs/dependency-policy.md",
+        "docs/entities.md",
         "docs/proxy.md",
         "docs/ner.md",
         "docs/image-redaction.md",
         "docs/pdf-redaction.md",
+        "docs/quality.md",
+        "docs/comparison-redact.md",
+        "docs/release.md",
+        "docs/threat-model.md",
+        "docs/xlsx.md",
         "docs/youtrack.md",
         "docs/openapi.yaml",
     ]
@@ -259,6 +267,130 @@ fn first_release_checklist_is_documented() {
             "release checklist should mention {phrase}"
         );
     }
+}
+
+#[test]
+fn product_positioning_is_pinned_and_quality_scoped() {
+    let readme = read_doc("README.md");
+    let quality = read_doc("docs/quality.md");
+    let comparison = read_doc("docs/comparison-redact.md");
+
+    for guide in ["docs/quality.md", "docs/comparison-redact.md"] {
+        assert!(readme.contains(guide), "README should link {guide}");
+        assert!(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(guide).exists(),
+            "{guide} should exist"
+        );
+    }
+
+    for tier in ["**Core**", "**Secondary**", "**Experimental**"] {
+        assert!(readme.contains(tier), "README should define {tier} scope");
+        assert!(
+            quality.contains(tier),
+            "quality policy should define {tier} scope"
+        );
+    }
+
+    let headline = readme
+        .split("## Security & Privacy Notice")
+        .next()
+        .expect("README should have a security notice");
+    for (claim, regex) in [
+        (
+            "headline recognizer count",
+            Regex::new(r"(?i)\b[0-9]+\s+entity types\s*/\s*[0-9]+\s+patterns\b").unwrap(),
+        ),
+        (
+            "unscoped headline throughput",
+            Regex::new(r"(?i)~?[0-9]+(?:\.[0-9]+)?k?\s+lines/sec\b").unwrap(),
+        ),
+    ] {
+        assert!(
+            !regex.is_match(headline),
+            "README should not make a {claim} claim without measurement context"
+        );
+    }
+
+    for phrase in [
+        "complete, finite UTF-8 payload",
+        "buffered rather than streamed",
+        "Child stdout is streamed",
+        "Child stderr is inherited unchanged",
+        "not a sandbox",
+        "recognized values only",
+        "not a compliance control",
+    ] {
+        assert!(
+            readme.contains(phrase),
+            "README should state run limitation: {phrase}"
+        );
+    }
+
+    for pin in [
+        "5e69c281b82f4d40a19d3951f94b1e5b76dc6785",
+        "123e1a955d43797d65fa9c4f342131a68d8af6d6",
+    ] {
+        assert!(comparison.contains(pin), "comparison should pin {pin}");
+    }
+
+    for phrase in [
+        "does not declare a winner",
+        "not an accuracy or performance benchmark",
+        "repository revision and corpus revision",
+        "true-positive, false-positive, and false-negative counts",
+    ] {
+        assert!(
+            quality.contains(phrase) || comparison.contains(phrase),
+            "quality docs should require evidence: {phrase}"
+        );
+    }
+}
+
+#[test]
+fn public_positioning_rejects_absolute_or_unqualified_claims() {
+    let forbidden = [
+        (
+            "absolute locality",
+            Regex::new(r"(?i)\bPII never leaves\b").unwrap(),
+        ),
+        (
+            "project superiority",
+            Regex::new(
+                r"(?i)\bbetter\s+than\b|\bsuperior\s+(?:to|than)\b|\bmore\s+(?:accurate|complete|capable)\s+than\b|\boutperforms?\b|\bfaster\s+than\b|\b[0-9]+(?:\.[0-9]+)?x\s+faster\b|\bbest[- ]in[- ]class\b",
+            )
+            .unwrap(),
+        ),
+        (
+            "production suitability",
+            Regex::new(
+                r"(?i)\bproduction[- ]ready\b|\bready for production\b|\bproduction[- ]grade\b|\b(?:safe|suitable) for production\b",
+            )
+            .unwrap(),
+        ),
+        (
+            "compliance certification",
+            Regex::new(
+                r"(?i)\b(?:GDPR|HIPAA|CCPA)[ -]compliant\b|\bcompliant\s+with\s+(?:GDPR|HIPAA|CCPA)\b|\bcompliance[- ](?:ready|certified)\b|\b(?:guarantees?|ensures?)\s+compliance\b",
+            )
+            .unwrap(),
+        ),
+    ];
+
+    let mut offenders = Vec::new();
+    for path in public_doc_paths() {
+        let doc = read_doc(path);
+        for (claim, regex) in &forbidden {
+            for mat in regex.find_iter(&doc) {
+                offenders.push(format!("{path}: {claim}: {}", mat.as_str()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "public docs contain absolute or unqualified product claims:\n{}",
+        offenders.join("\n")
+    );
 }
 
 fn user_facing_source_paths() -> &'static [&'static str] {
