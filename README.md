@@ -15,11 +15,13 @@ production use.
 
 ```bash
 echo 'Error for user john@acme.com (IP 10.0.0.5) card 4111111111111111' \
-  | anon-pii | claude -p "what failed?" | anon-pii restore
+  | anon-pii run -- claude -p "what failed?"
 ```
 
-`anon-pii` detects the email, IP, and card, sends only opaque tokens to Claude,
-and restores the real values in Claude's reply. The PII never leaves your machine.
+`run` detects the email, IP, and card, sends opaque tokens to Claude, and
+restores them from Claude's stdout. Its mapping lives only for that child
+process. Values that the detector recognizes do not leave your machine; false
+negatives remain possible, so review the caveats below.
 
 ## Why anon-pii?
 
@@ -152,8 +154,8 @@ echo 'Card: 4111111111111111' | anon-pii --operator mask --mask-count 12
 cat debug.json | anon-pii > safe.json
 cat response.json | anon-pii restore
 
-# Pipe through Claude
-cat debug.json | anon-pii | claude -p "explain this error" | anon-pii restore
+# Transaction-owned AI roundtrip (recommended)
+cat debug.json | anon-pii run -- claude -p "explain this error"
 
 # Share-ready Markdown snippet (safe to paste into issues / AI tools)
 cat debug.json | anon-pii --share --copy
@@ -164,11 +166,34 @@ anon-pii image screenshot.png -o redacted.png
 
 More runnable examples are in [demo/README.md](demo/README.md).
 
+## Run a command with an in-memory roundtrip
+
+```bash
+cat debug.json | anon-pii run -- claude -p "explain this error"
+```
+
+`run` reads the complete payload from stdin and anonymizes it before starting
+the child process. It launches the program directly—without a shell—writes only
+the anonymized payload to child stdin, restores known bracketed tokens while
+streaming child stdout, inherits child stderr, and returns a shell-compatible
+child exit code. Unknown or malformed tokens and non-UTF-8 output bytes pass through
+unchanged.
+
+The token mapping exists only in memory for that invocation, so concurrent AI
+workflows cannot overwrite each other's mapping files. Put detection options
+before the subcommand, and put the child program and its arguments after `--`:
+
+```bash
+cat incident.txt | anon-pii --threshold 0.7 --format text run -- my-ai-tool --flag
+```
+
 ## Mapping Persistence
 
-Default token mode persists a reversible mapping so `anon-pii restore` can put
-original values back after an AI round trip. Use `--mapping` to choose a
-different file. The mapping is made durable before tokenized output is written.
+Default token mode persists a reversible mapping so `anon-pii restore` can
+put original values back later. Prefer `anon-pii run -- <command>` for a single
+AI roundtrip: it keeps the mapping in memory and owns both directions of the
+transaction. For standalone workflows, use `--mapping` to choose a different
+file. The mapping is made durable before tokenized output is written.
 Non-token operators and runs with no detected PII leave existing mapping files
 unchanged. Bare tokens remain unchanged unless explicitly enabled; use
 `--restore-bare` only for trusted legacy output that needs unbracketed token
@@ -283,6 +308,7 @@ sequenceDiagram
 
 <!-- BEGIN COMMANDS -->
 ```bash
+anon-pii run <COMMAND>       # Anonymize stdin, run a command, and restore tokens from its stdout in memory
 anon-pii restore [INPUT_POSITIONAL] # Restore original values from anonymized data
 anon-pii list-entities                 # List all supported entity types
 anon-pii api                 # Start Presidio-compatible REST API server (requires `proxy` feature)

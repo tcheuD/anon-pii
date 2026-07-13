@@ -5,8 +5,10 @@ use serde_json::json;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus, Stdio};
 #[cfg(feature = "proxy")]
 use std::sync::Arc;
+use std::thread;
 
 use anon_pii::cli::{Cli, Commands, Format};
 use anon_pii::config::RecognizerConfigFile;
@@ -515,12 +517,373 @@ fn process_text_batched(
     (result, all_detections)
 }
 
+struct ProcessedContent {
+    result: String,
+    detections: Vec<Detection>,
+    format_name: &'static str,
+}
+
+fn configure_anonymizer(cli: &Cli, operator: Operator) -> io::Result<Anonymizer> {
+    let mut anonymizer = Anonymizer::new(cli.threshold);
+
+    if let Some(ref config_path) = cli.config {
+        let config = RecognizerConfigFile::load(config_path)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        anonymizer.add_custom_patterns(&config);
+        if cli.verbose {
+            eprintln!(
+                "Loaded {} custom recognizer(s) from {}",
+                config.recognizers.len(),
+                config_path.display()
+            );
+        }
+    }
+
+    anonymizer.context_boost = cli.context_boost.clamp(0.0, 1.0);
+    anonymizer.min_score_with_context = cli.min_score_with_context.clamp(0.0, 1.0);
+    anonymizer.operator = operator;
+    anonymizer.mask_config = MaskConfig {
+        mask_char: cli.mask_char,
+        fixed_count: cli.mask_count,
+        from_end: cli.mask_from_end,
+    };
+    anonymizer.hash_algo = cli.hash_algo;
+
+    if operator == Operator::Encrypt {
+        let hex = cli.encrypt_key.as_deref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--encrypt-key is required when using --operator encrypt",
+            )
+        })?;
+        anonymizer.encrypt_key = Some(
+            parse_encrypt_key(hex)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?,
+        );
+    }
+    if operator == Operator::Custom {
+        anonymizer.replace_with = Some(cli.replace_with.clone().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--replace-with is required when using --operator custom",
+            )
+        })?);
+    }
+
+    configure_ner(&mut anonymizer, cli);
+    Ok(anonymizer)
+}
+
+#[cfg(feature = "ner")]
+fn configure_ner(anonymizer: &mut Anonymizer, cli: &Cli) {
+    if !cli.ner {
+        return;
+    }
+
+    let config = anon_pii::ner::NerConfig::default();
+    let heuristic = anon_pii::ner::heuristic::HeuristicNerDetector::new();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        anon_pii::ner::ml::MlNerDetector::new(&config)
+    })) {
+        Ok(Ok(ml_detector)) => {
+            let combined = anon_pii::ner::CombinedNerDetector::new(vec![
+                Box::new(ml_detector),
+                Box::new(heuristic),
+            ]);
+            anonymizer.set_ner_detector(Box::new(combined));
+            if cli.verbose {
+                eprintln!("NER: ML + heuristic backend enabled");
+            }
+        }
+        Ok(Err(error)) => {
+            eprintln!("Warning: ML NER init failed: {error}");
+            eprintln!("Hint: run `anon-pii download-model` first");
+            anonymizer.set_ner_detector(Box::new(heuristic));
+            if cli.verbose {
+                eprintln!("NER: falling back to heuristic backend");
+            }
+        }
+        Err(_) => {
+            eprintln!("Warning: ONNX Runtime not found.");
+            eprintln!("Install it:  brew install onnxruntime");
+            eprintln!(
+                "Then set:    export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib"
+            );
+            anonymizer.set_ner_detector(Box::new(heuristic));
+            if cli.verbose {
+                eprintln!("NER: falling back to heuristic backend");
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "ner-lite", not(feature = "ner")))]
+fn configure_ner(anonymizer: &mut Anonymizer, cli: &Cli) {
+    if cli.ner {
+        anonymizer.set_ner_detector(Box::new(
+            anon_pii::ner::heuristic::HeuristicNerDetector::new(),
+        ));
+        if cli.verbose {
+            eprintln!("NER: heuristic backend enabled");
+        }
+    }
+}
+
+#[cfg(not(any(feature = "ner", feature = "ner-lite")))]
+fn configure_ner(_anonymizer: &mut Anonymizer, _cli: &Cli) {}
+
+fn process_content(
+    anonymizer: &mut Anonymizer,
+    content: &str,
+    cli: &Cli,
+) -> io::Result<ProcessedContent> {
+    let (parsed_json, format_name) = match cli.format {
+        Format::Json => (
+            Some(
+                serde_json::from_str::<serde_json::Value>(content.trim()).map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!(
+                            "invalid JSON input: {error}; use --format text to force text mode"
+                        ),
+                    )
+                })?,
+            ),
+            "json",
+        ),
+        Format::Auto => match detect_format(content) {
+            DetectedFormat::Json(value) => (Some(value), "json"),
+            DetectedFormat::Sql => (None, "sql"),
+            DetectedFormat::Csv => (None, "csv"),
+            DetectedFormat::Text => (None, "text"),
+        },
+        Format::Text => (None, "text"),
+        Format::Sql => (None, "sql"),
+        Format::Csv => (None, "csv"),
+        #[cfg(feature = "xlsx")]
+        Format::Xlsx => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "XLSX parsing is not implemented; export to CSV first",
+            ));
+        }
+    };
+
+    let (result, detections) = if let Some(parsed) = parsed_json {
+        let indent = detect_json_indent(content);
+        let (anonymized, detections) = anonymizer.anonymize_json_value(&parsed);
+        let indent_bytes = b" ".repeat(indent);
+        let formatter = serde_json::ser::PrettyFormatter::with_indent(&indent_bytes);
+        let mut buffer = Vec::new();
+        let mut serializer = serde_json::Serializer::with_formatter(&mut buffer, formatter);
+        anonymized
+            .serialize(&mut serializer)
+            .map_err(io::Error::other)?;
+        let json = String::from_utf8(buffer)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        (format!("{json}\n"), detections)
+    } else if format_name == "csv" {
+        anonymizer.anonymize_csv(content)
+    } else if format_name == "sql" {
+        anonymizer.anonymize_sql(content)
+    } else {
+        #[cfg(any(feature = "ner", feature = "ner-lite"))]
+        if cli.ner && cli.batch_size > 0 {
+            process_text_batched(anonymizer, content, cli.batch_size)
+        } else {
+            anonymizer.anonymize_text(content)
+        }
+        #[cfg(not(any(feature = "ner", feature = "ner-lite")))]
+        {
+            anonymizer.anonymize_text(content)
+        }
+    };
+
+    Ok(ProcessedContent {
+        result,
+        detections,
+        format_name,
+    })
+}
+
+fn validate_run_options(cli: &Cli) -> io::Result<()> {
+    let mut conflicts = Vec::new();
+    if cli.input.is_some() {
+        conflicts.push("--input");
+    }
+    if cli.output.is_some() {
+        conflicts.push("--output");
+    }
+    if cli.mapping.is_some() {
+        conflicts.push("--mapping");
+    }
+    if cli.mapping_stderr {
+        conflicts.push("--mapping-stderr");
+    }
+    if cli.include_mapping {
+        conflicts.push("--include-mapping");
+    }
+    if cli.share {
+        conflicts.push("--share");
+    }
+    if cli.copy {
+        conflicts.push("--copy");
+    }
+    if cli.operator != Operator::Token {
+        conflicts.push("--operator");
+    }
+    if cli.mask_char != '*' {
+        conflicts.push("--mask-char");
+    }
+    if cli.mask_count.is_some() {
+        conflicts.push("--mask-count");
+    }
+    if cli.mask_from_end {
+        conflicts.push("--mask-from-end");
+    }
+    if cli.hash_algo != anon_pii::detection::HashAlgo::Sha256 {
+        conflicts.push("--hash-algo");
+    }
+    if cli.encrypt_key.is_some() {
+        conflicts.push("--encrypt-key");
+    }
+    if cli.replace_with.is_some() {
+        conflicts.push("--replace-with");
+    }
+
+    if conflicts.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "`run` owns stdin, stdout, tokenization, and its in-memory mapping; unsupported option(s): {}",
+                conflicts.join(", ")
+            ),
+        ))
+    }
+}
+
+fn run_child_command(
+    command: Vec<std::ffi::OsString>,
+    anonymized_input: String,
+    mapping: &Mapping,
+) -> io::Result<(ExitStatus, usize)> {
+    let (program, arguments) = command.split_first().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "run requires a command after --",
+        )
+    })?;
+
+    let mut child = Command::new(program)
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    let mut child_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::other("failed to open child stdin"))?;
+    let child_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("failed to open child stdout"))?;
+    let writer = thread::spawn(move || -> io::Result<()> {
+        match child_stdin.write_all(anonymized_input.as_bytes()) {
+            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+            result => result,
+        }
+    });
+
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    let restore_result = mapping
+        .restore_bracketed_stream(child_stdout, &mut output)
+        .and_then(|count| {
+            output.flush()?;
+            Ok(count)
+        });
+    if restore_result.is_err() {
+        let _ = child.kill();
+    }
+    let status_result = child.wait();
+    let writer_result = writer
+        .join()
+        .map_err(|_| io::Error::other("child stdin writer panicked"))?;
+
+    writer_result?;
+    Ok((status_result?, restore_result?))
+}
+
+fn exit_with_child_status(status: ExitStatus) -> ! {
+    if let Some(code) = status.code() {
+        std::process::exit(code);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::exit(status.signal().map_or(1, |signal| 128 + signal));
+    }
+    #[cfg(not(unix))]
+    std::process::exit(1);
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
-fn main() -> io::Result<()> {
-    let cli = Cli::parse();
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    }
+}
 
-    match cli.command {
+fn run() -> io::Result<()> {
+    let mut cli = Cli::parse();
+    let command = cli.command.take();
+
+    match command {
+        Some(Commands::Run { command }) => {
+            validate_run_options(&cli)?;
+            if io::stdin().is_terminal() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "`run` reads the payload from stdin; pipe or redirect input into anon-pii",
+                ));
+            }
+
+            let content = read_input(None)?;
+            let mut anonymizer = configure_anonymizer(&cli, Operator::Token)?;
+            let processed = process_content(&mut anonymizer, &content, &cli)?;
+
+            if anonymizer.mapping.evicted_count() != 0 {
+                return Err(io::Error::other(
+                    "in-memory mapping evicted tokens; refusing to start an unrestorable command",
+                ));
+            }
+            if cli.verbose {
+                print_detections(&processed.detections);
+                eprintln!(
+                    "  {} entities anonymized in memory (format: {}, language: {})",
+                    processed.detections.len().to_string().bold(),
+                    processed.format_name,
+                    cli.language,
+                );
+            }
+
+            let (status, restored_count) =
+                run_child_command(command, processed.result, &anonymizer.mapping)?;
+            if cli.verbose {
+                eprintln!(
+                    "Restored {restored_count} token replacement{} from child stdout",
+                    if restored_count == 1 { "" } else { "s" }
+                );
+            }
+            exit_with_child_status(status);
+        }
         Some(Commands::Restore {
             input_positional,
             input,
@@ -1044,165 +1407,12 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
 
-            let mut anonymizer = Anonymizer::new(cli.threshold);
-
-            // Load custom recognizers from config file if provided
-            if let Some(ref config_path) = cli.config {
-                match RecognizerConfigFile::load(config_path) {
-                    Ok(config) => {
-                        anonymizer.add_custom_patterns(&config);
-                        if cli.verbose {
-                            eprintln!(
-                                "Loaded {} custom recognizer(s) from {}",
-                                config.recognizers.len(),
-                                config_path.display()
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error: {e}");
-                        std::process::exit(1);
-                    }
-                }
-            }
-
-            anonymizer.context_boost = cli.context_boost.clamp(0.0, 1.0);
-            anonymizer.min_score_with_context = cli.min_score_with_context.clamp(0.0, 1.0);
-            anonymizer.operator = cli.operator;
-            anonymizer.mask_config = MaskConfig {
-                mask_char: cli.mask_char,
-                fixed_count: cli.mask_count,
-                from_end: cli.mask_from_end,
-            };
-            anonymizer.hash_algo = cli.hash_algo;
-            if cli.operator == Operator::Encrypt {
-                let hex = cli.encrypt_key.as_deref().ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "--encrypt-key is required when using --operator encrypt",
-                    )
-                })?;
-                let key = parse_encrypt_key(hex)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-                anonymizer.encrypt_key = Some(key);
-            }
-            if cli.operator == Operator::Custom {
-                let fmt = cli.replace_with.ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "--replace-with is required when using --operator custom",
-                    )
-                })?;
-                anonymizer.replace_with = Some(fmt);
-            }
-
-            // Wire up NER detector if requested (ML + heuristic combined)
-            #[cfg(feature = "ner")]
-            if cli.ner {
-                let config = anon_pii::ner::NerConfig::default();
-                let heuristic = anon_pii::ner::heuristic::HeuristicNerDetector::new();
-                // ort panics if libonnxruntime is not found; catch that gracefully
-                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    anon_pii::ner::ml::MlNerDetector::new(&config)
-                })) {
-                    Ok(Ok(ml_detector)) => {
-                        let combined = anon_pii::ner::CombinedNerDetector::new(vec![
-                            Box::new(ml_detector),
-                            Box::new(heuristic),
-                        ]);
-                        anonymizer.set_ner_detector(Box::new(combined));
-                        if cli.verbose {
-                            eprintln!("NER: ML + heuristic backend enabled");
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        eprintln!("Warning: ML NER init failed: {e}");
-                        eprintln!("Hint: run `anon-pii download-model` first");
-                        // Fall back to heuristic only
-                        anonymizer.set_ner_detector(Box::new(heuristic));
-                        if cli.verbose {
-                            eprintln!("NER: falling back to heuristic backend");
-                        }
-                    }
-                    Err(_) => {
-                        eprintln!("Warning: ONNX Runtime not found.");
-                        eprintln!("Install it:  brew install onnxruntime");
-                        eprintln!(
-                            "Then set:    export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib"
-                        );
-                        // Fall back to heuristic only
-                        anonymizer.set_ner_detector(Box::new(heuristic));
-                        if cli.verbose {
-                            eprintln!("NER: falling back to heuristic backend");
-                        }
-                    }
-                }
-            }
-            #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
-            if cli.ner {
-                let detector = anon_pii::ner::heuristic::HeuristicNerDetector::new();
-                anonymizer.set_ner_detector(Box::new(detector));
-                if cli.verbose {
-                    eprintln!("NER: heuristic backend enabled");
-                }
-            }
-
-            // Determine format and process
-            let (parsed_json, format_name) = match cli.format {
-                Format::Json => match serde_json::from_str::<serde_json::Value>(content.trim()) {
-                    Ok(v) => (Some(v), "json"),
-                    Err(e) => {
-                        eprintln!("Error: invalid JSON input: {e}");
-                        eprintln!("Hint: use --format text to force text mode");
-                        std::process::exit(1);
-                    }
-                },
-                Format::Auto => match detect_format(&content) {
-                    DetectedFormat::Json(v) => (Some(v), "json"),
-                    DetectedFormat::Sql => (None, "sql"),
-                    DetectedFormat::Csv => (None, "csv"),
-                    DetectedFormat::Text => (None, "text"),
-                },
-                Format::Text => (None, "text"),
-                Format::Sql => (None, "sql"),
-                Format::Csv => (None, "csv"),
-                #[cfg(feature = "xlsx")]
-                Format::Xlsx => {
-                    eprintln!("Error: XLSX parsing not yet implemented");
-                    eprintln!("Hint: use --format csv to export to CSV first");
-                    std::process::exit(1);
-                }
-            };
-
-            let (result, detections) = if let Some(parsed) = parsed_json {
-                let indent = detect_json_indent(&content);
-                let (anon_value, dets) = anonymizer.anonymize_json_value(&parsed);
-
-                let indent_bytes = b" ".repeat(indent);
-                let formatter = serde_json::ser::PrettyFormatter::with_indent(&indent_bytes);
-                let mut buf = Vec::new();
-                let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
-                anon_value.serialize(&mut ser).unwrap();
-                let json_str = String::from_utf8(buf).unwrap();
-
-                (format!("{}\n", json_str), dets)
-            } else if format_name == "csv" {
-                anonymizer.anonymize_csv(&content)
-            } else if format_name == "sql" {
-                anonymizer.anonymize_sql(&content)
-            } else {
-                // Text format: use batched processing when NER is enabled
-                #[cfg(any(feature = "ner", feature = "ner-lite"))]
-                if cli.ner && cli.batch_size > 0 {
-                    process_text_batched(&mut anonymizer, &content, cli.batch_size)
-                } else {
-                    anonymizer.anonymize_text(&content)
-                }
-                #[cfg(not(any(feature = "ner", feature = "ner-lite")))]
-                {
-                    anonymizer.anonymize_text(&content)
-                }
-            };
+            let mut anonymizer = configure_anonymizer(&cli, cli.operator)?;
+            let ProcessedContent {
+                result,
+                detections,
+                format_name,
+            } = process_content(&mut anonymizer, &content, &cli)?;
 
             let mapping_json = anonymizer.mapping.to_persisted_json_pretty()?;
 
