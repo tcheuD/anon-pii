@@ -124,3 +124,42 @@ fn test_json_with_phase1_entities() {
             .contains("[MAC_ADDRESS_")
     );
 }
+
+#[test]
+fn test_json_keys_are_schema_and_never_anonymized() {
+    let mut a = Anonymizer::new(0.0);
+    let json = serde_json::json!({
+        "john@example.com": "owner john@example.com",
+        "jane@example.com": "owner jane@example.com"
+    });
+    let (result, dets) = a.anonymize_json_value(&json);
+
+    assert_eq!(result.as_object().unwrap().len(), 2);
+    assert!(result.get("john@example.com").is_some());
+    assert!(result.get("jane@example.com").is_some());
+    assert_eq!(dets.len(), 2, "only the two string values are inspected");
+    assert!(
+        result["john@example.com"]
+            .as_str()
+            .unwrap()
+            .contains("[EMAIL_ADDRESS_")
+    );
+}
+
+#[test]
+fn test_json_pii_like_keys_cannot_collapse_under_redaction() {
+    let mut a = Anonymizer::new(0.0);
+    a.operator = Operator::Redact;
+    let json = serde_json::json!({
+        "john@example.com": "john@example.com",
+        "jane@example.com": "jane@example.com"
+    });
+    let (result, dets) = a.anonymize_json_value(&json);
+
+    let object = result.as_object().unwrap();
+    assert_eq!(object.len(), 2);
+    assert!(object.contains_key("john@example.com"));
+    assert!(object.contains_key("jane@example.com"));
+    assert!(!object.contains_key(""));
+    assert_eq!(dets.len(), 2, "only string values should be detected");
+}

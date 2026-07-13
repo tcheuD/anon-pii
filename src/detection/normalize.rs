@@ -494,38 +494,6 @@ pub(super) fn hex_val(b: u8) -> u8 {
         _ => 0,
     }
 }
-
-/// Parse a single CSV line respecting RFC 4180 quoting.
-pub(super) fn parse_csv_line(line: &str) -> Vec<String> {
-    let mut cells = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if in_quotes {
-            if c == '"' {
-                if chars.peek() == Some(&'"') {
-                    chars.next();
-                    current.push('"');
-                } else {
-                    in_quotes = false;
-                }
-            } else {
-                current.push(c);
-            }
-        } else if c == '"' {
-            in_quotes = true;
-        } else if c == ',' {
-            cells.push(std::mem::take(&mut current));
-        } else {
-            current.push(c);
-        }
-    }
-    cells.push(current);
-    cells
-}
-
 #[cfg(test)]
 mod provenance_tests {
     use super::*;

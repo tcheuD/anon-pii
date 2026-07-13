@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::csv::parse_csv_document;
+
 pub enum DetectedFormat {
     Json(Value),
     Sql,
@@ -40,21 +42,10 @@ pub fn detect_format(content: &str) -> DetectedFormat {
         }
     }
 
-    // CSV: multiple lines with consistent comma counts
-    let lines: Vec<&str> = trimmed.lines().collect();
-    if lines.len() > 1 && lines[0].contains(',') {
-        let counts: Vec<usize> = lines
-            .iter()
-            .take(5)
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| l.matches(',').count())
-            .collect();
-        if !counts.is_empty() {
-            let first = counts[0] as isize;
-            if counts.iter().all(|&c| (c as isize - first).abs() <= 1) {
-                return DetectedFormat::Csv;
-            }
-        }
+    // CSV: parse complete records so quoted commas and newlines are data, then
+    // require a consistent table shape rather than tolerating ragged prose.
+    if parse_csv_document(content).is_some_and(|csv| csv.has_consistent_table_shape()) {
+        return DetectedFormat::Csv;
     }
 
     DetectedFormat::Text
@@ -156,6 +147,32 @@ mod tests {
         assert!(!matches!(
             detect_format("hello, world, foo"),
             DetectedFormat::Csv
+        ));
+    }
+
+    #[test]
+    fn test_format_detection_csv_understands_quotes_and_crlf() {
+        let csv = "name,notes,email\r\nAlice,\"line one\r\nline two, still one field\",alice@example.com\r\n";
+        assert!(matches!(detect_format(csv), DetectedFormat::Csv));
+        assert!(matches!(
+            detect_format("name,email\nAlice,alice@example.com\n\n"),
+            DetectedFormat::Csv
+        ));
+    }
+
+    #[test]
+    fn test_format_detection_rejects_ragged_or_prose_input() {
+        assert!(matches!(
+            detect_format("name,email\nAlice,alice@example.com,extra"),
+            DetectedFormat::Text
+        ));
+        assert!(matches!(
+            detect_format("Hello, world.\nThis is ordinary prose."),
+            DetectedFormat::Text
+        ));
+        assert!(matches!(
+            detect_format("name,email\nAlice,\"unterminated"),
+            DetectedFormat::Text
         ));
     }
 }
