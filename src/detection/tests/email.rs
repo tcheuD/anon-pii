@@ -10,6 +10,19 @@ fn test_email() {
 }
 
 #[test]
+fn test_unicode_local_part_is_detected_as_one_complete_email() {
+    let mut a = Anonymizer::new(0.0);
+    let input = "Email iñes@example.com";
+    let (result, dets) = a.anonymize_text(input);
+
+    assert_eq!(dets.len(), 1);
+    assert_eq!(dets[0].entity_type, "EMAIL_ADDRESS");
+    assert_eq!(dets[0].original, "iñes@example.com");
+    assert_eq!((dets[0].start, dets[0].end), (6, input.len()));
+    assert_eq!(a.mapping.restore_bracketed(&result), input);
+}
+
+#[test]
 fn test_utf8_email_in_accented_text() {
     let mut a = Anonymizer::new(0.0);
     let input = "Heloise a envoye un mail a heloise@example.com depuis Zurich";

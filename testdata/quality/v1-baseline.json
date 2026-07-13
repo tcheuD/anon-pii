@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "corpus_version": "debug-pii-v1",
+  "corpus_sha256": "9617b2793f2f46a04d0f41b3148391c5b603e57f9aec630fa00ebdf3016ceba5",
+  "metrics": {
+    "min_tp": 38,
+    "max_fp": 0,
+    "max_fn": 5,
+    "min_precision_ppm": 1000000,
+    "min_recall_ppm": 883720
+  },
+  "tiers": {
+    "challenge": {
+      "min_tp": 11,
+      "max_fp": 0,
+      "max_fn": 5,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 687500
+    },
+    "contract": {
+      "min_tp": 27,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    }
+  },
+  "categories": {
+    "adversarial": {
+      "min_tp": 0,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "contact": {
+      "min_tp": 7,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 875000
+    },
+    "financial": {
+      "min_tp": 5,
+      "max_fp": 0,
+      "max_fn": 2,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 714285
+    },
+    "identifiers": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "network": {
+      "min_tp": 7,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "normalization": {
+      "min_tp": 5,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 833333
+    },
+    "overlap": {
+      "min_tp": 2,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    },
+    "secrets": {
+      "min_tp": 10,
+      "max_fp": 0,
+      "max_fn": 1,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 909090
+    },
+    "temporal": {
+      "min_tp": 1,
+      "max_fp": 0,
+      "max_fn": 0,
+      "min_precision_ppm": 1000000,
+      "min_recall_ppm": 1000000
+    }
+  }
+}

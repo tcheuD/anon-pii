@@ -134,7 +134,13 @@ fn test_sql_dollar_quoted_literal_is_anonymized_and_roundtrips() {
     let sql = "SELECT $body$owner john@example.com's address$body$ AS note;";
     let (result, dets) = a.anonymize_sql(sql);
 
-    assert!(dets.iter().any(|d| d.entity_type == "EMAIL_ADDRESS"));
+    assert_eq!(
+        dets.iter()
+            .filter(|d| d.entity_type == "EMAIL_ADDRESS")
+            .count(),
+        1,
+        "a dollar-quoted literal must report each detection exactly once"
+    );
     assert!(result.contains("$body$owner [EMAIL_ADDRESS_"));
     assert_eq!(a.mapping.restore_bracketed(&result), sql);
 }

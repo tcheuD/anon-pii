@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "corpus_version": "debug-workflows-v1",
+  "threshold": 0.5,
+  "cases": [
+    {
+      "id": "text-common-debug-values",
+      "format": "text",
+      "input": "User ada@example.com from 192.0.2.44\n",
+      "expected_entity_types": ["EMAIL_ADDRESS", "IP_ADDRESS"],
+      "expected_mapping_entries": 2
+    },
+    {
+      "id": "text-detection-normalization",
+      "format": "text",
+      "input": "contact=ada%40example.com\n",
+      "expected_entity_types": ["EMAIL_ADDRESS"],
+      "expected_mapping_entries": 1
+    },
+    {
+      "id": "json-values-not-keys",
+      "format": "json",
+      "input": "{\"ada@example.com\":\"schema key\",\"email\":\"ada@example.com\",\"count\":42,\"active\":true}",
+      "expected_entity_types": ["EMAIL_ADDRESS"],
+      "expected_mapping_entries": 1
+    },
+    {
+      "id": "csv-quoted-multiline-crlf",
+      "format": "csv",
+      "input": "name,note,email\r\n\"Example, Ada\",\"line one\r\nline two, still one cell\",ada@example.com\r\n",
+      "expected_entity_types": ["EMAIL_ADDRESS"],
+      "expected_mapping_entries": 1
+    },
+    {
+      "id": "csv-encoded-comma",
+      "format": "csv",
+      "input": "id,note\n1,alpha%2Cada@example.com\n",
+      "expected_entity_types": ["EMAIL_ADDRESS"],
+      "expected_mapping_entries": 1
+    },
+    {
+      "id": "sql-standard-and-e-string",
+      "format": "sql",
+      "input": "SELECT E'it\\'s ada@example.com' AS note, 'peer 192.0.2.44' AS peer;",
+      "expected_entity_types": ["EMAIL_ADDRESS", "IP_ADDRESS"],
+      "expected_mapping_entries": 2
+    },
+    {
+      "id": "sql-dollar-quoted",
+      "format": "sql",
+      "input": "SELECT $body$owner ada@example.com's note$body$ AS note;",
+      "expected_entity_types": ["EMAIL_ADDRESS"],
+      "expected_mapping_entries": 1
+    },
+    {
+      "id": "restore-preserves-unknown-and-malformed-tokens",
+      "format": "restore",
+      "input": "Unknown [EMAIL_ADDRESS_deadbeef], malformed [EMAIL_ADDRESS_open, and bare EMAIL_ADDRESS_deadbeef stay unchanged.\n",
+      "expected_entity_types": [],
+      "expected_mapping_entries": 0
+    }
+  ]
+}
