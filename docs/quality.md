@@ -104,13 +104,20 @@ baseline. Overall, challenge, financial, and IBAN_CODE limits were tightened;
 the corpus labels were not changed. These are maintainer regression measurements,
 not evidence of customer adoption or production accuracy.
 
+After wrapped-email detection was added at revision
+`02df69dc677cd6df92985deadbb383b734efc868`, the same corpus, configuration, and command report
+44 TP, 0 FP, and 2 FN: 100.0000% measured precision and 95.6521% measured recall.
+The newline-split email now matches its exact source span and is required by the
+baseline. Overall, challenge, normalization, and EMAIL_ADDRESS limits were
+tightened without changing corpus labels.
+
 | Entity type | TP | FP | FN |
 |-------------|---:|---:|---:|
 | AUTH_TOKEN | 2 | 0 | 0 |
 | CONNECTION_STRING | 1 | 0 | 0 |
 | CREDIT_CARD | 4 | 0 | 0 |
 | DATE_TIME | 1 | 0 | 0 |
-| EMAIL_ADDRESS | 8 | 0 | 1 |
+| EMAIL_ADDRESS | 9 | 0 | 0 |
 | FR_IBAN | 1 | 0 | 0 |
 | FR_PHONE_NUMBER | 1 | 0 | 0 |
 | IBAN_CODE | 2 | 0 | 1 |
@@ -129,12 +136,20 @@ fixed print forms also accept ASCII casing. Replacement and restoration preserve
 the original casing and surrounding text. Generic grouped lowercase forms remain
 unsupported; broadly accepting spaced words risks including following prose.
 
-All contract cases and every non-exempt case must remain exact. The three
+Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
+spaces/tabs and a complete domain. Preparation and restoration preserve the
+source newline, indentation, and spelling. Blank lines, whitespace before the
+line break, and domains split across more lines remain unsupported. An incomplete
+prefix cannot consume a complete address on the next line. A domain-only next
+line can be indistinguishable from a wrapped address; review the prepared text.
+This improvement applies to source builds and the refreshed browser engine;
+the published v0.3.2 native archives do not include it.
+
+All contract cases and every non-exempt case must remain exact. The two
 remaining reviewed challenge exceptions are intentionally visible in the baseline:
 
-- context-free phone;
-- context-free IBAN; and
-- newline-split email.
+- context-free phone; and
+- context-free IBAN.
 
 An improvement to an exception passes. Moving a miss to any other case does
 not. Baseline limits also apply overall, by tier, category, and entity type.
