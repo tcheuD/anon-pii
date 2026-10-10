@@ -13,26 +13,40 @@ Tracked demo assets:
 - `record.sh` runs a local terminal demo from a fresh checkout.
 - `hero.tape` is the VHS source for the generated hero recording.
 
+The main demo previews a fictional support ticket, then uses `run -- cat` to
+restore the original values locally. It needs no AI tool or API key and saves
+no mapping file. Install the CLI using the [installation guide](../README.md#installation).
+
 Generated assets such as `hero.gif`, terminal casts, temporary maps, and
-intermediate anonymized files are ignored. Recreate them when needed:
+intermediate anonymized files are ignored. Record with your installed binary:
 
 ```bash
-demo/record.sh
-vhs demo/hero.tape
+ANON_PII_BIN="$(command -v anon-pii)" demo/record.sh
+ANON_PII_BIN="$(command -v anon-pii)" vhs demo/hero.tape
 ```
 
-Try the samples directly:
+Without `ANON_PII_BIN`, the script builds and runs the current checkout through
+Cargo. Try the samples directly with an installed CLI:
 
 ```bash
 # Preview locally without a child command or a saved mapping
-cargo run --quiet -- run --dry-run < demo/samples/support-ticket.txt
+anon-pii run --dry-run < demo/samples/support-ticket.txt
 
 # Exercise a complete local roundtrip; cat echoes the anonymized input
-cargo run --quiet -- run -- cat < demo/samples/support-ticket.txt
+anon-pii run -- cat < demo/samples/support-ticket.txt
 
-# Detached workflows use a dedicated mapping file
+```
+
+The preview shows detected values as tokens. The local roundtrip prints the
+original ticket because the child echoes its tokenized stdin and anon-pii
+restores known tokens in stdout. Review the preview for missed sensitive values
+before substituting your own AI command; see the [first roundtrip guide](../README.md#first-roundtrip).
+
+Detached workflows remain available with a dedicated mapping file:
+
+```bash
 mkdir -p demo/tmp
-cargo run --quiet -- -i demo/samples/support-ticket.txt --mapping demo/tmp/demo-map.json
-cargo run --quiet -- --format sql -i demo/samples/queries.sql --mapping demo/tmp/demo-map.json
-cargo run --quiet -- --format csv -i demo/samples/passengers.csv --mapping demo/tmp/demo-map.json
+anon-pii -i demo/samples/support-ticket.txt --mapping demo/tmp/demo-map.json
+anon-pii --format sql -i demo/samples/queries.sql --mapping demo/tmp/demo-map.json
+anon-pii --format csv -i demo/samples/passengers.csv --mapping demo/tmp/demo-map.json
 ```

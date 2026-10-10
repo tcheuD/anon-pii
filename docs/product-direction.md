@@ -25,9 +25,17 @@ usage, retention, willingness to pay, or detection performance on customer data.
 | 2 | Common debugging credentials are covered predictably | Basic authentication now has synthetic positive and negative cases plus exact-span and roundtrip checks. On the unchanged versioned corpus, true positives increased from 41 to 42 with zero false positives; the baseline now requires the recovered case. Four misses remain visible. |
 | 3 | A new user can install and complete the workflow reliably | Follow the release checklist, verify supported binary archives on their target platforms, and exercise preview plus a local `run -- cat` roundtrip from a clean installation. |
 
-The first two milestones are implemented in this change. Installation and
-release verification on the supported target platforms remain the next
-milestone; local Linux checks are not a completed release claim.
+The v0.2.0 release brings these milestones together. The installation guide
+leads to a local preview and `run -- cat` before an AI tool is needed. Archive
+checks verify the binary version, tokenized child input, exact restoration,
+and mapping isolation on Linux x86_64 and both macOS architectures. Full main
+CI and the tagged release workflow determine release readiness; local Linux
+checks alone are not a completed release claim.
+
+GitHub Releases is the current distribution channel. Keep the browser
+playground's checked-in engine aligned with the CLI and publish checksums
+alongside binary archives. Registry publication is a separate distribution
+milestone, not a prerequisite for trying the product.
 
 ## Product boundaries
 
@@ -47,6 +55,12 @@ In opt-in user trials, measure whether a developer can install the CLI,
 understand the preview, complete the first roundtrip, and choose to use it
 again on a later debugging task. Record failure reasons and elapsed setup
 time; establish a baseline before setting conversion or retention targets.
+
+The next detector candidates already have concrete reports: lowercase surnames
+([#17](https://github.com/tcheuD/anon-pii/issues/17)) and French postal addresses
+([#18](https://github.com/tcheuD/anon-pii/issues/18)). Reproduce each with fictional
+fixtures and ordinary-text negatives before choosing an implementation. Do not
+broaden name or address detection solely to improve a headline entity count.
 
 Use synthetic reproductions for detector reports. Do not collect raw payloads,
 mapping files, or command output as product analytics. Quality measurements

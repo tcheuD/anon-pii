@@ -1,6 +1,6 @@
 [package]
 name = "anon-pii"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Local reversible PII roundtrips for AI-assisted debugging"
@@ -8,7 +8,7 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/tcheuD/anon-pii"
 homepage = "https://github.com/tcheuD/anon-pii"
-documentation = "https://docs.rs/anon-pii"
+documentation = "https://github.com/tcheuD/anon-pii#readme"
 keywords = ["pii", "anonymization", "privacy", "redaction", "cli"]
 categories = ["command-line-utilities", "text-processing"]
 # Strict allowlist: anything not listed here is excluded from `cargo package`.
@@ -25,6 +25,17 @@ include = [
     "/LICENSE",
     "/SECURITY.md",
     "/CONTRIBUTING.md",
+    "/.gitignore",
+    "/.github/workflows/ci.yml",
+    "/.github/workflows/release.yml",
+    "/.github/workflows/bench.yml",
+    "/scripts/release-preflight.sh",
+    "/scripts/release-smoke.py",
+    "/scripts/build-wasm.sh",
+    "/demo/README.md",
+    "/demo/record.sh",
+    "/demo/hero.tape",
+    "/demo/samples/**",
 ]
 
 [lints.clippy]
