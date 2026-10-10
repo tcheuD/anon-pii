@@ -210,6 +210,36 @@ try {
     assert.equal(await input('ticket-restored'), example);
   });
 
+  await check('lowercase IBANs prepare, copy, and restore without consuming ticket prose', async () => {
+    // Public checksum examples, used as fictional ticket data.
+    for (const [iban, type] of [
+      ['gb82west12345698765432', 'IBAN_CODE'],
+      ['gB82wEsT12345698765432', 'IBAN_CODE'],
+      ['fr14 2004 1010 0505 0001 3m02 606', 'FR_IBAN'],
+    ]) {
+      const ticket = `IBAN ${iban} please investigate.`;
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      const prepared = await input('ticket-prepared');
+      const token = prepared.match(new RegExp(`\\[${type}_[a-f0-9]{8}\\]`));
+      assert.ok(token, `${iban} must be detected`);
+      assert.equal(prepared, `IBAN ${token[0]} please investigate.`);
+      await click('copy-ticket');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), prepared);
+      await field('ticket-reply').fill(prepared);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), ticket);
+    }
+    for (const ticket of [
+      'IBAN gb82west12345698765433', // Invalid checksum.
+      'ref gb82west12345698765432', // Generic IBAN still requires context.
+    ]) {
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      assert.equal(await input('ticket-prepared'), ticket);
+    }
+  });
+
   await check('reload clears the ticket and all session state', async () => {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForFunction(() => document.getElementById('engstats').textContent.includes('Local engine ready'));
