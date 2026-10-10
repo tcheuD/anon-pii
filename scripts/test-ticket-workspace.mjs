@@ -240,6 +240,64 @@ try {
     }
   });
 
+  await check('emails wrapped immediately after @ prepare, copy, and restore exact source text', async () => {
+    // Textareas normalize CRLF to LF; native tests cover the CRLF source form.
+    for (const email of [
+      'ada@\nexample.invalid',
+      'ada@\n  example.invalid',
+      'iñes+case@\n \texample.invalid',
+    ]) {
+      const prefix = 'Échec 📨 — contact ';
+      const suffix = '; please investigate.\nthis ticket remains open.';
+      const ticket = `${prefix}${email}${suffix}`;
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      const prepared = await input('ticket-prepared');
+      const token = prepared.match(/\[EMAIL_ADDRESS_[a-f0-9]{8}\]/);
+      assert.ok(token, `wrapped email must be detected: ${JSON.stringify(email)}`);
+      assert.equal(prepared, `${prefix}${token[0]}${suffix}`, 'replace the full wrapped email and preserve adjacent prose');
+      await click('copy-ticket');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), prepared);
+      await field('ticket-reply').fill(prepared);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), ticket, 'restore the exact Unicode, newline, and indentation');
+      await click('copy-reply');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), ticket);
+    }
+  });
+
+  await check('wrapped-email detection does not cross blank lines or unrelated prose', async () => {
+    for (const ticket of [
+      'ada@\n\nexample.invalid',
+      'ada@\n \t\nexample.invalid',
+      'ada@\nplease investigate example.invalid',
+      'ada@ \nexample.invalid', // The newline must immediately follow @.
+      'ada@\nexample\n.invalid', // Do not join an additional domain line.
+    ]) {
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      assert.equal(await input('ticket-prepared'), ticket, `unrelated lines must stay unchanged: ${JSON.stringify(ticket)}`);
+    }
+  });
+
+  await check('a following complete email takes priority over an ambiguous wrapped prefix', async () => {
+    for (const prefix of ['ada@\n', 'ada@\nplease investigate ']) {
+      const email = 'bob.smith@example.com';
+      const ticket = `${prefix}${email}`;
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      const prepared = await input('ticket-prepared');
+      const token = prepared.match(/\[EMAIL_ADDRESS_[a-f0-9]{8}\]/);
+      assert.ok(token, 'the following complete email must still be detected');
+      assert.equal(prepared, `${prefix}${token[0]}`, 'preserve the incomplete prefix and tokenize only the complete email');
+      await click('copy-ticket');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), prepared);
+      await field('ticket-reply').fill(prepared);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), ticket);
+    }
+  });
+
   await check('reload clears the ticket and all session state', async () => {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForFunction(() => document.getElementById('engstats').textContent.includes('Local engine ready'));

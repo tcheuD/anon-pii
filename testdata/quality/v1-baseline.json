@@ -3,19 +3,19 @@
   "corpus_version": "debug-pii-v1",
   "corpus_sha256": "866c2292a7c0b5b06fb26b9bab32228dac64b5bb0c6b389ef4102194da3f03e7",
   "metrics": {
-    "min_tp": 43,
+    "min_tp": 44,
     "max_fp": 0,
-    "max_fn": 3,
+    "max_fn": 2,
     "min_precision_ppm": 1000000,
-    "min_recall_ppm": 934782
+    "min_recall_ppm": 956521
   },
   "tiers": {
     "challenge": {
-      "min_tp": 13,
+      "min_tp": 14,
       "max_fp": 0,
-      "max_fn": 3,
+      "max_fn": 2,
       "min_precision_ppm": 1000000,
-      "min_recall_ppm": 812500
+      "min_recall_ppm": 875000
     },
     "contract": {
       "min_tp": 30,
@@ -62,11 +62,11 @@
       "min_recall_ppm": 1000000
     },
     "normalization": {
-      "min_tp": 5,
+      "min_tp": 6,
       "max_fp": 0,
-      "max_fn": 1,
+      "max_fn": 0,
       "min_precision_ppm": 1000000,
-      "min_recall_ppm": 833333
+      "min_recall_ppm": 1000000
     },
     "overlap": {
       "min_tp": 2,
@@ -120,11 +120,11 @@
       "min_recall_ppm": 1000000
     },
     "EMAIL_ADDRESS": {
-      "min_tp": 8,
+      "min_tp": 9,
       "max_fp": 0,
-      "max_fn": 1,
+      "max_fn": 0,
       "min_precision_ppm": 1000000,
-      "min_recall_ppm": 888888
+      "min_recall_ppm": 1000000
     },
     "FR_IBAN": {
       "min_tp": 1,
@@ -205,13 +205,6 @@
     }
   },
   "case_exceptions": {
-    "email-split-newline": {
-      "min_tp": 0,
-      "max_fp": 0,
-      "max_fn": 1,
-      "min_precision_ppm": null,
-      "min_recall_ppm": 0
-    },
     "iban-without-context": {
       "min_tp": 0,
       "max_fp": 0,

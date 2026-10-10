@@ -90,6 +90,48 @@ fn support_ticket_starter_hides_four_values_and_restores_reply_references() {
 }
 
 #[test]
+fn wrapped_email_preview_and_child_input_mask_exactly_then_restore() {
+    let ticket_home = tempfile::tempdir().unwrap();
+    let child_input = ticket_home.path().join("child-input.txt");
+    for address in ["ada@\nexample.com", "iñes@\r\n\texample.org"] {
+        let prefix = "Réponse 😀 — contact ";
+        let suffix = "; please investigate.\n";
+        let input = format!("{prefix}{address}{suffix}");
+        let preview = run_with_input(ticket_home.path(), &["run", "--dry-run"], input.as_bytes());
+        assert!(preview.status.success());
+        let prepared = String::from_utf8(preview.stdout).unwrap();
+        let token = prepared
+            .strip_prefix(prefix)
+            .unwrap()
+            .strip_suffix(suffix)
+            .unwrap();
+        assert!(token.starts_with("[EMAIL_ADDRESS_") && token.ends_with(']'));
+        assert!(!prepared.contains(address));
+
+        let output = run_with_input(
+            ticket_home.path(),
+            &["run", "--", "tee", child_input.to_str().unwrap()],
+            input.as_bytes(),
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, input.as_bytes());
+        let child_saw = fs::read_to_string(&child_input).unwrap();
+        let token = child_saw
+            .strip_prefix(prefix)
+            .unwrap()
+            .strip_suffix(suffix)
+            .unwrap();
+        assert!(token.starts_with("[EMAIL_ADDRESS_") && token.ends_with(']'));
+        assert!(!child_saw.contains(address));
+        assert!(!ticket_home.path().join(".anon-pii/mapping.json").exists());
+    }
+}
+
+#[test]
 fn run_preserves_child_stderr_and_nonzero_exit_status() {
     let home = tempfile::tempdir().unwrap();
     let output = run_with_input(

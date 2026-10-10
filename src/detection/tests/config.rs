@@ -11,6 +11,61 @@ fn anonymizer_with_config(yaml: &str, threshold: f64) -> Result<Anonymizer, Stri
     Ok(anonymizer)
 }
 
+#[test]
+fn wrapped_email_guard_does_not_change_custom_email_patterns() {
+    let yaml = r#"
+recognizers:
+  - name: wrapped_email
+    entity_type: EMAIL_ADDRESS
+    patterns:
+      - regex: 'ada@\nexample\.com'
+        score: 1.0
+"#;
+    let input = "ada@\nexample.com_extra";
+    let mut a = anonymizer_with_config(yaml, 1.0).unwrap();
+    let (prepared, dets) = a.anonymize_text(input);
+    assert_eq!(dets.len(), 1);
+    assert_eq!(dets[0].original, "ada@\nexample.com");
+    assert!(prepared.ends_with("_extra"));
+    assert_eq!(a.mapping.restore_bracketed(&prepared), input);
+}
+
+#[test]
+fn wrapped_email_guard_also_applies_to_custom_multiline_url_audits() {
+    // The default URL matcher stops at newlines. A custom URL recognizer can
+    // include them and still receives the same inner-PII audit validation.
+    let yaml = r#"
+recognizers:
+  - name: multiline_url
+    entity_type: URL
+    patterns:
+      - regex: '(?s)https://example\.com/.*'
+        score: 1.0
+"#;
+    for (value, expected) in [
+        ("ada@\nexample.com", "ada@\nexample.com"),
+        ("ada@\nbob.smith@example.com", "bob.smith@example.com"),
+        ("ada@\nbob.smith@\nexample.com", "bob.smith@\nexample.com"),
+    ] {
+        let mut a = anonymizer_with_config(yaml, 0.5).unwrap();
+        let input = format!("https://example.com/?email={value}");
+        let (prepared, dets) = a.anonymize_text(&input);
+        let emails: Vec<_> = dets
+            .iter()
+            .filter(|d| d.entity_type == "EMAIL_ADDRESS")
+            .collect();
+        assert_eq!(emails.len(), 1, "{value:?}: {dets:?}");
+        assert_eq!(emails[0].original, expected);
+        let start = input.find(expected).unwrap();
+        assert_eq!(
+            (emails[0].start, emails[0].end),
+            (start, start + expected.len())
+        );
+        assert!(prepared.starts_with("[URL_") && prepared.ends_with(']'));
+        assert_eq!(a.mapping.restore_bracketed(&prepared), input);
+    }
+}
+
 // ─── Test: add_custom_patterns method exists and works ───────────────────────
 
 #[test]

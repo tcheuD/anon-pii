@@ -13,12 +13,12 @@ use super::operators::{apply_custom_replacement, apply_encrypt, apply_hash, appl
 use super::types::{Detection, Operator};
 use crate::ner::PERSON_BLOCKLIST;
 use crate::patterns::{
-    BASIC_AUTH_PATTERN, CREW_CODE_BLOCKLIST, iban_mod97, luhn_check, valid_aba_routing,
-    valid_au_abn, valid_au_acn, valid_au_medicare, valid_au_tfn, valid_calendar_date,
-    valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code, valid_in_aadhaar,
-    valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac,
-    valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number, valid_th_tnin,
-    valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn,
+    BASIC_AUTH_PATTERN, CREW_CODE_BLOCKLIST, WRAPPED_EMAIL_PATTERN, iban_mod97, luhn_check,
+    valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare, valid_au_tfn,
+    valid_calendar_date, valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code,
+    valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn,
+    valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number,
+    valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn,
 };
 
 fn basic_auth_value_start(candidate: &str) -> Option<usize> {
@@ -53,6 +53,47 @@ fn has_address_city_continuation(suffix: &str) -> bool {
 
 fn has_valid_iban_checksum(entity_type: &str, value: &str) -> bool {
     !matches!(entity_type, "IBAN_CODE" | "FR_IBAN") || iban_mod97(value)
+}
+
+fn has_wrapped_email_continuation(suffix: &str) -> bool {
+    // Regexes cannot express the negative lookahead needed here. Reject partial
+    // domains and prefixes of an independent email on the next line. Sentence
+    // periods are allowed only before a delimiter or the end of the input.
+    suffix
+        .trim_start_matches('.')
+        .chars()
+        .next()
+        .is_some_and(|ch| {
+            ch.is_alphanumeric()
+                || unicode_normalization::char::is_combining_mark(ch)
+                || matches!(ch, '_' | '%' | '+' | '-' | '@')
+        })
+}
+
+fn pattern_matches<'a>(
+    name: &str,
+    regex: &'a Regex,
+    text: &'a str,
+) -> impl Iterator<Item = regex::Match<'a>> {
+    let wrapped_email = name == "wrapped_email" && regex.as_str() == WRAPPED_EMAIL_PATTERN;
+    let mut ordinary_matches = regex.find_iter(text);
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        if !wrapped_email {
+            return ordinary_matches.next();
+        }
+        loop {
+            let mat = regex.find_at(text, start)?;
+            start = mat.end();
+            if has_wrapped_email_continuation(&text[mat.end()..]) {
+                // The domain line can itself begin a complete wrapped email.
+                // Revisit that line without retrying every local-part suffix.
+                start = mat.start() + mat.as_str().find('\n').expect("wrapped email has LF") + 1;
+                continue;
+            }
+            return Some(mat);
+        }
+    })
 }
 
 fn has_valid_pattern_value(entity_type: &str, value: &str) -> bool {
@@ -155,7 +196,7 @@ impl Anonymizer {
                 continue;
             }
 
-            for mat in pat.regex.find_iter(text) {
+            for mat in pattern_matches(&pat.name, &pat.regex, text) {
                 let range = if pat.name == "basic_auth" && pat.regex.as_str() == BASIC_AUTH_PATTERN
                 {
                     let Some(value_start) = basic_auth_value_start(mat.as_str()) else {
@@ -504,7 +545,7 @@ impl Anonymizer {
                                 if max_score < self.threshold {
                                     continue;
                                 }
-                                for mat in pat.regex.find_iter(decoded) {
+                                for mat in pattern_matches(&pat.name, &pat.regex, decoded) {
                                     if !has_valid_pattern_value(&pat.entity_type, mat.as_str()) {
                                         continue;
                                     }
