@@ -131,6 +131,49 @@ def main():
                 re.fullmatch(expected, observed.read_bytes()) is not None,
                 f"custom recognizer {pattern!r} sent an incomplete span to the child",
             )
+
+        # Fictional checksum-valid fixtures: casing must not leave an IBAN
+        # visible or consume the adjacent prose. French print format has fixed
+        # fields; generic lowercase support is deliberately compact-only.
+        for label, entity, iban, prefix in [
+            ("generic lowercase", "IBAN_CODE", "gb82west12345698765432", "Échec — IBAN "),
+            ("generic mixed case", "IBAN_CODE", "gB82WeSt12345698765432", "Échec — IBAN "),
+            ("French print lowercase", "FR_IBAN", "fr14 2004 1010 0505 0001 3m02 606", "Échec — "),
+            ("French print mixed case", "FR_IBAN", "Fr14 2004 1010 0505 0001 3M02 606", "Échec — "),
+        ]:
+            suffix = " please investigate.\n"
+            source = (prefix + iban + suffix).encode()
+            expected = (
+                re.escape(prefix.encode())
+                + rb"\[" + entity.encode() + rb"_[0-9a-f]{8}\]"
+                + re.escape(suffix.encode())
+            )
+            preview = run(["run", "--dry-run"], source)
+            require(
+                re.fullmatch(expected, preview.stdout) is not None,
+                f"{label} IBAN preview did not mask the exact span",
+            )
+            child = run(["run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, f"{label} IBAN roundtrip changed source bytes")
+            require(
+                re.fullmatch(expected, observed.read_bytes()) is not None,
+                f"{label} IBAN child input did not preserve the exact token span",
+            )
+
+        for label, text in [
+            ("generic invalid checksum", "IBAN gb83west12345698765432"),
+            ("French print invalid checksum", "IBAN fr14 2004 1010 0505 0001 3m02 607"),
+            ("generic lowercase without context", "code gb82west12345698765432 here"),
+            ("generic mixed case without context", "code gB82WeSt12345698765432 here"),
+            ("unsupported generic grouped lowercase", "IBAN gb82 west 1234 5698 7654 32"),
+        ]:
+            source = text.encode()
+            preview = run(["run", "--dry-run"], source)
+            require(preview.stdout == source, f"{label} control changed in preview")
+            child = run(["run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, f"{label} control changed during roundtrip")
+            require(observed.read_bytes() == source, f"{label} control changed in child input")
+
         require(
             not (smoke_home / ".anon-pii" / "mapping.json").exists(),
             "transaction persisted a mapping file",
@@ -138,7 +181,7 @@ def main():
 
     print(
         f"Release smoke passed: anon-pii {args.version}; "
-        "preview, roundtrip, support ticket, custom regex spans"
+        "preview, roundtrip, support ticket, custom regex spans, IBAN casing"
     )
 
 

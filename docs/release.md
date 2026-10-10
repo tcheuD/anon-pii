@@ -77,9 +77,10 @@ target runner and checked with `scripts/release-smoke.py`. This verifies the
 version, preview without a child process, actual tokenized child stdin, exact
 `run -- cat` restoration, the support-ticket name/address roundtrip with `--ner`,
 complete custom-regex masking for reverse-suffix and reverse-inner matches
-(including Unicode and percent-encoded source), and absence of a persisted
-transaction mapping. Custom-regex checks inspect both preview and actual child
-input, because exact restoration alone cannot reveal partially masked values.
+(including Unicode and percent-encoded source), lowercase/mixed-case compact
+and fixed French IBAN spans with checksum/context controls, and absence of a
+persisted transaction mapping. Span checks inspect both preview and actual child
+input, because exact restoration alone cannot reveal values left visible.
 
 Packaging fails if README or LICENSE is missing. Release assets include
 `SHA256SUMS`, whose entries use archive basenames so downloads can be checked
