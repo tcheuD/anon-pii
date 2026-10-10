@@ -1,3 +1,5 @@
+#[cfg(all(feature = "ner-lite", feature = "proxy"))]
+pub(crate) mod auto;
 #[cfg(feature = "ner")]
 pub mod download;
 #[cfg(feature = "ner-lite")]

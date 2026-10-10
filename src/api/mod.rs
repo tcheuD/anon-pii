@@ -178,6 +178,38 @@ mod tests {
         assert!(results.iter().all(|r| r.entity_type == "EMAIL_ADDRESS"));
     }
 
+    #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
+    #[tokio::test]
+    async fn test_analyze_automatically_enables_heuristic_names() {
+        let text = "Please contact Dr Avery Quill.";
+        let body = serde_json::json!({
+            "text": text,
+            "language": "en",
+            "entities": ["PERSON"]
+        });
+        let response = app()
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/analyze")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        let results: Vec<types::RecognizerResult> = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            results
+                .iter()
+                .any(|r| { r.entity_type == "PERSON" && &text[r.start..r.end] == "Avery Quill" })
+        );
+    }
+
     #[tokio::test]
     async fn test_anonymize_with_replace() {
         let body = serde_json::json!({

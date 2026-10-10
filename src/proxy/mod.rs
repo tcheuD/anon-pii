@@ -41,30 +41,9 @@ impl ProxyState {
             .mapping
             .with_max_entries(DEFAULT_MAX_MAPPING_ENTRIES);
 
-        // Auto-enable NER based on compiled features
-        #[cfg(feature = "ner")]
-        {
-            use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
-            let config = NerConfig::default();
-            if model_exists(&config) {
-                match std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
-                    Ok(Ok(det)) => {
-                        anonymizer.set_ner_detector(Box::new(det));
-                        eprintln!("NER: ML (DistilBERT) enabled");
-                    }
-                    Ok(Err(e)) => eprintln!("warning: ML NER init failed: {e}"),
-                    Err(_) => eprintln!("warning: ONNX Runtime not found, set ORT_DYLIB_PATH"),
-                }
-            } else {
-                eprintln!("warning: NER model not downloaded, run `anon-pii download-model`");
-            }
-        }
-        #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
-        {
-            use crate::ner::heuristic::HeuristicNerDetector;
-            anonymizer.set_ner_detector(Box::new(HeuristicNerDetector::new()));
-            eprintln!("NER: heuristic (ner-lite) enabled");
-        }
+        // ML builds also retain heuristics if the optional model/runtime is unavailable.
+        #[cfg(feature = "ner-lite")]
+        anonymizer.set_ner_detector(crate::ner::auto::detector(|message| eprintln!("{message}")));
 
         Self {
             client: reqwest::Client::new(),
@@ -398,6 +377,30 @@ mod tests {
             Provider::OpenAi,
         );
         assert_eq!(state.provider, Provider::OpenAi);
+    }
+
+    #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
+    #[tokio::test]
+    async fn test_proxy_automatically_enables_heuristic_roundtrip() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = ProxyState::new(
+            "http://localhost:0".to_string(),
+            0.5,
+            directory.path().to_path_buf(),
+            Provider::OpenAi,
+        );
+        let text = "Please contact Dr Avery Quill.";
+        let mut anonymizer = state.anonymizer.lock().await;
+        let (prepared, detections) = anonymizer.anonymize_text(text);
+        assert!(
+            detections
+                .iter()
+                .any(|d| { d.entity_type == "PERSON" && &text[d.start..d.end] == "Avery Quill" })
+        );
+        assert!(!prepared.contains("Avery Quill"));
+        assert_eq!(anonymizer.mapping.restore(&prepared), text);
+        assert!(!state.persist_mapping);
+        assert!(!directory.path().join("mapping.json").exists());
     }
 
     #[tokio::test]
