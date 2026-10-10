@@ -31,6 +31,17 @@ are documented in [Quality and claim policy](quality.md).
 | `FR_IBAN` | French IBANs — spaced and compact (FR76...) | 0.9 - 0.95 |
 | `FR_SSN` | Social security numbers (NIR) — spaced and compact, Corsica support | 0.8 - 0.85 |
 | `FR_PASSPORT` | French passport numbers (context-aware) | 0.7 |
+| `FR_ADDRESS` | Bounded French street + metropolitan postcode + city shape | 0.85 - 1.0 |
+
+`FR_ADDRESS` requires a house number, a supported full street type (such as
+`rue`, `avenue`, or `boulevard`), a street name, a five-digit postcode with a
+metropolitan prefix from 01 through 95, and a city on the same line. It accepts
+hyphenated cities and the prefixes `Le`, `La`, `Les`, `Saint`, and `Sainte`.
+It does not validate a postal database. Abbreviated street types, overseas
+postcodes, multiline addresses, and arbitrary multiword city names are outside
+this rule's coverage; an unhyphenated multiword city may be only partly detected.
+Ordinary text that happens to fit the full compound shape can also be detected.
+Review the complete prepared address before sharing it.
 
 ## Aviation
 
@@ -63,7 +74,7 @@ and credential, and split credentials are outside this recognizer's coverage.
 | Entity | Backend | Score | Feature flag |
 |--------|---------|-------|--------------|
 | `PERSON` | ML — DistilBERT multilingual NER (ONNX, INT8) | 0.6 - 1.0 | `ner` |
-| `PERSON` | Heuristic — title patterns + name dictionary | 0.55 - 0.80 | `ner-lite` |
+| `PERSON` | Heuristic — titles, self-introductions, and name dictionary | 0.55 - 0.80 | `ner-lite` |
 | `LOCATION` | ML — DistilBERT multilingual NER (ONNX, INT8) | 0.6 - 1.0 | `ner` |
 
 Enabled with `--ner`. See [NER setup](ner.md).
@@ -103,5 +114,6 @@ Context keywords work in two modes:
 | `FR_PHONE_NUMBER` | telephone, tel, phone, mobile, contact, appeler, numero, portable |
 | `FR_IBAN` | iban, compte, account, virement, bank, banque, bancaire |
 | `FR_SSN` | secu, securite sociale, ssn, nir, carte vitale, numero, immatriculation |
+| `FR_ADDRESS` | adresse, address, domicile, habite, livraison, delivery |
 
 Crew codes also use a blocklist to avoid matching common 3-letter words (THE, AND, FOR, VOL, PAX, ETA, UTC, AOG, etc.).

@@ -3,25 +3,38 @@
 [![CI](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml/badge.svg)](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Local, reversible PII roundtrips for AI-assisted debugging.
+Prepare support tickets for AI. Restore the useful references locally.
 
-`anon-pii` is a Rust CLI built around one workflow: anonymize a finite debug
-payload, run an AI or diagnostic command with the anonymized input, and restore
-recognized values from its response without sharing a mapping file between
-processes. It is a data-minimization aid, not a privacy compliance guarantee or
-proof that a payload is fully anonymized.
+`anon-pii` replaces detected sensitive values with reversible tokens before
+you share a ticket or debug payload. Its browser workspace and Rust CLI keep
+the mapping local while you work with an AI response. It is a data-minimization
+aid, not a privacy compliance guarantee or proof that a payload is fully anonymized.
+
+## Try a support ticket
+
+Open the [local browser workspace](https://tcheud.github.io/anon-pii/#try), load
+the fictional example, and choose **Prepare ticket**. Review the prepared text,
+copy it into your AI tool, then paste its reply back and choose **Restore reply**.
+Known tokens become the original references again. Detection and restoration
+run in the browser; the workspace makes no AI calls and saves no ticket or mapping.
+
+Names use heuristics and detection can miss values. Review the prepared text
+before sharing it. Keep this tab open for the reply; editing the source,
+preparing again, clearing, or reloading discards the previous mapping. See the
+[support-ticket walkthrough](docs/support-ticket.md) for the browser workflow
+and a CLI starter that demonstrates the handoff without an AI service.
 
 ## Installation
 
-Download the archive for your platform from [v0.2.0](https://github.com/tcheuD/anon-pii/releases/tag/v0.2.0). No Rust toolchain is needed for these binaries.
+Download the archive for your platform from [v0.3.0](https://github.com/tcheuD/anon-pii/releases/tag/v0.3.0). No Rust toolchain is needed for these binaries.
 
 | Platform | Archive | Extract after downloading |
 |----------|---------|--------------------------|
-| Linux x86_64 (glibc) | [anon-pii-linux-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/anon-pii-linux-x86_64.tar.gz) | `tar -xzf anon-pii-linux-x86_64.tar.gz` |
-| macOS Apple Silicon | [anon-pii-macos-aarch64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/anon-pii-macos-aarch64.tar.gz) | `tar -xzf anon-pii-macos-aarch64.tar.gz` |
-| macOS Intel | [anon-pii-macos-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/anon-pii-macos-x86_64.tar.gz) | `tar -xzf anon-pii-macos-x86_64.tar.gz` |
+| Linux x86_64 (glibc) | [anon-pii-linux-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.3.0/anon-pii-linux-x86_64.tar.gz) | `tar -xzf anon-pii-linux-x86_64.tar.gz` |
+| macOS Apple Silicon | [anon-pii-macos-aarch64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.3.0/anon-pii-macos-aarch64.tar.gz) | `tar -xzf anon-pii-macos-aarch64.tar.gz` |
+| macOS Intel | [anon-pii-macos-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.3.0/anon-pii-macos-x86_64.tar.gz) | `tar -xzf anon-pii-macos-x86_64.tar.gz` |
 
-Before extracting, download [SHA256SUMS](https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/SHA256SUMS)
+Before extracting, download [SHA256SUMS](https://github.com/tcheuD/anon-pii/releases/download/v0.3.0/SHA256SUMS)
 and verify the archive against its matching entry. Use `sha256sum` on Linux
 or `shasum -a 256` on macOS with the downloaded archive's filename.
 
@@ -109,7 +122,7 @@ protected, so review the limitations below before using real data.
 
 | Tier | Supported focus | Expectation |
 |------|-----------------|-------------|
-| **Core** | `run`; regex, context, and checksum detection; reversible tokens; text, JSON, CSV, and SQL | Release-gated and suitable for the local AI-debugging workflow, subject to false positives and false negatives |
+| **Core** | Browser ticket workspace and CLI `run`; regex, context, and checksum detection; reversible tokens; text, JSON, CSV, and SQL in the CLI | Release-gated and suitable for local support-ticket and AI-debugging workflows, subject to false positives and false negatives |
 | **Secondary** | Detached mapping/restore flows, custom recognizers, heuristic name detection, local API/UI/proxy modes | Supported, but not the primary product path; read the mode-specific threat and persistence notes |
 | **Experimental** | ML NER, OCR image redaction, PDF redaction, and XLSX detection | Optional and dependency- or format-sensitive; validate on representative files before relying on it |
 

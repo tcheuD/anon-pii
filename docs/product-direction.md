@@ -44,26 +44,87 @@ ML runtime. Maintain secondary surfaces according to the existing scope tiers.
 Expand into hosted services, additional document formats, or enterprise
 controls only when a repeated user need and representative tests justify it.
 
-Preview is a review aid. It cannot prove that data is anonymous, and its tokens
-are regenerated on the next invocation. The child command also retains normal
-filesystem, environment, and network access. Keep those boundaries explicit
-where people start using the product.
+Review is an aid, not proof that data is anonymous. CLI preview tokens are
+regenerated on the next invocation; the browser workspace keeps a prepared
+mapping only in the current page session. A CLI child retains its normal
+filesystem, environment, and network access. Browser users choose what to copy
+to an external AI tool. Keep these boundaries explicit at the point of use.
 
-## How to decide what comes next
+## Next milestone: browser ticket workspace and CLI starter
 
-In opt-in user trials, measure whether a developer can install the CLI,
-understand the preview, complete the first roundtrip, and choose to use it
-again on a later debugging task. Record failure reasons and elapsed setup
-time; establish a baseline before setting conversion or retention targets.
+Prioritize a repeatable ticket-to-AI handoff for developers and support
+engineers working with finite English and French ticket text. The primary
+entry point is a browser workspace: prepare a ticket, inspect and copy its
+tokens, paste an AI response, and restore recognized references in the same
+page session. It needs no CLI installation, account, or backend. A bookmark
+returns to a fresh workspace for the next ticket. Keep a runnable CLI starter
+for people who already work in the terminal.
 
-The next detector candidates already have concrete reports: lowercase surnames
-([#17](https://github.com/tcheuD/anon-pii/issues/17)) and French postal addresses
-([#18](https://github.com/tcheuD/anon-pii/issues/18)). Reproduce each with fictional
-fixtures and ordinary-text negatives before choosing an implementation. Do not
-broaden name or address detection solely to improve a headline entity count.
+The [support-ticket guide](support-ticket.md) covers both paths and their
+session boundaries.
 
-Use synthetic reproductions for detector reports. Do not collect raw payloads,
-mapping files, or command output as product analytics. Quality measurements
-must retain the configuration, corpus, and integer counts required by the
-[quality policy](quality.md). Distribution follows the
+### Evidence and hypothesis
+
+- **Established:** the repository has a fictional support-ticket demo, custom
+  recognizers, optional heuristic name detection, and an in-memory child-command
+  roundtrip. The v0.2.0 onboarding path reaches a local `run -- cat` proof.
+- **Reported:** the two open issues as of this decision are lowercase surnames
+  ([#17](https://github.com/tcheuD/anon-pii/issues/17)) and French postal addresses
+  ([#18](https://github.com/tcheuD/anon-pii/issues/18)). Both were filed by the
+  maintainer and describe playground inputs. They identify concrete coverage
+  gaps; they do not establish how many independent users have this need.
+- **Established, narrowly:** the [pinned comparison](comparison-redact.md)
+  identifies local child-command orchestration and restoration as a distinct
+  workflow at the compared revisions. Its project-owned corpus is not market
+  validation or evidence of universal detector superiority.
+- **Hypothesis:** a browser path will remove installation friction for support
+  engineers, and a bookmark plus reusable CLI recipe will make the second use
+  easier. Name and French-address coverage should make the ticket examples more
+  useful. Activation, retention, and willingness to pay remain unmeasured.
+
+### What the package must deliver
+
+1. Reproduce the two reported gaps with fictional positives, ordinary-text
+   negatives, exact spans, and restored output. Evaluate optional name detection
+   separately from default recognizers; do not broaden recognition just to raise
+   an entity count.
+2. Provide a browser workspace that prepares one ticket, copies the reviewed
+   tokenized text, restores a pasted reply, and clears the session. Edits and
+   re-preparation must invalidate prior tokens and replies. Reloading must not
+   resurrect a mapping. Keep heuristic name detection visible and never label
+   the prepared text as guaranteed anonymous.
+3. Provide a fictional example that completes the browser loop without an AI
+   account. The CLI starter should show actual tokenized child input and a useful
+   simulated response, then give users a reusable command/configuration for the
+   next ticket. Neither path should persist mappings or transmit ticket text.
+4. Verify the browser's source-edit, clipboard, restore, and clear behavior;
+   verify CLI workflow cases from shipped binaries. Keep coverage measurements
+   separate from interface checks. Passing the existing corpus alone does not
+   establish coverage for names or addresses added by this milestone.
+
+These are delivery criteria, not a claim that the package is already released.
+Browser copy/restore uses one prepared session; editing the source, preparing
+again, clearing, or reloading loses that session. CLI preview and execution
+remain separate transactions with fresh tokens. Same-invocation terminal
+approval is a later hypothesis with its own terminal and failure-path contract.
+
+### Adoption loop without collecting payloads
+
+Ship the bookmarkable workspace, local example, and reusable CLI recipe
+together. Include a passive, optional feedback prompt in the guide: did the first workflow complete, was it
+used on another ticket, and what blocked that use? Request only product version,
+platform, configuration, first/repeat-use status, and the failure category.
+Do not transmit usage automatically or treat a local demo run as an active user.
+
+Use the existing issue/discussion paths for voluntarily supplied outcomes.
+Detector reports need fictional reproductions; sensitive disclosures continue
+through the [security reporting path](../SECURITY.md). Never request raw ticket
+text, mappings, command output containing personal data, or private prompts as
+analytics. Record the count and provenance of actual reports before claiming
+activation or repeat use. There is no measured retention baseline yet.
+
+A repeated blocker should produce a fictional regression case, a focused fix,
+and an updated starter recipe, so the next user benefits from the same report.
+Keep quality measurements tied to the configuration, corpus, and integer counts
+required by the [quality policy](quality.md). Distribution follows the
 [release checklist](release.md).

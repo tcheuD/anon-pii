@@ -7,6 +7,9 @@ values.
 Tracked demo assets:
 
 - `samples/support-ticket.txt` shows a support-ticket workflow.
+- `samples/support-ticket-fr.txt` includes a fictional introduced name, French
+  address, email, and Basic credential.
+- `ticket-reply.py` simulates a useful reply locally using the tokens it receives.
 - `samples/incident-log.txt` shows log-style incident data.
 - `samples/queries.sql` shows SQL anonymization.
 - `samples/passengers.csv` shows CSV anonymization.
@@ -41,6 +44,19 @@ The preview shows detected values as tokens. The local roundtrip prints the
 original ticket because the child echoes its tokenized stdin and anon-pii
 restores known tokens in stdout. Review the preview for missed sensitive values
 before substituting your own AI command; see the [first roundtrip guide](../README.md#first-roundtrip).
+
+For a reply that uses the ticket's references, install a release binary or build
+with `--features ner-lite`, then run:
+
+```bash
+anon-pii --ner run --dry-run < demo/samples/support-ticket-fr.txt
+anon-pii --ner run -- python3 demo/ticket-reply.py < demo/samples/support-ticket-fr.txt
+```
+
+The Python simulator prints its actual tokenized input on stderr, then emits
+a deterministic suggested follow-up on stdout. `anon-pii` restores the name,
+email, and address in that reply. Python 3 is required; no AI service or network
+is involved. See the [support-ticket guide](../docs/support-ticket.md).
 
 Detached workflows remain available with a dedicated mapping file:
 

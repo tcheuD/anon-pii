@@ -85,12 +85,29 @@ def main():
         require(credential not in outgoing, "child received original Basic credentials")
         require(b"[EMAIL_ADDRESS_" in outgoing, "child did not receive an email token")
         require(b"[AUTH_TOKEN_" in outgoing, "child did not receive a credential token")
+
+        # Released builds promise ner-lite. Exercise the new ticket path from
+        # each extracted archive, including exact source restoration.
+        person = b"Camille verneuil"
+        address = b"24 rue des Nuages 75016 ville-exemple"
+        ticket = b"Je m'appelle " + person + b".\nAdresse : " + address + b".\n" + payload
+        child = run(["--ner", "run", "--", "tee", str(observed)], ticket)
+        require(child.stdout == ticket, "ticket roundtrip did not restore exact input")
+        outgoing = observed.read_bytes()
+        for entity, original in [
+            (b"PERSON", person),
+            (b"FR_ADDRESS", address),
+            (b"EMAIL_ADDRESS", email),
+            (b"AUTH_TOKEN", credential),
+        ]:
+            require(original not in outgoing, f"ticket child received original {entity!r}")
+            require(b"[" + entity + b"_" in outgoing, f"ticket omitted {entity!r} token")
         require(
             not (smoke_home / ".anon-pii" / "mapping.json").exists(),
             "transaction persisted a mapping file",
         )
 
-    print(f"Release smoke passed: anon-pii {args.version}; preview and local roundtrip")
+    print(f"Release smoke passed: anon-pii {args.version}; preview, roundtrip, support ticket")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,55 @@
+name: Support-ticket workflow feedback
+description: Share whether the first or repeat workflow worked, without sharing a ticket.
+title: "[Ticket workflow]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feedback is optional. This issue will be public. Share the outcome only;
+        do not include tickets, original values, token mappings, private prompts,
+        credentials, or screenshots containing sensitive data. For a detector
+        bug, use the bug report template with a fictional reproduction.
+  - type: dropdown
+    id: path
+    attributes:
+      label: Workflow
+      options:
+        - Browser workspace
+        - CLI starter
+        - CLI with my own command
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version and platform
+      description: Product version, OS, and browser or CLI feature flags. No hostname or account details.
+      placeholder: "v0.3.0, macOS, Chrome; or v0.3.0, Linux, ner-lite with --ner"
+  - type: dropdown
+    id: use
+    attributes:
+      label: Stage
+      options:
+        - First attempt with the fictional example
+        - First attempt with my own ticket
+        - Returning to use it on another ticket
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Outcome
+      options:
+        - Prepared and restored successfully
+        - Installation or loading blocked me
+        - Detection missed values or removed useful text
+        - Copying or command handoff blocked me
+        - Tokens were changed or could not be restored
+        - The workflow did not fit my task
+    validations:
+      required: true
+  - type: textarea
+    id: blocker
+    attributes:
+      label: What would make the next use easier?
+      description: Describe the step or missing capability in general terms. Keep all ticket contents private.
