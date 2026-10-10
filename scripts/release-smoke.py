@@ -4,6 +4,7 @@
 import argparse
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -102,12 +103,43 @@ def main():
         ]:
             require(original not in outgoing, f"ticket child received original {entity!r}")
             require(b"[" + entity + b"_" in outgoing, f"ticket omitted {entity!r} token")
+
+        # Incorrect regex offsets can still roundtrip perfectly while leaving
+        # part of a configured value visible. Check complete child-input spans.
+        recognizers = smoke_home / "recognizers.yml"
+        for pattern, source, prefix in [
+            (".abb|b", b"zabb", b""),
+            ("(?:..acbb|b)a(?:c|d)", b"xzbacbbac", b"x"),
+            (".abb|b", "🧪 za%62%62".encode(), "🧪 ".encode()),
+        ]:
+            recognizers.write_text(
+                "recognizers:\n  - name: Synthetic value\n"
+                "    entity_type: SYNTHETIC_VALUE\n    patterns:\n"
+                f"      - regex: '{pattern}'\n        score: 1.0\n",
+                encoding="utf-8",
+            )
+            flags = ["--config", str(recognizers), "--threshold", "1"]
+            expected = re.escape(prefix) + rb"\[SYNTHETIC_VALUE_[0-9a-f]{8}\]"
+            preview = run([*flags, "run", "--dry-run"], source)
+            require(
+                re.fullmatch(expected, preview.stdout) is not None,
+                f"custom recognizer {pattern!r} preview did not mask the full span",
+            )
+            child = run([*flags, "run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, "custom regex roundtrip changed source bytes")
+            require(
+                re.fullmatch(expected, observed.read_bytes()) is not None,
+                f"custom recognizer {pattern!r} sent an incomplete span to the child",
+            )
         require(
             not (smoke_home / ".anon-pii" / "mapping.json").exists(),
             "transaction persisted a mapping file",
         )
 
-    print(f"Release smoke passed: anon-pii {args.version}; preview, roundtrip, support ticket")
+    print(
+        f"Release smoke passed: anon-pii {args.version}; "
+        "preview, roundtrip, support ticket, custom regex spans"
+    )
 
 
 if __name__ == "__main__":
