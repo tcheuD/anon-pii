@@ -15,12 +15,11 @@ fn run_with_input(home: &Path, arguments: &[&str], input: &[u8]) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn anon-pii");
-    child
-        .stdin
-        .as_mut()
-        .expect("piped stdin")
-        .write_all(input)
-        .expect("write anon-pii stdin");
+    if let Err(error) = child.stdin.as_mut().expect("piped stdin").write_all(input) {
+        // Invalid CLI options can be rejected before stdin is read. The caller
+        // still checks the exit status and output; other I/O failures are errors.
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    }
     child.wait_with_output().expect("wait for anon-pii")
 }
 
