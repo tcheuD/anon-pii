@@ -564,16 +564,16 @@ async fn prepare_generic_passthrough_body(
     state: &Arc<ProxyState>,
     method: &axum::http::Method,
     body_bytes: &[u8],
-) -> Result<Option<Vec<u8>>, Response> {
+) -> Result<Option<Vec<u8>>, (StatusCode, String)> {
     if body_bytes.is_empty() {
         if generic_method_requires_json_body(method) {
-            return Err((StatusCode::BAD_REQUEST, "Invalid JSON: empty body").into_response());
+            return Err((StatusCode::BAD_REQUEST, "Invalid JSON: empty body".into()));
         }
         return Ok(None);
     }
 
     let mut body_json: serde_json::Value = serde_json::from_slice(body_bytes)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response())?;
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
 
     {
         let mut anonymizer = state.anonymizer.lock().await;
@@ -585,7 +585,6 @@ async fn prepare_generic_passthrough_body(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Serialization error: {e}"),
         )
-            .into_response()
     })?;
 
     Ok(Some(serialized))
@@ -643,7 +642,7 @@ pub async fn passthrough(State(state): State<Arc<ProxyState>>, req: Request<Body
     if provider == Provider::Generic {
         let body = match prepare_generic_passthrough_body(&state, &method, &body_bytes).await {
             Ok(prepared) => prepared,
-            Err(response) => return response,
+            Err(error) => return error.into_response(),
         };
         if let Some(body) = body {
             upstream_req = upstream_req.body(body);

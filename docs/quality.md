@@ -38,6 +38,16 @@ For `anon-pii run -- <command> [args...]`:
 sandbox: it does not restrict the child process's network, filesystem,
 environment, subprocesses, or other side effects.
 
+`run --dry-run` exercises the same preparation path but returns the prepared
+payload on stdout without starting a child. It accepts an optional command,
+reports unique detection counts on stderr without original values, and neither
+creates nor replaces a persisted mapping. Preview output keeps the prepared
+payload's exact bytes, including its trailing-newline behavior. Its tests cover
+text, JSON, CSV, SQL, custom recognizers, thresholds, invalid input, command
+argument forwarding, and preservation of an existing detached mapping.
+Preview tokens are invocation-local and cannot be restored after exit. A later
+`run` invocation is a fresh transaction, not execution of saved preview bytes.
+
 The contract applies only to values recognized by the selected recognizers and
 thresholds. False negatives, child-generated sensitive output, and sensitive
 stderr remain possible. The tool is not a compliance control and does not prove
@@ -73,19 +83,25 @@ contains 62 fictional cases, 46 annotated exact spans, 18 negative cases, 16
 expected entity types, and both contract and challenge tiers. Matching requires
 the entity type, UTF-8 byte range, and raw source bytes to agree.
 
-At `anon-pii` revision
+Initially, at `anon-pii` revision
 `1a22680e43b29c80e141a39b0a66eb3dcafb7522`, default features, threshold `0.5`,
-and no NER, `cargo run --locked --example quality_report -- --check` reports
+and no NER, `cargo run --locked --example quality_report -- --check` reported
 41 TP, 0 FP, and 5 FN: 100.0000% measured precision and 89.1304% measured recall. Those
 numbers describe this project-owned corpus, not arbitrary production data.
 
-All contract cases and every non-exempt case must remain exact. The five
-reviewed challenge exceptions are intentionally visible in the baseline:
+After Basic authentication detection was added at revision
+`0e5d6f253753cc3cf8a8d34f27168f26b1b9e90c`, the same unchanged corpus,
+configuration, and command report 42 TP, 0 FP, and 4 FN: 100.0000% measured precision and 91.3043% measured recall.
+The Basic-auth case now matches its exact credential span, and the baseline
+requires that match. The overall, challenge, secrets, and AUTH_TOKEN gates were
+tightened; corpus labels and the remaining exceptions were not changed.
+
+All contract cases and every non-exempt case must remain exact. The four
+remaining reviewed challenge exceptions are intentionally visible in the baseline:
 
 - context-free phone;
 - context-free IBAN;
-- lowercase IBAN;
-- Basic authentication header; and
+- lowercase IBAN; and
 - newline-split email.
 
 An improvement to an exception passes. Moving a miss to any other case does

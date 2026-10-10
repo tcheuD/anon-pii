@@ -22,6 +22,14 @@ flowchart TD
 
 Zero dependencies. Detects names using title patterns (M., Mme, Dr, Captain...) and a ~500 entry French/English first name dictionary.
 
+Explicit introductions (`my name is`, `mon nom est`, and `je m'appelle`,
+including the curly apostrophe) also support a capitalized or all-caps first
+name followed by one lowercase surname: for example, `je m'appelle Camille
+verneuil` on one line. This bounded rule accepts Unicode letters, apostrophes,
+and hyphens and rejects common prose continuations. It does not cover arbitrary
+lowercase names or multiword lowercase surnames; names overlapping common words
+can still be missed. The browser ticket workspace enables these heuristics.
+
 ```bash
 cargo install --path . --features ner-lite
 

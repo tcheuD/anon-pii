@@ -846,7 +846,7 @@ fn run() -> io::Result<()> {
     let command = cli.command.take();
 
     match command {
-        Some(Commands::Run { command }) => {
+        Some(Commands::Run { command, dry_run }) => {
             validate_run_options(&cli)?;
             if io::stdin().is_terminal() {
                 return Err(io::Error::new(
@@ -863,6 +863,25 @@ fn run() -> io::Result<()> {
                 return Err(io::Error::other(
                     "in-memory mapping evicted tokens; refusing to start an unrestorable command",
                 ));
+            }
+            if dry_run {
+                let (unique_count, by_type) = summarize_detections(&processed.detections);
+                eprintln!("Dry run: no command was started; no mapping was saved.");
+                eprintln!(
+                    "Unique entities detected: {unique_count} (format: {}, threshold: {}).",
+                    processed.format_name, cli.threshold,
+                );
+                for (entity_type, count) in by_type {
+                    eprintln!("  {entity_type}: {count}");
+                }
+                eprintln!("Review the preview for missed sensitive values before sharing.");
+
+                // Keep stdout identical to the bytes prepared for child stdin,
+                // including the absence of a trailing newline. Never print values
+                // from the reversible mapping in the preview summary.
+                let mut stdout = io::stdout().lock();
+                stdout.write_all(processed.result.as_bytes())?;
+                return stdout.flush();
             }
             if cli.verbose {
                 print_detections(&processed.detections);

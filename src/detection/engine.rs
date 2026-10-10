@@ -1,23 +1,55 @@
 use std::borrow::Cow;
 
+use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use regex::Regex;
 
 use super::Anonymizer;
 use super::names::{build_byte_offset_map, extend_person_span, is_name_like_word};
 use super::normalize::{
-    MULTILINE_ENTITY_TYPES, NormalizedText, collapse_newlines, strip_diacritics,
+    DecodedSourceText, MULTILINE_ENTITY_TYPES, NormalizedText, collapse_newlines, strip_diacritics,
 };
 use super::operators::{apply_custom_replacement, apply_encrypt, apply_hash, apply_mask};
 use super::types::{Detection, Operator};
 use crate::ner::PERSON_BLOCKLIST;
 use crate::patterns::{
-    CREW_CODE_BLOCKLIST, iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn,
-    valid_au_medicare, valid_au_tfn, valid_calendar_date, valid_card_prefix, valid_es_nie,
-    valid_es_nif, valid_fi_identity_code, valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code,
-    valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin,
-    valid_si_emso, valid_si_tax_number, valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin,
-    valid_us_ssn,
+    BASIC_AUTH_PATTERN, CREW_CODE_BLOCKLIST, iban_mod97, luhn_check, valid_aba_routing,
+    valid_au_abn, valid_au_acn, valid_au_medicare, valid_au_tfn, valid_calendar_date,
+    valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code, valid_in_aadhaar,
+    valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac,
+    valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number, valid_th_tnin,
+    valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn,
 };
+
+fn basic_auth_value_start(candidate: &str) -> Option<usize> {
+    let start = candidate.rfind([' ', '\t'])? + 1;
+    let value = &candidate[start..];
+    let decoded = STANDARD
+        .decode(value)
+        .or_else(|_| STANDARD_NO_PAD.decode(value))
+        .ok()?;
+    // RFC 7617 permits empty components and non-ASCII octets, but requires a
+    // colon separator and forbids control characters in the user/password.
+    (decoded.contains(&b':') && !decoded.iter().any(u8::is_ascii_control)).then_some(start)
+}
+
+fn has_address_city_continuation(suffix: &str) -> bool {
+    let mut chars = suffix.chars();
+    match chars.next() {
+        // Do not accept a valid prefix of a malformed or unsupported city
+        // token. The regex cannot express negative lookahead at its boundary.
+        Some('-' | '\u{2010}' | '\u{2011}') => true,
+        Some('\'' | '’') => chars.next().is_some_and(|ch| {
+            ch.is_alphanumeric()
+                || unicode_normalization::char::is_combining_mark(ch)
+                || matches!(ch, '\'' | '’' | '-' | '\u{2010}' | '\u{2011}')
+        }),
+        Some(ch) => {
+            ch.is_alphanumeric() || unicode_normalization::char::is_combining_mark(ch) || ch == '_'
+        }
+        None => false,
+    }
+}
 
 fn has_valid_iban_checksum(entity_type: &str, value: &str) -> bool {
     !matches!(entity_type, "IBAN_CODE" | "FR_IBAN") || iban_mod97(value)
@@ -77,6 +109,34 @@ fn locate_ner_span(
 
 impl Anonymizer {
     pub fn anonymize_text(&mut self, raw_text: &str) -> (String, Vec<Detection>) {
+        self.anonymize_source_text(raw_text, None)
+    }
+
+    pub(super) fn anonymize_sql_literal(
+        &mut self,
+        raw_text: &str,
+        backslash_escapes: bool,
+    ) -> (String, Vec<Detection>) {
+        self.anonymize_source_text(
+            raw_text,
+            Some(DecodedSourceText::sql_literal(raw_text, backslash_escapes)),
+        )
+    }
+
+    pub(super) fn anonymize_csv_field(&mut self, raw_text: &str) -> (String, Vec<Detection>) {
+        self.anonymize_source_text(raw_text, Some(DecodedSourceText::csv_field(raw_text)))
+    }
+
+    fn anonymize_source_text(
+        &mut self,
+        source_text: &str,
+        source_view: Option<DecodedSourceText<'_>>,
+    ) -> (String, Vec<Detection>) {
+        // All detector passes see decoded format content, including NER and name
+        // consistency. The final projection below preserves source spelling.
+        let raw_text = source_view
+            .as_ref()
+            .map_or(source_text, DecodedSourceText::as_str);
         // Regexes and validators see normalized/decoded text. Replacements and
         // public offsets are projected back to the caller's exact input.
         let normalized = NormalizedText::new(raw_text);
@@ -96,6 +156,15 @@ impl Anonymizer {
             }
 
             for mat in pat.regex.find_iter(text) {
+                let range = if pat.name == "basic_auth" && pat.regex.as_str() == BASIC_AUTH_PATTERN
+                {
+                    let Some(value_start) = basic_auth_value_start(mat.as_str()) else {
+                        continue;
+                    };
+                    mat.start() + value_start..mat.end()
+                } else {
+                    mat.range()
+                };
                 // Check context presence
                 let has_ctx = if !pat.context_keywords.is_empty() {
                     self.has_context(text, mat.start(), mat.end(), &pat.context_keywords)
@@ -116,6 +185,12 @@ impl Anonymizer {
                     {
                         continue;
                     }
+                }
+
+                if pat.entity_type == "FR_ADDRESS"
+                    && has_address_city_continuation(&text[mat.end()..])
+                {
+                    continue;
                 }
 
                 if !has_valid_pattern_value(&pat.entity_type, mat.as_str()) {
@@ -144,7 +219,7 @@ impl Anonymizer {
                 }
 
                 let raw_range = normalized
-                    .project_range(mat.start()..mat.end())
+                    .project_range(range)
                     .expect("regex match must project to a raw UTF-8 span");
                 detections.push(Detection {
                     entity_type: pat.entity_type.clone(),
@@ -521,7 +596,20 @@ impl Anonymizer {
             }
         }
 
-        // Replace from end to start
+        if let Some(source_view) = source_view {
+            for detection in filtered.iter_mut().chain(filtered_url_inner.iter_mut()) {
+                let range = source_view
+                    .project_range(detection.start..detection.end)
+                    .expect("format detection must project to its original source");
+                detection.original = source_text[range.clone()].to_string();
+                detection.start = range.start;
+                detection.end = range.end;
+            }
+        }
+
+        // Replace from end to start using original bytes, including format
+        // escape spelling when detection ran on a decoded source view.
+        let raw_text = source_text;
         let mut result = raw_text.to_string();
         for det in filtered.iter().rev() {
             debug_assert_eq!(

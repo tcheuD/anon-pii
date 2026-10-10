@@ -1,0 +1,11 @@
+Ticket CASE-2042 — livraison affichée en double
+
+Bonjour, je m'appelle Camille verneuil.
+Mon email est camille.verneuil@example.invalid.
+Adresse de livraison : 24 rue des Nuages 75016 ville-exemple.
+
+Après une nouvelle tentative, deux livraisons apparaissent pour la même commande.
+Le journal de test contient cette fausse autorisation :
+Authorization: Basic ZGVidWc6ZXhhbXBsZS1wYXNzd29yZA==
+
+Peux-tu proposer les prochaines vérifications sans inventer une cause ?

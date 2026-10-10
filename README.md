@@ -3,18 +3,96 @@
 [![CI](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml/badge.svg)](https://github.com/tcheuD/anon-pii/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Local, reversible PII roundtrips for AI-assisted debugging.
+Prepare support tickets for AI. Restore the useful references locally.
 
-`anon-pii` is a Rust CLI built around one workflow: anonymize a finite debug
-payload, run an AI or diagnostic command with the anonymized input, and restore
-recognized values from its response without sharing a mapping file between
-processes. It is a data-minimization aid, not a privacy compliance guarantee or
-proof that a payload is fully anonymized.
+`anon-pii` replaces detected sensitive values with reversible tokens before
+you share a ticket or debug payload. Its browser workspace and Rust CLI keep
+the mapping local while you work with an AI response. It is a data-minimization
+aid, not a privacy compliance guarantee or proof that a payload is fully anonymized.
 
-## Try it in 10 seconds
+## Try a support ticket
+
+Open the [local browser workspace](https://tcheud.github.io/anon-pii/#try), load
+the fictional example, and choose **Prepare ticket**. Review the prepared text,
+copy it into your AI tool, then paste its reply back and choose **Restore reply**.
+Known tokens become the original references again. Detection and restoration
+run in the browser; the workspace makes no AI calls and saves no ticket or mapping.
+
+Names use heuristics and detection can miss values. Review the prepared text
+before sharing it. Keep this tab open for the reply; editing the source,
+preparing again, clearing, or reloading discards the previous mapping. See the
+[support-ticket walkthrough](docs/support-ticket.md) for the browser workflow
+and a CLI starter that demonstrates the handoff without an AI service.
+
+## Installation
+
+Download the archive for your platform from [v0.3.1](https://github.com/tcheuD/anon-pii/releases/tag/v0.3.1). No Rust toolchain is needed for these binaries.
+
+| Platform | Archive | Extract after downloading |
+|----------|---------|--------------------------|
+| Linux x86_64 (glibc) | [anon-pii-linux-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.3.1/anon-pii-linux-x86_64.tar.gz) | `tar -xzf anon-pii-linux-x86_64.tar.gz` |
+| macOS Apple Silicon | [anon-pii-macos-aarch64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.3.1/anon-pii-macos-aarch64.tar.gz) | `tar -xzf anon-pii-macos-aarch64.tar.gz` |
+| macOS Intel | [anon-pii-macos-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.3.1/anon-pii-macos-x86_64.tar.gz) | `tar -xzf anon-pii-macos-x86_64.tar.gz` |
+
+Before extracting, download [SHA256SUMS](https://github.com/tcheuD/anon-pii/releases/download/v0.3.1/SHA256SUMS)
+and verify the archive against its matching entry. Use `sha256sum` on Linux
+or `shasum -a 256` on macOS with the downloaded archive's filename.
+
+From the directory containing the extracted binary, install for your user:
 
 ```bash
-echo 'Error for user john@acme.com (IP 10.0.0.5) card 4111111111111111' \
+mkdir -p "$HOME/.local/bin"
+install -m 755 anon-pii "$HOME/.local/bin/anon-pii"
+export PATH="$HOME/.local/bin:$PATH"
+anon-pii --version
+```
+
+Add the `export PATH` line to your shell profile to keep it available in new
+terminals. Release binaries include `ner-lite`, `proxy`, and `pdf`; heuristic
+name detection still requires `--ner`. ML NER, image OCR, and XLSX are not
+included. The preview and roundtrip below need none of these optional modes.
+
+### Build from source
+
+Requires Rust 1.88 or newer. This installs the default core without optional
+features to `~/.cargo/bin/anon-pii`:
+
+```bash
+git clone https://github.com/tcheuD/anon-pii.git
+cd anon-pii
+cargo install --locked --path .
+```
+
+Ensure `~/.cargo/bin` is on your PATH. For optional modes, see [Feature Flags](#feature-flags).
+
+## First roundtrip
+
+Preview what the configured detectors remove, without installing an AI tool or
+sending data to one:
+
+```bash
+echo 'Error for user john@example.com (IP 192.0.2.5)' \
+  | anon-pii run --dry-run
+```
+
+The email and IP should appear as tokens such as `[EMAIL_ADDRESS_…]` and
+`[IP_ADDRESS_…]`. The detection summary goes to stderr; the preview goes to
+stdout. Inspect it for missed sensitive values.
+
+Prove the roundtrip locally first. `cat` receives the tokenized payload and
+echoes it; anon-pii restores the original values before displaying it:
+
+```bash
+echo 'Error for user john@example.com (IP 192.0.2.5)' \
+  | anon-pii run -- cat
+# Error for user john@example.com (IP 192.0.2.5)
+```
+
+Then use your installed AI command with the original input. For example, with
+Claude Code configured:
+
+```bash
+echo 'Error for user john@example.com (IP 192.0.2.5)' \
   | anon-pii run -- claude -p "what failed?"
 ```
 
@@ -29,6 +107,8 @@ protected, so review the limitations below before using real data.
   child process instead of coordinating a mutable default mapping file.
 - **Fail-safe handoff** — the complete bounded input is read and anonymized
   before the child starts.
+- **Review before handoff** — `run --dry-run` previews the anonymized payload
+  without starting a command or saving a mapping.
 - **Format-aware core** — text, JSON values, CSV fields, and SQL string literals
   are transformed without treating the whole payload as an undifferentiated
   string.
@@ -42,7 +122,7 @@ protected, so review the limitations below before using real data.
 
 | Tier | Supported focus | Expectation |
 |------|-----------------|-------------|
-| **Core** | `run`; regex, context, and checksum detection; reversible tokens; text, JSON, CSV, and SQL | Release-gated and suitable for the local AI-debugging workflow, subject to false positives and false negatives |
+| **Core** | Browser ticket workspace and CLI `run`; regex, context, and checksum detection; reversible tokens; text, JSON, CSV, and SQL in the CLI | Release-gated and suitable for local support-ticket and AI-debugging workflows, subject to false positives and false negatives |
 | **Secondary** | Detached mapping/restore flows, custom recognizers, heuristic name detection, local API/UI/proxy modes | Supported, but not the primary product path; read the mode-specific threat and persistence notes |
 | **Experimental** | ML NER, OCR image redaction, PDF redaction, and XLSX detection | Optional and dependency- or format-sensitive; validate on representative files before relying on it |
 
@@ -67,56 +147,48 @@ protected, so review the limitations below before using real data.
 - **High-risk workflows need review.** Medical, legal, financial, HR,
   education, and government data should use additional controls and human review.
 
-## Installation
+## Feature Flags
 
-### Pre-built binaries (no Rust required)
+| Feature | Enables | Extra requirements |
+|---------|---------|--------------------|
+| default | Regex, checksum, context, JSON, CSV, SQL, and text anonymization | None |
+| `ner-lite` | Heuristic PERSON detection with `--ner` | None |
+| `ner` | ML PERSON detection with ONNX Runtime, plus `ner-lite` fallback | ONNX Runtime and `ORT_DYLIB_PATH` |
+| `proxy` | Reverse proxy, web UI, and Presidio-compatible REST API | None |
+| `image` | OCR-backed image redaction | Tesseract and language data |
+| `pdf` | Text-based PDF redaction | None beyond Rust dependencies |
+| `xlsx` | XLSX format detection scaffold | Full workbook anonymization is not implemented yet |
 
-Each tagged release publishes binaries for Linux x86_64, macOS x86_64, and macOS
-aarch64 on the [Releases page](https://github.com/tcheuD/anon-pii/releases). Once
-a release is available, download the archive for your platform and:
+<details>
+<summary>Build optional features from source</summary>
+
+From the cloned repository, choose the build you need:
 
 ```bash
-tar xzf anon-pii-*.tar.gz
-sudo mv anon-pii /usr/local/bin/
-anon-pii --help
-```
-
-If no release is published yet, build from source (below).
-
-### From source
-
-```bash
-# Clone and install
-git clone https://github.com/tcheuD/anon-pii.git
-cd anon-pii
-
-# Default (regex-only, no NER)
-cargo install --path .
-
 # Optional secondary mode: heuristic name detection
-cargo install --path . --features ner-lite
+cargo install --locked --path . --features ner-lite
 
 # Optional secondary modes: reverse proxy, web UI, and REST API
-cargo install --path . --features proxy
+cargo install --locked --path . --features proxy
 
 # Combined secondary build
-cargo install --path . --features ner-lite,proxy
+cargo install --locked --path . --features ner-lite,proxy
 
 # Experimental: ML name detection (requires ONNX Runtime)
 brew install onnxruntime
 export ORT_DYLIB_PATH=$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib
-cargo install --path . --features ner
+cargo install --locked --path . --features ner
 anon-pii download-model  # one-time, cached at ~/.anon-pii/models/
 
 # Experimental: image redaction (requires Tesseract)
 brew install tesseract  # macOS
-cargo install --path . --features image
+cargo install --locked --path . --features image
 
 # Experimental: PDF redaction
-cargo install --path . --features pdf
+cargo install --locked --path . --features pdf
 
 # Experimental: XLSX format detection scaffold
-cargo install --path . --features xlsx
+cargo install --locked --path . --features xlsx
 ```
 
 To make `ORT_DYLIB_PATH` persist across terminal sessions, add it to your shell profile:
@@ -131,24 +203,22 @@ This installs to `~/.cargo/bin/anon-pii`. If your PATH uses a different director
 ln -sf ~/.cargo/bin/anon-pii ~/.local/bin/anon-pii
 ```
 
-To update after code changes, re-run the same `cargo install` command.
+To update a source installation after code changes, rerun the same
+`cargo install` command. If you also installed a release archive, check
+`command -v anon-pii` to see which installation your shell uses.
 
-## Feature Flags
-
-| Feature | Enables | Extra requirements |
-|---------|---------|--------------------|
-| default | Regex, checksum, context, JSON, CSV, SQL, and text anonymization | None |
-| `ner-lite` | Heuristic PERSON detection with `--ner` | None |
-| `ner` | ML PERSON detection with ONNX Runtime, plus `ner-lite` fallback | ONNX Runtime and `ORT_DYLIB_PATH` |
-| `proxy` | Reverse proxy, web UI, and Presidio-compatible REST API | None |
-| `image` | OCR-backed image redaction | Tesseract and language data |
-| `pdf` | Text-based PDF redaction | None beyond Rust dependencies |
-| `xlsx` | XLSX format detection scaffold | Full workbook anonymization is not implemented yet |
+</details>
 
 ## Quick Start
 
 ```bash
-# Recommended: one in-memory AI roundtrip
+# Inspect anonymized input locally; no AI command or mapping file needed
+cat debug.json | anon-pii run --dry-run
+
+# Verify a roundtrip locally; cat receives tokens, your terminal sees originals
+cat debug.json | anon-pii run -- cat
+
+# Then use your configured AI tool
 cat debug.json | anon-pii run -- claude -p "explain this error"
 
 # Standalone anonymization from stdin
@@ -213,6 +283,35 @@ This contract covers recognized values only. Missed PII, values outside the
 configured recognizers, child-generated sensitive data, and sensitive stderr
 can still leave the intended boundary. `run` is not a compliance control or a
 substitute for reviewing what is sent to a third-party tool.
+
+### Preview before running a command
+
+```bash
+cat debug.json | anon-pii run --dry-run
+# Or preview an existing invocation without executing its command:
+cat debug.json | anon-pii run --dry-run -- claude -p "explain this error"
+```
+
+`--dry-run` uses the same input validation, detection options, and format
+processing as `run`. It writes the prepared child-stdin payload to stdout and
+a summary of unique detections by entity type to stderr. The summary contains
+no original values. Repeated occurrences of the same value and entity type
+count once. A command is optional and is never started in this mode. No mapping
+is saved, and existing detached-workflow mappings are left untouched.
+
+Place `--dry-run` before `--`; flags after the child program belong to that
+program. Detection options still go before `run`:
+
+```bash
+cat incident.txt | anon-pii --threshold 0.7 --format text run --dry-run
+```
+
+The preview can contain missed sensitive values, including when the summary
+reports zero detections. Inspect it locally before sharing. To execute the
+roundtrip, rerun with the original input and remove `--dry-run`. Each invocation
+generates fresh tokens: the preview is not a saved transaction or a guarantee
+that a later invocation sends the exact reviewed bytes. Preview tokens cannot
+be restored after the preview exits because its mapping is discarded.
 
 ## Mapping Persistence
 
@@ -337,7 +436,7 @@ sequenceDiagram
 
 <!-- BEGIN COMMANDS -->
 ```bash
-anon-pii run <COMMAND>       # Anonymize stdin, run a command, and restore tokens from its stdout in memory
+anon-pii run [COMMAND]       # Anonymize stdin, run a command, and restore tokens from its stdout in memory
 anon-pii restore [INPUT_POSITIONAL] # Restore original values from anonymized data
 anon-pii list-entities                 # List all supported entity types
 anon-pii api                 # Start Presidio-compatible REST API server (requires `proxy` feature)
@@ -383,6 +482,7 @@ See [docs/entities.md](docs/entities.md) for the exact entity inventory, confide
 | Guide | Description |
 |-------|-------------|
 | [Quality and claim policy](docs/quality.md) | Scope tiers, evidence requirements, and quality gates |
+| [Product direction](docs/product-direction.md) | Target workflow, current priorities, and evidence needed for expansion |
 | [Comparison with `censgate/redact`](docs/comparison-redact.md) | Pinned, configuration-specific product comparison without a winner claim |
 | [Entity types](docs/entities.md) | Exact recognizer inventory, scores, validators, and context requirements |
 | [Proxy mode](docs/proxy.md) | Anonymizing reverse proxy for Anthropic, OpenAI, and generic LLM APIs |

@@ -1,14 +1,14 @@
 [package]
 name = "anon-pii"
-version = "0.1.1"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.88"
-description = "Local reversible PII roundtrips for AI-assisted debugging"
+description = "Local reversible PII roundtrips for support tickets and AI debugging"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/tcheuD/anon-pii"
 homepage = "https://github.com/tcheuD/anon-pii"
-documentation = "https://docs.rs/anon-pii"
+documentation = "https://github.com/tcheuD/anon-pii#readme"
 keywords = ["pii", "anonymization", "privacy", "redaction", "cli"]
 categories = ["command-line-utilities", "text-processing"]
 # Strict allowlist: anything not listed here is excluded from `cargo package`.
@@ -25,6 +25,19 @@ include = [
     "/LICENSE",
     "/SECURITY.md",
     "/CONTRIBUTING.md",
+    "/.gitignore",
+    "/.github/workflows/ci.yml",
+    "/.github/workflows/release.yml",
+    "/.github/workflows/bench.yml",
+    "/scripts/release-preflight.sh",
+    "/scripts/release-smoke.py",
+    "/scripts/build-wasm.sh",
+    "/scripts/test-ticket-workspace.mjs",
+    "/demo/README.md",
+    "/demo/record.sh",
+    "/demo/hero.tape",
+    "/demo/ticket-reply.py",
+    "/demo/samples/**",
 ]
 
 [lints.clippy]
@@ -41,7 +54,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-regex = "1"
+regex = "1.13.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
@@ -51,6 +64,7 @@ unicode-normalization = "0.1"
 unicode-segmentation = "1"
 getrandom = "0.4"
 aho-corasick = "1"
+base64 = "0.22.1"
 
 # Proxy mode dependencies — behind "proxy" feature, pinned for supply chain safety
 tokio = { version = "=1.52.3", features = ["full"], optional = true }

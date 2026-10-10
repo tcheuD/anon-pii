@@ -155,15 +155,32 @@ impl Anonymizer {
         for record in document.records {
             for field in record.fields {
                 output.push_str(&text[copied_until..field.start]);
-                let value = field.value(text);
-                let (anonymized, dets) = self.anonymize_text(&value);
+                let preserve_source_spelling = self.operator == Operator::Token && field.quoted;
+                let value = if preserve_source_spelling {
+                    // The parser already validated the outer quotes. Retain
+                    // doubled quotes inside detected spans in token mappings.
+                    Cow::Borrowed(&text[field.start + 1..field.end - 1])
+                } else {
+                    field.value(text)
+                };
+                let (anonymized, dets) = if preserve_source_spelling {
+                    self.anonymize_csv_field(&value)
+                } else {
+                    self.anonymize_text(&value)
+                };
                 let changed = self.operator != Operator::Keep
                     && !dets.is_empty()
                     && anonymized != value.as_ref();
                 all_detections.extend(dets);
 
                 if changed {
-                    output.push_str(&serialize_csv_field(&anonymized, field.quoted));
+                    if preserve_source_spelling {
+                        output.push('"');
+                        output.push_str(&anonymized);
+                        output.push('"');
+                    } else {
+                        output.push_str(&serialize_csv_field(&anonymized, field.quoted));
+                    }
                 } else {
                     output.push_str(&text[field.start..field.end]);
                 }
@@ -327,12 +344,21 @@ impl Anonymizer {
                         !replacement.contains('\'') && !replacement.contains('\\')
                     }),
                 };
-            let literal = if preserve_e_string_spelling {
+            // Token mappings must retain SQL source spelling, including escapes
+            // inside a detected span. Detect against a decoded view with offsets
+            // back to the raw literal instead of storing the decoded original.
+            let preserve_source_spelling =
+                self.operator == Operator::Token || preserve_e_string_spelling;
+            let literal = if preserve_source_spelling {
                 Cow::Borrowed(raw_literal)
             } else {
                 Cow::Owned(decode_sql_single_quoted(raw_literal, backslash_escapes))
             };
-            let (anonymized, dets) = self.anonymize_text(&literal);
+            let (anonymized, dets) = if self.operator == Operator::Token {
+                self.anonymize_sql_literal(raw_literal, backslash_escapes)
+            } else {
+                self.anonymize_text(&literal)
+            };
             let changed = self.operator != Operator::Keep
                 && !dets.is_empty()
                 && anonymized != literal.as_ref();
@@ -341,7 +367,7 @@ impl Anonymizer {
             if changed {
                 output.push_str(&text[copied_until..literal_start]);
                 output.push('\'');
-                if preserve_e_string_spelling {
+                if preserve_source_spelling {
                     output.push_str(&anonymized);
                 } else {
                     output.push_str(&anonymized.replace('\'', "''"));
