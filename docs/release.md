@@ -1,8 +1,8 @@
 # Release Process
 
 This checklist is the source of truth for repeatable releases. GitHub Releases
-is the supported binary distribution channel; v0.1.0 and v0.1.1 have already
-been published. The next release is v0.2.0.
+is the supported binary distribution channel; v0.2.0 has already
+been published. The next release is v0.3.0.
 
 ## Support Matrix
 
@@ -41,6 +41,8 @@ Every pull request must pass:
 - `cargo test --locked --test quality_workflows`
 - `cargo run --locked --example quality_report -- --check`
 - `cargo build --release`
+- `node scripts/test-ticket-workspace.mjs` against the checked-in WASM (Playwright
+  1.62.1 with Chromium; CI installs the driver separately and uses Google Chrome)
 
 Main branch or manual checks additionally run:
 
@@ -73,7 +75,8 @@ format, Clippy, test, package, and MSRV gates at the tagged commit before any
 release binary is built or published. Each archive is then extracted on its
 target runner and checked with `scripts/release-smoke.py`. This verifies the
 version, preview without a child process, actual tokenized child stdin, exact
-`run -- cat` restoration, and absence of a persisted transaction mapping.
+`run -- cat` restoration, the support-ticket name/address roundtrip with `--ner`,
+and absence of a persisted transaction mapping.
 
 Packaging fails if README or LICENSE is missing. Release assets include
 `SHA256SUMS`, whose entries use archive basenames so downloads can be checked
@@ -113,6 +116,9 @@ To check a proposed tag locally after fetching `main` and creating the tag:
   version, corpus hash, and integer metrics.
 - Run image checks on a host with Tesseract: `cargo test --features image` and
   `cargo test --features image -- --ignored`.
+- Rebuild the browser engine with `scripts/build-wasm.sh` after detector changes.
+- Run `node scripts/test-ticket-workspace.mjs` with Playwright available through
+  `NODE_PATH`; set `CHROMIUM_PATH` if Chromium is not in a standard location.
 - Run `cargo audit`.
 - Run `cargo deny check`.
 - Confirm all main-branch CI jobs passed on the commit to be tagged, including

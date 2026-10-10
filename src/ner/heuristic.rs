@@ -1,9 +1,163 @@
 use std::collections::HashSet;
+use std::sync::LazyLock;
+
+use regex::Regex;
+use unicode_normalization::UnicodeNormalization;
 
 use super::{NerDetector, NerSpan};
 
 const CONTEXT_WINDOW: usize = 80;
 const CONTEXT_BOOST: f64 = 0.15;
+
+// An explicit self-introduction supports one lowercase surname, but common
+// sentence continuations must not turn a first name into a longer PERSON span.
+const INTRODUCTION_STOP_WORDS: &[&str] = &[
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "but",
+    "by",
+    "can",
+    "called",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "he",
+    "hello",
+    "help",
+    "here",
+    "here's",
+    "hi",
+    "how",
+    "i",
+    "i'm",
+    "if",
+    "in",
+    "is",
+    "it",
+    "may",
+    "might",
+    "must",
+    "my",
+    "name",
+    "need",
+    "needs",
+    "nice",
+    "not",
+    "of",
+    "on",
+    "or",
+    "please",
+    "returned",
+    "said",
+    "says",
+    "she",
+    "should",
+    "sorry",
+    "speaking",
+    "surname",
+    "than",
+    "thank",
+    "thanks",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "to",
+    "today",
+    "tomorrow",
+    "was",
+    "want",
+    "wants",
+    "we",
+    "welcome",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "will",
+    "with",
+    "work",
+    "working",
+    "works",
+    "would",
+    "wrote",
+    "yesterday",
+    "you",
+    "your",
+    "ai",
+    "appelle",
+    "au",
+    "aux",
+    "avec",
+    "avez",
+    "avons",
+    "bonjour",
+    "dans",
+    "de",
+    "des",
+    "du",
+    "elle",
+    "en",
+    "enchanté",
+    "enchantée",
+    "est",
+    "et",
+    "ici",
+    "il",
+    "je",
+    "la",
+    "le",
+    "les",
+    "là",
+    "mais",
+    "merci",
+    "mon",
+    "ne",
+    "nom",
+    "nous",
+    "ont",
+    "ou",
+    "par",
+    "pas",
+    "pour",
+    "prénom",
+    "ravi",
+    "ravie",
+    "sans",
+    "se",
+    "son",
+    "sont",
+    "suis",
+    "sur",
+    "travaille",
+    "tu",
+    "un",
+    "une",
+    "veux",
+    "veut",
+    "vous",
+];
 
 const CONTEXT_KEYWORDS: &[&str] = &[
     "passenger",
@@ -439,6 +593,72 @@ impl HeuristicNerDetector {
         Self::is_capitalized_word(word)
     }
 
+    fn is_lowercase_surname(word: &str) -> bool {
+        // Require letters on both sides of internal apostrophes/hyphens. Do not
+        // accept arbitrary punctuation, numbers, handles, or word fragments.
+        if word.chars().count() > 64 || INTRODUCTION_STOP_WORDS.contains(&word) {
+            return false;
+        }
+        let mut letters = 0;
+        let mut after_separator = true;
+        for ch in word.chars() {
+            if ch.is_alphabetic() && ch.is_lowercase() {
+                letters += 1;
+                after_separator = false;
+            } else if (ch == '-' || ch == '\'') && !after_separator {
+                after_separator = true;
+            } else {
+                return false;
+            }
+        }
+        letters >= 2 && !after_separator
+    }
+
+    fn detect_introduced_lowercase_surnames(&self, text: &str) -> Vec<NerSpan> {
+        static INTRODUCTION: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(
+                r"(?i:\b(?:my[ \t]+name[ \t]+is|mon[ \t]+nom[ \t]+est|je[ \t]+m['’]appelle))[ \t]+(?P<first>\S+)[ \t]+(?P<last>\S+)",
+            )
+            .expect("valid self-introduction pattern")
+        });
+
+        let mut spans = Vec::new();
+        for captures in INTRODUCTION.captures_iter(text) {
+            let first = captures.name("first").unwrap();
+            let last = captures.name("last").unwrap();
+            let first_word = first.as_str().trim_start_matches(['\"', '\'', '“', '‘']);
+            let last_word = last.as_str().trim_end_matches([
+                '.', ',', ';', ':', '!', '?', '\"', '\'', '”', '’', ')', ']', '}',
+            ]);
+            let normalized_first = first_word.nfc().collect::<String>().replace('’', "'");
+            let normalized_last = last_word.nfc().collect::<String>().replace('’', "'");
+
+            if normalized_first.chars().count() > 64
+                || normalized_first
+                    .chars()
+                    .filter(|c| c.is_alphabetic())
+                    .count()
+                    < 2
+                || !Self::is_name_word(&normalized_first)
+                || INTRODUCTION_STOP_WORDS.contains(&normalized_first.to_lowercase().as_str())
+                || !Self::is_lowercase_surname(&normalized_last)
+            {
+                continue;
+            }
+
+            let start = first.end() - first_word.len();
+            let end = last.start() + last_word.len();
+            spans.push(NerSpan {
+                text: text[start..end].to_string(),
+                start,
+                end,
+                score: 0.70,
+                label: "PERSON".to_string(),
+            });
+        }
+        spans
+    }
+
     fn detect_title_patterns(&self, text: &str) -> Vec<NerSpan> {
         let mut spans = Vec::new();
 
@@ -616,10 +836,12 @@ impl HeuristicNerDetector {
 impl NerDetector for HeuristicNerDetector {
     fn detect_persons(&self, text: &str) -> Vec<NerSpan> {
         let mut spans = self.detect_title_patterns(text);
+        let introduced_spans = self.detect_introduced_lowercase_surnames(text);
         let dict_spans = self.detect_dictionary_patterns(text);
 
-        // Merge, keeping non-overlapping spans (title patterns take priority)
-        for ds in dict_spans {
+        // Explicitly introduced full names precede dictionary-only first names;
+        // title patterns retain their existing priority.
+        for ds in introduced_spans.into_iter().chain(dict_spans) {
             let overlaps = spans.iter().any(|s| ds.start < s.end && ds.end > s.start);
             if !overlaps {
                 spans.push(ds);
@@ -633,6 +855,111 @@ impl NerDetector for HeuristicNerDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn introduced_lowercase_surnames_keep_exact_unicode_and_punctuation_spans() {
+        let det = HeuristicNerDetector::new();
+        for (input, expected) in [
+            ("Hello my name is Avery quill", "Avery quill"),
+            ("MY NAME IS Avery quill and I need help.", "Avery quill"),
+            ("🧪 My name is Avery\tquill-reed.", "Avery\tquill-reed"),
+            ("My name is Avery o'neill, thanks.", "Avery o'neill"),
+            ("Je m’appelle Avéry d’arc.", "Avéry d’arc"),
+            ("Mon nom est Avéry réed.", "Avéry réed"),
+            ("Je m'appelle Avery quill.", "Avery quill"),
+            ("My name is “Avery quill”.", "Avery quill"),
+            ("My name is AVERY quill.", "AVERY quill"),
+            (
+                "My name is Ave\u{301}ry re\u{301}ed.",
+                "Ave\u{301}ry re\u{301}ed",
+            ),
+        ] {
+            let spans = det.detect_persons(input);
+            assert_eq!(spans.len(), 1, "{input:?}: {spans:?}");
+            assert_eq!(spans[0].text, expected, "{input:?}");
+            assert_eq!(&input[spans[0].start..spans[0].end], expected);
+            assert_eq!(spans[0].score, 0.70);
+        }
+    }
+
+    #[test]
+    fn introduced_surnames_do_not_consume_common_prose_or_cross_boundaries() {
+        let det = HeuristicNerDetector::new();
+        for input in [
+            "Avery and the server returned an error.",
+            "My name is Avery and the server returned an error.",
+            "My name is Avery here is the debug log.",
+            "My name is Avery works on this project.",
+            "My name is Avery speaking about the issue.",
+            "My name is Avery nice to meet you.",
+            "My name is Avery help me debug this error.",
+            "My name is Avery please help with this long sentence about debugging.",
+            "Je m'appelle Avery et je travaille ici.",
+            "My name is Avery. quill",
+            "My name is Avery, quill",
+            "My name is Avery\nquill",
+            "My name is\nAvery quill",
+            "My name is avery quill",
+            "The file name is Avery quill",
+            "My name is Avery quill@example.com",
+            "My name is Avery quill123",
+            "My name is Avery quill--reed",
+            "My name is Avery quill-",
+            "The server is running at full capacity.",
+        ] {
+            assert!(
+                det.detect_introduced_lowercase_surnames(input).is_empty(),
+                "unexpected introduced name: {input:?}"
+            );
+        }
+        let input = format!("My name is Avery {}", "q".repeat(65));
+        assert!(det.detect_introduced_lowercase_surnames(&input).is_empty());
+    }
+
+    #[test]
+    fn introduced_lowercase_surname_takes_priority_over_dictionary_first_name() {
+        let det = HeuristicNerDetector::new();
+        for surname in ["quill", "Quill", "QUILL"] {
+            let expected = format!("Jordan {surname}");
+            let input = format!("Hello my name is {expected} and I need help.");
+            let spans = det.detect_persons(&input);
+            assert_eq!(spans.len(), 1, "{input:?}: {spans:?}");
+            assert_eq!(spans[0].text, expected);
+        }
+        for input in [
+            "Hello my name is Jordan and I need help.",
+            "Hello my name is Jordan speaking about a long support request.",
+        ] {
+            let spans = det.detect_persons(input);
+            assert_eq!(spans.len(), 1, "{input:?}: {spans:?}");
+            assert_eq!(spans[0].text, "Jordan");
+        }
+    }
+
+    #[test]
+    fn introduced_lowercase_surname_roundtrips_without_swallowing_prose() {
+        for (input, expected) in [
+            (
+                "Hello my name is Avery quill and I need help with this error.",
+                "Avery quill",
+            ),
+            (
+                "🧪 Je m’appelle Avéry d’arc. Please inspect this log.",
+                "Avéry d’arc",
+            ),
+        ] {
+            let mut anonymizer = crate::detection::Anonymizer::new(0.5);
+            anonymizer.set_ner_detector(Box::new(HeuristicNerDetector::new()));
+            let (output, detections) = anonymizer.anonymize_text(input);
+            assert_eq!(detections.len(), 1, "{input:?}: {detections:?}");
+            assert_eq!(detections[0].original, expected);
+            assert_eq!(&input[detections[0].start..detections[0].end], expected);
+            assert_eq!(anonymizer.mapping.restore_bracketed(&output), input);
+            assert!(!output.contains(expected));
+            let token_end = output.find(']').unwrap() + 1;
+            assert_eq!(&output[token_end..], &input[detections[0].end..]);
+        }
+    }
 
     #[test]
     fn test_title_french_m() {

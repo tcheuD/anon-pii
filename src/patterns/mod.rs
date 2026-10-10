@@ -10,6 +10,7 @@
 //!
 //! The master `PATTERNS` constant aggregates all patterns in a single slice.
 
+mod address;
 mod au;
 mod aviation;
 mod es;
@@ -67,6 +68,7 @@ pub const CONTEXT_SCORE_BOOST: f64 = 0.15;
 pub const MAX_INPUT_SIZE: u64 = 50 * 1024 * 1024;
 
 // Import category patterns
+use address::ADDRESS_PATTERNS;
 use au::AU_PATTERNS;
 use aviation::AVIATION_PATTERNS;
 use es::ES_PATTERNS;
@@ -94,6 +96,7 @@ pub const PATTERNS: &[PiiPattern] = &{
     // Use const array concatenation to build the master PATTERNS array.
     // This preserves the &[PiiPattern] type and zero runtime cost.
     const TOTAL_LEN: usize = GLOBAL_PATTERNS.len()
+        + ADDRESS_PATTERNS.len()
         + FRENCH_PATTERNS.len()
         + AVIATION_PATTERNS.len()
         + US_PATTERNS.len()
@@ -148,6 +151,14 @@ pub const PATTERNS: &[PiiPattern] = &{
                 context_keywords: FRENCH_PATTERNS[j].context_keywords,
                 context_required: FRENCH_PATTERNS[j].context_required,
             };
+            i += 1;
+            j += 1;
+        }
+
+        // Postal addresses
+        j = 0;
+        while j < ADDRESS_PATTERNS.len() {
+            result[i] = ADDRESS_PATTERNS[j];
             i += 1;
             j += 1;
         }
@@ -376,10 +387,10 @@ mod tests {
 
     #[test]
     fn test_patterns_count() {
-        // Current count: 100 patterns. Update this if patterns are added/removed.
+        // Current count: 101 patterns. Update this if patterns are added/removed.
         assert_eq!(
             PATTERNS.len(),
-            100,
+            101,
             "PATTERNS count changed - update this test if intentional"
         );
     }
@@ -388,10 +399,10 @@ mod tests {
     fn test_entity_types_count() {
         use std::collections::HashSet;
         let entity_types: HashSet<&str> = PATTERNS.iter().map(|p| p.entity_type).collect();
-        // Current count: 63 unique entity types
+        // Current count: 64 unique entity types
         assert_eq!(
             entity_types.len(),
-            63,
+            64,
             "Entity type count changed - update this test if intentional"
         );
     }
@@ -418,6 +429,7 @@ mod tests {
             "ES_NIF",
             "FI_PERSONAL_IDENTITY_CODE",
             "FLIGHT_NUMBER",
+            "FR_ADDRESS",
             "FR_IBAN",
             "FR_PASSPORT",
             "FR_PHONE_NUMBER",

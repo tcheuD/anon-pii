@@ -68,6 +68,13 @@ jobs:
           cargo test --locked --test quality_workflows
           cargo run --locked --example quality_report -- --check
 
+      - name: Test published browser workspace
+        env:
+          CHROMIUM_PATH: /usr/bin/google-chrome
+        run: |
+          npm install --prefix "$RUNNER_TEMP/anon-pii-browser-test" --no-save --ignore-scripts playwright@1.62.1
+          NODE_PATH="$RUNNER_TEMP/anon-pii-browser-test/node_modules" node scripts/test-ticket-workspace.mjs
+
       - name: Verify crate package
         run: cargo package --locked
 

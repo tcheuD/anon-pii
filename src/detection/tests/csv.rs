@@ -96,3 +96,115 @@ fn test_malformed_csv_is_not_reconstructed() {
     assert!(dets.is_empty());
     assert_eq!(result, csv);
 }
+
+fn csv_quote_spanning_anonymizer() -> Anonymizer {
+    let mut anonymizer = Anonymizer::new(0.5);
+    anonymizer.patterns = vec![CompiledPattern {
+        name: Cow::Borrowed("csv_quote_fixture"),
+        entity_type: Cow::Borrowed("CSV_FIXTURE"),
+        regex: Regex::new(r#"debug"owner"#).unwrap(),
+        score: 1.0,
+        context_keywords: Cow::Borrowed(&[]),
+        context_required: false,
+    }];
+    anonymizer
+}
+
+#[test]
+fn csv_quote_spanning_tokens_preserve_structure_and_distinct_raw_mapping() {
+    for csv in [
+        "id,note\r\n1,\"prefix debug\"\"owner, ok\r\nnext line\"\r\n",
+        "id,note\n1,\"debug\"\"owner\"\n2,\"debug\"\"owner\"\n",
+        "id,note\n1,\"said \"\"debug\"\"owner\"\" today\"\n",
+    ] {
+        let mut anonymizer = csv_quote_spanning_anonymizer();
+        let plain = "debug\"owner";
+        let (plain_output, _) = anonymizer.anonymize_text(plain);
+        let (output, detections) = anonymizer.anonymize_csv(csv);
+        assert!(!detections.is_empty());
+        assert!(detections.iter().all(|d| d.original == "debug\"\"owner"));
+        let parsed = parse_csv_document(&output).expect("anonymized CSV must remain valid");
+        assert_eq!(
+            parsed.records.len(),
+            parse_csv_document(csv).unwrap().records.len()
+        );
+        assert!(parsed.records.iter().all(|record| record.fields.len() == 2));
+        assert_eq!(anonymizer.mapping.mappings.len(), 2);
+        assert_eq!(anonymizer.mapping.restore_bracketed(&output), csv);
+        assert_eq!(anonymizer.mapping.restore_bracketed(&plain_output), plain);
+    }
+}
+
+#[test]
+fn csv_quote_provenance_composes_with_normalized_detection() {
+    for raw_field in [
+        r#"Préfixe 🏡 ｄebug""owner suffixe"#,
+        r"debug%22owner",
+        r"debug\u0022owner",
+    ] {
+        let csv = format!("id,note\n1,\"{raw_field}\"\n");
+        let mut anonymizer = csv_quote_spanning_anonymizer();
+        let (output, detections) = anonymizer.anonymize_csv(&csv);
+        assert_eq!(detections.len(), 1, "input: {csv}");
+        let detection = &detections[0];
+        assert_eq!(
+            &raw_field[detection.start..detection.end],
+            detection.original
+        );
+        assert!(parse_csv_document(&output).is_some());
+        assert_eq!(anonymizer.mapping.restore_bracketed(&output), csv);
+    }
+}
+
+#[test]
+fn csv_ner_sees_decoded_quotes_and_restores_their_source_spelling() {
+    struct QuotedNameDetector;
+    impl NerDetector for QuotedNameDetector {
+        fn detect_persons(&self, text: &str) -> Vec<NerSpan> {
+            let name = "Avery \"Orbit\" Vale";
+            let Some(start) = text.find(name) else {
+                return Vec::new();
+            };
+            vec![NerSpan {
+                text: name.to_string(),
+                start,
+                end: start + name.len(),
+                score: 0.9,
+                label: "PERSON".to_string(),
+            }]
+        }
+    }
+
+    let csv = "id,note\r\n1,\"Met Avery \"\"Orbit\"\" Vale yesterday\"\r\n";
+    let mut anonymizer = Anonymizer::new(0.5);
+    anonymizer.set_ner_detector(Box::new(QuotedNameDetector));
+    let (output, detections) = anonymizer.anonymize_csv(csv);
+    assert!(detections.iter().any(|detection| {
+        detection.entity_type == "PERSON" && detection.original == "Avery \"\"Orbit\"\" Vale"
+    }));
+    assert!(!output.contains("Orbit"));
+    assert!(parse_csv_document(&output).is_some());
+    assert_eq!(anonymizer.mapping.restore_bracketed(&output), csv);
+}
+
+#[test]
+fn csv_non_token_operators_keep_decoded_value_semantics() {
+    let csv = "id,note\n1,\"debug\"\"owner\"\n";
+    let mut keep = csv_quote_spanning_anonymizer();
+    keep.operator = Operator::Keep;
+    let (output, detections) = keep.anonymize_csv(csv);
+    assert_eq!(output, csv);
+    assert_eq!(detections[0].original, "debug\"owner");
+    assert!(keep.mapping.mappings.is_empty());
+
+    let mut custom = csv_quote_spanning_anonymizer();
+    custom.operator = Operator::Custom;
+    custom.replace_with = Some("redacted \"value\"".to_string());
+    let (output, _) = custom.anonymize_csv(csv);
+    let parsed = parse_csv_document(&output).expect("custom quote replacement must be escaped");
+    assert_eq!(
+        parsed.records[1].fields[1].value(&output),
+        "redacted \"value\""
+    );
+    assert!(custom.mapping.mappings.is_empty());
+}

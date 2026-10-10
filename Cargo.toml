@@ -1,9 +1,9 @@
 [package]
 name = "anon-pii"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Local reversible PII roundtrips for AI-assisted debugging"
+description = "Local reversible PII roundtrips for support tickets and AI debugging"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/tcheuD/anon-pii"
@@ -32,9 +32,11 @@ include = [
     "/scripts/release-preflight.sh",
     "/scripts/release-smoke.py",
     "/scripts/build-wasm.sh",
+    "/scripts/test-ticket-workspace.mjs",
     "/demo/README.md",
     "/demo/record.sh",
     "/demo/hero.tape",
+    "/demo/ticket-reply.py",
     "/demo/samples/**",
 ]
 

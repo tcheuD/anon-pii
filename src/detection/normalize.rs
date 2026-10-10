@@ -320,6 +320,34 @@ impl<'a> NormalizedText<'a> {
     }
 }
 
+/// Format-decoded input for all detector passes, including NER. This view
+/// removes only format escapes; ordinary text normalization remains a separate
+/// stage. Final detections project back to the original field or literal.
+pub(super) struct DecodedSourceText<'a>(MappedText<'a>);
+
+impl<'a> DecodedSourceText<'a> {
+    pub(super) fn sql_literal(raw: &'a str, backslash_escapes: bool) -> Self {
+        let finder = if backslash_escapes {
+            find_sql_e_string_escape
+        } else {
+            find_sql_standard_escape
+        };
+        Self(MappedText::identity(raw).decode_with(finder))
+    }
+
+    pub(super) fn csv_field(raw: &'a str) -> Self {
+        Self(MappedText::identity(raw).decode_with(find_csv_quote_escape))
+    }
+
+    pub(super) fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    pub(super) fn project_range(&self, range: Range<usize>) -> Option<Range<usize>> {
+        self.0.project_range(range)
+    }
+}
+
 /// Newline-collapsed matching text with compact offsets back to the normalized
 /// detection view.
 pub(super) struct CollapsedText(MappedText<'static>);
@@ -372,6 +400,33 @@ fn find_percent_escape(input: &str, from: usize) -> Option<(Range<usize>, char)>
             }
         }
         index += 1;
+    }
+    None
+}
+
+fn find_sql_standard_escape(input: &str, from: usize) -> Option<EscapeMatch> {
+    find_sql_escape(input, from, false)
+}
+
+fn find_csv_quote_escape(input: &str, from: usize) -> Option<EscapeMatch> {
+    let start = from + input[from..].find("\"\"")?;
+    Some((start..start + 2, '"'))
+}
+
+fn find_sql_e_string_escape(input: &str, from: usize) -> Option<EscapeMatch> {
+    find_sql_escape(input, from, true)
+}
+
+fn find_sql_escape(input: &str, from: usize, backslash_escapes: bool) -> Option<EscapeMatch> {
+    let bytes = input.as_bytes();
+    for index in from..bytes.len().saturating_sub(1) {
+        if (bytes[index] == b'\'' && bytes[index + 1] == b'\'')
+            || (backslash_escapes
+                && bytes[index] == b'\\'
+                && matches!(bytes[index + 1], b'\'' | b'\\'))
+        {
+            return Some((index..index + 2, char::from(bytes[index + 1])));
+        }
     }
     None
 }

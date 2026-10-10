@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>anon-pii — redact PII before it reaches the model</title>
-<meta name="description" content="A Rust CLI that tokenizes recognized PII locally before an LLM call, keeps the reversible mapping on your machine, and restores recognized values in the reply.">
+<title>anon-pii — prepare support tickets for AI, restore the reply</title>
+<meta name="description" content="Prepare support tickets locally in your browser or CLI. Review recognized PII replaced with tokens, then restore the original references in an AI reply using the ticket's local mapping.">
 <style>
 :root{
   --paper:#F6F5F1;
   --ink:#141414;
-  --dim:#767570;
+  --dim:#6B6A65;
   --rule:#D8D6CE;
   --red:#D42A1C;
   --panel:#FBFAF7;
@@ -29,6 +29,7 @@ a:hover{color:var(--red)}
 
 .wrap{max-width:1120px;margin:0 auto;padding:0 40px}
 .grid{display:grid;grid-template-columns:160px 1fr;gap:40px}
+.grid>div{min-width:0}
 .meta{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.5;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding-top:5px}
 .meta .red{color:var(--red)}
 
@@ -70,10 +71,20 @@ h2{font-weight:700;font-size:clamp(26px,3.4vw,38px);line-height:1.04;letter-spac
 .play textarea{width:100%;background:var(--panel);color:var(--ink);border:1px solid var(--ink);
   padding:14px;font:400 13.5px/1.7 ui-monospace,Menlo,monospace;min-height:86px;resize:vertical}
 .play textarea:focus{outline:none;border-color:var(--red)}
-.play .out{margin-top:0;border:1px solid var(--ink);border-top:none;background:var(--panel);
-  padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:13.5px;line-height:2.05;min-height:56px}
-.chip{background:var(--ink);color:var(--paper);padding:1px 6px;cursor:pointer;white-space:nowrap;transition:.14s}
-.chip.lift{background:transparent;color:var(--red);text-decoration:underline}
+.ticket-grid{display:grid;grid-template-columns:1fr 1fr;gap:26px 18px;margin-top:24px}
+.ticket-field{min-width:0}
+.ticket-field label{display:block;font-weight:600;font-size:15px;margin-bottom:8px}
+.ticket-field textarea{display:block;min-height:190px}
+.ticket-field textarea:disabled{opacity:.65}
+.ticket-field .help{font-size:13px;color:var(--dim);line-height:1.5;margin:8px 0;min-height:40px}
+.ticket-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.play button{font:500 12px/1.5 ui-monospace,Menlo,monospace;cursor:pointer;padding:9px 12px;border:1px solid var(--ink);background:var(--ink);color:var(--paper)}
+.play button.secondary{background:transparent;color:var(--ink)}
+.play button:hover:not(:disabled){border-color:var(--red);background:var(--red);color:var(--paper)}
+.play button:disabled{opacity:.4;cursor:not-allowed}
+.ticket-status{margin-top:20px;padding:12px 14px;border-left:2px solid var(--red);font-size:14px;min-height:46px;background:var(--panel)}
+.ticket-engine{font:12px/1.6 ui-monospace,Menlo,monospace;color:var(--dim)}
+.copy-feedback{font-size:12px;margin-left:8px;color:var(--red)}
 .play .note{margin-top:20px;font-size:14px;line-height:1.55;color:var(--dim);max-width:56ch}
 .play .note b{color:var(--ink);font-weight:500}
 
@@ -98,6 +109,8 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
   .grid,.reason{grid-template-columns:1fr;gap:14px}
   .meta{padding-top:0}
   .hero{padding-top:48px}
+  .ticket-grid{grid-template-columns:1fr}
+  nav{gap:12px;font-size:11px}
 }
 @media(prefers-reduced-motion:reduce){.caret{animation:none}}
 </style>
@@ -118,17 +131,17 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
 <main>
   <div class="wrap hero">
     <div class="grid">
-      <div class="meta">Rust · MIT<br>v0.2.0<br><span class="red">local only</span></div>
+      <div class="meta">Rust · MIT<br>v0.3.0<br><span class="red">local only</span></div>
       <div>
-        <p class="eyebrow">Reversible redaction for LLM workflows</p>
-        <h1>Hand the model the <span class="redact" data-real="evidence" tabindex="0">[REDACTED]</span>. Keep the <span class="redact" data-real="names" tabindex="0">[REDACTED]</span>.</h1>
-        <p class="sub">anon-pii tokenizes recognized values on the way out and <b>lifts the redaction</b> in the reply. Pattern detection can miss sensitive data, so review the result before sharing it.</p>
-        <p class="hint">↗ that is what the model sees — click a bar to see what you keep</p>
+        <p class="eyebrow">Local support-ticket preparation</p>
+        <h1>Prepare tickets. Restore <span class="redact" data-real="references" tabindex="0">[REDACTED]</span>.</h1>
+        <p class="sub">Tokenize recognized names, addresses, and credentials before sharing a support ticket. <b>Restore the originals</b> in the reply. Detection can miss values; review before sharing.</p>
+        <p class="hint">↗ click the bar to see what a local mapping gives back</p>
       </div>
     </div>
 
     <div class="exhibit" aria-label="worked example">
-      <div class="bar"><span>error.log</span><span id="tabnote">piping to claude…</span></div>
+      <div class="bar"><span>CLI example · error.log</span><span id="tabnote">illustrated roundtrip</span></div>
       <div class="body" id="exhibit"><span class="caret"></span></div>
     </div>
   </div>
@@ -137,11 +150,43 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
     <div class="wrap grid">
       <div class="meta">Fig. 01<br><span class="red">Real engine</span><br>WASM</div>
       <div class="play">
-        <h2>Redact something of your own.</h2>
-        <p class="lede">Try a fictional line with an email, an IP, a card, or a French phone number. The engine processes it locally in your browser.</p>
-        <textarea id="in" spellcheck="false" aria-label="text to redact">Payment failed for avery@example.invalid from 192.0.2.20, card 4111 1111 1111 1111, callback +33 6 12 34 56 78</textarea>
-        <div class="out" id="out" aria-live="polite"></div>
-        <p class="note" id="engnote"><b>Nothing you type is sent anywhere.</b> This is not a demo mock: it is the actual Rust engine, compiled to WebAssembly, running in your browser — <span id="engstats" class="mono">loading engine…</span>. Click a bar to lift it; the lift calls the engine's real <span class="mono">restore</span> against the session mapping. That mapping stays in this page's memory while it is open; reload to start a fresh engine session.</p>
+        <h2>Prepare a ticket. Restore the reply.</h2>
+        <p class="lede">Turn a support ticket into text you can review before sharing with an AI tool. Paste its reply here to restore this ticket's known tokens. No account or AI connection needed.</p>
+        <p class="ticket-engine" id="engstats" role="status">Loading the local engine…</p>
+        <div class="ticket-actions">
+          <button type="button" class="secondary" id="load-example">Load fictional example</button>
+          <button type="button" class="secondary" id="clear-session">Clear session</button>
+        </div>
+        <div class="ticket-grid">
+          <div class="ticket-field">
+            <label for="ticket-source">1 · Original ticket</label>
+            <textarea id="ticket-source" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="source-help" placeholder="Paste a ticket, or load the fictional example."></textarea>
+            <p class="help" id="source-help">Editing the ticket clears its prepared text, reply, and mapping. Prepare it again before copying.</p>
+            <button type="button" id="prepare-ticket" disabled>Prepare ticket</button>
+          </div>
+          <div class="ticket-field">
+            <label for="ticket-prepared">2 · Tokenized ticket</label>
+            <textarea id="ticket-prepared" readonly spellcheck="false" autocomplete="off" aria-describedby="prepared-help" placeholder="Prepared text appears here. Review it for missed sensitive values."></textarea>
+            <p class="help" id="prepared-help">Detection can miss values. Review before copying to an AI tool. Keep the bracketed tokens unchanged.</p>
+            <button type="button" id="copy-ticket" disabled>Copy tokenized ticket</button><span class="copy-feedback" id="copy-ticket-feedback"></span>
+          </div>
+          <div class="ticket-field">
+            <label for="ticket-reply">3 · AI reply with tokens</label>
+            <textarea id="ticket-reply" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="reply-help" disabled placeholder="Paste the AI reply here, with its bracketed tokens intact."></textarea>
+            <p class="help" id="reply-help">Try it without an AI: paste the tokenized ticket here and restore it. Only tokens from the current ticket can be restored.</p>
+            <button type="button" id="restore-reply" disabled>Restore reply</button>
+          </div>
+          <div class="ticket-field">
+            <label for="ticket-restored">4 · Restored reply</label>
+            <textarea id="ticket-restored" readonly spellcheck="false" autocomplete="off" aria-describedby="restored-help" placeholder="Restored text appears here, including original sensitive values."></textarea>
+            <p class="help" id="restored-help">Original values are visible here. Unknown or changed tokens stay unchanged. Check the reply before using it.</p>
+            <button type="button" id="copy-reply" disabled>Copy restored reply</button><span class="copy-feedback" id="copy-reply-feedback"></span>
+          </div>
+        </div>
+        <p class="ticket-status" id="ticket-status" role="status" aria-live="polite" aria-atomic="true">Enter a ticket or load the fictional example to begin.</p>
+        <p class="note"><b>Ticket text is processed in this page.</b> The Rust engine runs locally through WebAssembly; this workspace does not send your text to an AI service or save it in browser storage. Heuristic name detection is enabled and can miss names or mark ordinary words. Always review the prepared text.</p>
+        <p class="note">The mapping belongs to one prepared ticket and stays in this page's memory. <b>Clear session</b>, leaving, or reloading the page clears the workspace. Copies already on your clipboard or in another app are outside this session. <a href="https://github.com/tcheuD/anon-pii/blob/main/docs/support-ticket.md" style="border-bottom:1px solid var(--red)">Read the support-ticket guide ↗</a></p>
+        <noscript><p class="ticket-status">This local workspace needs JavaScript and WebAssembly. You can also use the CLI installation below.</p></noscript>
       </div>
     </div>
   </section>
@@ -150,11 +195,11 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
     <div class="wrap grid">
       <div class="meta">The case<br>Four points</div>
       <div>
-        <h2>Why not just sed it out.</h2>
-        <p class="lede">Because a black marker is permanent, and four of these are things a regex in your shell history will not give you.</p>
+        <h2>Keep the ticket reversible.</h2>
+        <p class="lede">Prepare a ticket in your browser or use the CLI in your debugging workflow. Keep the original references available for the reply.</p>
         <div class="reasons">
-          <div class="reason"><span class="idx">01</span><div><h3>One owned roundtrip</h3><p><span class="mono">anon-pii run</span> sends tokens to one child process and restores known tokens from stdout. That invocation's mapping stays in memory.</p></div></div>
-          <div class="reason"><span class="idx">02</span><div><h3>One native CLI</h3><p>The default path needs no Python environment, Docker container, long-running service, or ML runtime.</p></div></div>
+          <div class="reason"><span class="idx">01</span><div><h3>One ticket, one mapping</h3><p>The browser workspace holds one prepared ticket's mapping in memory. <span class="mono">anon-pii run</span> does the same for one child process, restoring known tokens from stdout.</p></div></div>
+          <div class="reason"><span class="idx">02</span><div><h3>Browser or native CLI</h3><p>Start in your browser with no account or AI key. For terminal workflows, the default CLI needs no Python environment, Docker container, long-running service, or ML runtime.</p></div></div>
           <div class="reason"><span class="idx">03</span><div><h3>Validation where formats allow it</h3><p>Checksum-backed identifiers use validators such as Luhn and IBAN mod-97; ambiguous patterns use context. Neither removes false positives or false negatives.</p></div></div>
           <div class="reason"><span class="idx">04</span><div><h3>A versioned quality contract</h3><p>Synthetic positive, negative, normalization and structured-format cases run in CI. Claims stay tied to a corpus and revision instead of a blanket accuracy ranking.</p></div></div>
         </div>
@@ -164,14 +209,14 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
 
   <section id="install">
     <div class="wrap grid">
-      <div class="meta">Start here<br>v0.2.0</div>
+      <div class="meta">Start here<br>v0.3.0</div>
       <div>
         <h2>Install. Preview. Roundtrip.</h2>
         <p class="lede">Choose your platform below. The first roundtrip runs locally with <span class="mono">cat</span>; no AI tool or API key needed.</p>
-        <p class="hint">Download <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/SHA256SUMS">SHA256SUMS</a> and compare your archive's SHA-256 digest with its matching entry before extracting. Use <span class="mono">sha256sum</span> on Linux or <span class="mono">shasum -a 256</span> on macOS.</p>
-        <div class="cmd"><div class="lbl">Linux x86_64 (glibc) · <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/anon-pii-linux-x86_64.tar.gz">Download archive ↗</a></div><pre>tar -xzf anon-pii-linux-x86_64.tar.gz</pre></div>
-        <div class="cmd"><div class="lbl">macOS Apple Silicon · <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/anon-pii-macos-aarch64.tar.gz">Download archive ↗</a></div><pre>tar -xzf anon-pii-macos-aarch64.tar.gz</pre></div>
-        <div class="cmd"><div class="lbl">macOS Intel · <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/anon-pii-macos-x86_64.tar.gz">Download archive ↗</a></div><pre>tar -xzf anon-pii-macos-x86_64.tar.gz</pre></div>
+        <p class="hint">Download <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.3.0/SHA256SUMS">SHA256SUMS</a> and compare your archive's SHA-256 digest with its matching entry before extracting. Use <span class="mono">sha256sum</span> on Linux or <span class="mono">shasum -a 256</span> on macOS.</p>
+        <div class="cmd"><div class="lbl">Linux x86_64 (glibc) · <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.3.0/anon-pii-linux-x86_64.tar.gz">Download archive ↗</a></div><pre>tar -xzf anon-pii-linux-x86_64.tar.gz</pre></div>
+        <div class="cmd"><div class="lbl">macOS Apple Silicon · <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.3.0/anon-pii-macos-aarch64.tar.gz">Download archive ↗</a></div><pre>tar -xzf anon-pii-macos-aarch64.tar.gz</pre></div>
+        <div class="cmd"><div class="lbl">macOS Intel · <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.3.0/anon-pii-macos-x86_64.tar.gz">Download archive ↗</a></div><pre>tar -xzf anon-pii-macos-x86_64.tar.gz</pre></div>
         <div class="cmd"><div class="lbl">Install the extracted binary for your user</div><pre>mkdir -p "$HOME/.local/bin"
 install -m 755 anon-pii "$HOME/.local/bin/anon-pii"
 export PATH="$HOME/.local/bin:$PATH"
@@ -197,7 +242,7 @@ cargo install --locked --path .</pre></div>
 <footer>
   <div class="wrap">
     <span>anon-pii · MIT · <a href="https://github.com/tcheuD/anon-pii/releases" style="border-bottom:1px solid var(--red)">releases</a></span>
-    <span>recognized values tokenized locally · v0.2.0</span>
+    <span>recognized values tokenized locally · v0.3.0</span>
   </div>
 </footer>
 
@@ -226,35 +271,8 @@ async function run(){
 }
 run();
 
-const inEl=document.getElementById('in'),outEl=document.getElementById('out');
-const esc=t=>t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
-let engine=null;
-function render(){
- if(!engine){outEl.innerHTML='<span class="step">loading engine…</span>';return}
- const res=JSON.parse(engine.anonymize(inEl.value));
- const html=esc(res.output).replace(/\[([A-Z0-9_]+_[a-f0-9]{8})\]/g,
-   (m,tok)=>`<span class="chip" tabindex="0" data-tok="${m}">${m}</span>`);
- outEl.innerHTML=html||'<span class="step">redacted output appears here</span>';
- outEl.querySelectorAll('.chip').forEach(c=>{
-   const lift=()=>{
-     if(c.classList.contains('lift')){c.textContent=c.dataset.tok;c.classList.remove('lift')}
-     else{c.textContent=engine.restore(c.dataset.tok);c.classList.add('lift')}
-   };
-   c.addEventListener('click',lift);
-   c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();lift()}});
- });
-}
-inEl.addEventListener('input',render);render();
-import('./playground/pkg/anon_pii.js').then(async m=>{
-  await m.default();
-  engine=new m.Engine();
-  const st=document.getElementById('engstats');
-  if(st)st.textContent=`${m.entity_type_count()} entity types · ${m.pattern_count()} patterns · 0 network calls`;
-  render();
-}).catch(e=>{
-  const st=document.getElementById('engstats');
-  if(st)st.textContent='engine failed to load — your browser may not support WebAssembly modules';
-});
+import { mountTicketWorkspace } from './playground/ticket-workspace.js';
+mountTicketWorkspace();
 </script>
 </body>
 </html>

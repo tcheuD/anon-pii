@@ -56,6 +56,39 @@ fn run_anonymizes_child_stdin_restores_stdout_and_writes_no_mapping() {
     assert!(!default_map.exists());
 }
 
+#[cfg(feature = "ner-lite")]
+#[test]
+fn support_ticket_starter_hides_four_values_and_restores_reply_references() {
+    let home = tempfile::tempdir().unwrap();
+    let input = include_bytes!("../demo/samples/support-ticket-fr.txt");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("demo/ticket-reply.py");
+    let output = run_with_input(
+        home.path(),
+        &["--ner", "run", "--", "python3", script.to_str().unwrap()],
+        input,
+    );
+    let child_saw = String::from_utf8(output.stderr).unwrap();
+    assert!(output.status.success(), "{child_saw}");
+    for original in [
+        "Camille verneuil",
+        "camille.verneuil@example.invalid",
+        "24 rue des Nuages 75016 ville-exemple",
+        "ZGVidWc6ZXhhbXBsZS1wYXNzd29yZA==",
+    ] {
+        assert!(!child_saw.contains(original), "child received {original}");
+    }
+    for entity in ["PERSON", "EMAIL_ADDRESS", "FR_ADDRESS", "AUTH_TOKEN"] {
+        assert!(child_saw.contains(&format!("[{entity}_")), "{child_saw}");
+    }
+    assert!(child_saw.contains("CASE-2042"));
+    let reply = String::from_utf8(output.stdout).unwrap();
+    assert!(reply.contains("For Camille verneuil, contact camille.verneuil@example.invalid."));
+    assert!(reply.contains("Confirm the delivery address: 24 rue des Nuages 75016 ville-exemple."));
+    assert!(reply.contains("compare the request IDs and retry timestamps"));
+    assert!(!reply.contains("ZGVidWc6ZXhhbXBsZS1wYXNzd29yZA=="));
+    assert!(!home.path().join(".anon-pii/mapping.json").exists());
+}
+
 #[test]
 fn run_preserves_child_stderr_and_nonzero_exit_status() {
     let home = tempfile::tempdir().unwrap();
