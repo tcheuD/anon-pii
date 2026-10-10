@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 
+use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use regex::Regex;
 
 use super::Anonymizer;
@@ -11,13 +13,25 @@ use super::operators::{apply_custom_replacement, apply_encrypt, apply_hash, appl
 use super::types::{Detection, Operator};
 use crate::ner::PERSON_BLOCKLIST;
 use crate::patterns::{
-    CREW_CODE_BLOCKLIST, iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn,
-    valid_au_medicare, valid_au_tfn, valid_calendar_date, valid_card_prefix, valid_es_nie,
-    valid_es_nif, valid_fi_identity_code, valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code,
-    valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin,
-    valid_si_emso, valid_si_tax_number, valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin,
-    valid_us_ssn,
+    BASIC_AUTH_PATTERN, CREW_CODE_BLOCKLIST, iban_mod97, luhn_check, valid_aba_routing,
+    valid_au_abn, valid_au_acn, valid_au_medicare, valid_au_tfn, valid_calendar_date,
+    valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code, valid_in_aadhaar,
+    valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn, valid_kr_rrn, valid_mac,
+    valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number, valid_th_tnin,
+    valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn,
 };
+
+fn basic_auth_value_start(candidate: &str) -> Option<usize> {
+    let start = candidate.rfind([' ', '\t'])? + 1;
+    let value = &candidate[start..];
+    let decoded = STANDARD
+        .decode(value)
+        .or_else(|_| STANDARD_NO_PAD.decode(value))
+        .ok()?;
+    // RFC 7617 permits empty components and non-ASCII octets, but requires a
+    // colon separator and forbids control characters in the user/password.
+    (decoded.contains(&b':') && !decoded.iter().any(u8::is_ascii_control)).then_some(start)
+}
 
 fn has_valid_iban_checksum(entity_type: &str, value: &str) -> bool {
     !matches!(entity_type, "IBAN_CODE" | "FR_IBAN") || iban_mod97(value)
@@ -96,6 +110,15 @@ impl Anonymizer {
             }
 
             for mat in pat.regex.find_iter(text) {
+                let range = if pat.name == "basic_auth" && pat.regex.as_str() == BASIC_AUTH_PATTERN
+                {
+                    let Some(value_start) = basic_auth_value_start(mat.as_str()) else {
+                        continue;
+                    };
+                    mat.start() + value_start..mat.end()
+                } else {
+                    mat.range()
+                };
                 // Check context presence
                 let has_ctx = if !pat.context_keywords.is_empty() {
                     self.has_context(text, mat.start(), mat.end(), &pat.context_keywords)
@@ -144,7 +167,7 @@ impl Anonymizer {
                 }
 
                 let raw_range = normalized
-                    .project_range(mat.start()..mat.end())
+                    .project_range(range)
                     .expect("regex match must project to a raw UTF-8 span");
                 detections.push(Detection {
                     entity_type: pat.entity_type.clone(),

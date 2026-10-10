@@ -29,6 +29,7 @@ mod us;
 pub mod validators;
 
 pub use aviation::CREW_CODE_BLOCKLIST;
+pub(crate) use secrets::BASIC_AUTH_PATTERN;
 pub use validators::{
     iban_mod97, luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare,
     valid_au_tfn, valid_calendar_date, valid_card_prefix, valid_es_nie, valid_es_nif,

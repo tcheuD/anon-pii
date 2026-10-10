@@ -28,11 +28,14 @@ fn run_anonymizes_child_stdin_restores_stdout_and_writes_no_mapping() {
     let home = tempfile::tempdir().unwrap();
     let child_input = home.path().join("child-input.txt");
     let child_input_arg = child_input.to_str().unwrap();
+    // Base64 of debug:example-password, a synthetic credential.
+    let input =
+        b"Contact john@example.com\nAuthorization: Basic ZGVidWc6ZXhhbXBsZS1wYXNzd29yZA==\n";
 
     let output = run_with_input(
         home.path(),
         &["run", "--", "sh", "-c", "tee \"$1\"", "_", child_input_arg],
-        b"Contact john@example.com\n",
+        input,
     );
 
     assert!(
@@ -40,10 +43,12 @@ fn run_anonymizes_child_stdin_restores_stdout_and_writes_no_mapping() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(output.stdout, b"Contact john@example.com\n");
+    assert_eq!(output.stdout, input);
     let child_saw = fs::read_to_string(child_input).unwrap();
     assert!(!child_saw.contains("john@example.com"));
     assert!(child_saw.contains("[EMAIL_ADDRESS_"));
+    assert!(!child_saw.contains("ZGVidWc6ZXhhbXBsZS1wYXNzd29yZA=="));
+    assert!(child_saw.contains("Authorization: Basic [AUTH_TOKEN_"));
     let default_map = home
         .path()
         .join(".anon-pii")

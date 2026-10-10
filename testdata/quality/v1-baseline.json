@@ -3,19 +3,19 @@
   "corpus_version": "debug-pii-v1",
   "corpus_sha256": "866c2292a7c0b5b06fb26b9bab32228dac64b5bb0c6b389ef4102194da3f03e7",
   "metrics": {
-    "min_tp": 41,
+    "min_tp": 42,
     "max_fp": 0,
-    "max_fn": 5,
+    "max_fn": 4,
     "min_precision_ppm": 1000000,
-    "min_recall_ppm": 891304
+    "min_recall_ppm": 913043
   },
   "tiers": {
     "challenge": {
-      "min_tp": 11,
+      "min_tp": 12,
       "max_fp": 0,
-      "max_fn": 5,
+      "max_fn": 4,
       "min_precision_ppm": 1000000,
-      "min_recall_ppm": 687500
+      "min_recall_ppm": 750000
     },
     "contract": {
       "min_tp": 30,
@@ -76,11 +76,11 @@
       "min_recall_ppm": 1000000
     },
     "secrets": {
-      "min_tp": 10,
+      "min_tp": 11,
       "max_fp": 0,
-      "max_fn": 1,
+      "max_fn": 0,
       "min_precision_ppm": 1000000,
-      "min_recall_ppm": 909090
+      "min_recall_ppm": 1000000
     },
     "temporal": {
       "min_tp": 1,
@@ -92,11 +92,11 @@
   },
   "entity_types": {
     "AUTH_TOKEN": {
-      "min_tp": 1,
+      "min_tp": 2,
       "max_fp": 0,
-      "max_fn": 1,
+      "max_fn": 0,
       "min_precision_ppm": 1000000,
-      "min_recall_ppm": 500000
+      "min_recall_ppm": 1000000
     },
     "CONNECTION_STRING": {
       "min_tp": 1,
@@ -205,13 +205,6 @@
     }
   },
   "case_exceptions": {
-    "basic-auth-header": {
-      "min_tp": 0,
-      "max_fp": 0,
-      "max_fn": 1,
-      "min_precision_ppm": null,
-      "min_recall_ppm": 0
-    },
     "email-split-newline": {
       "min_tp": 0,
       "max_fp": 0,

@@ -58,6 +58,7 @@ dependencies = [
  "aes",
  "aho-corasick",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "calamine",
  "cbc",
