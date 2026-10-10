@@ -51,6 +51,7 @@ unicode-normalization = "0.1"
 unicode-segmentation = "1"
 getrandom = "0.4"
 aho-corasick = "1"
+base64 = "0.22.1"
 
 # Proxy mode dependencies — behind "proxy" feature, pinned for supply chain safety
 tokio = { version = "=1.52.3", features = ["full"], optional = true }

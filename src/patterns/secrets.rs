@@ -4,7 +4,20 @@
 
 use super::PiiPattern;
 
+// Match the complete credential candidate, including malformed suffixes, so a
+// valid Base64 prefix cannot cause a partial credential to be accepted. Quoted
+// headers and common log/JSON delimiters remain outside the candidate.
+pub(crate) const BASIC_AUTH_PATTERN: &str = r#"(?i:\bBasic)[ \t]+[^\s"'`,;()\[\]{}<>]+"#;
+
 pub const SECRETS_PATTERNS: &[PiiPattern] = &[
+    PiiPattern {
+        name: "basic_auth",
+        entity_type: "AUTH_TOKEN",
+        pattern: BASIC_AUTH_PATTERN,
+        score: 0.95,
+        context_keywords: &[],
+        context_required: false,
+    },
     // ── JWT / Auth tokens ──
     PiiPattern {
         name: "jwt",

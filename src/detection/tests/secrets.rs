@@ -1,4 +1,6 @@
 use super::super::*;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 
 fn synthetic_secret(parts: &[&str]) -> String {
     parts.concat()
@@ -339,4 +341,120 @@ fn test_jwt_not_detected_short_segments() {
         !dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),
         "Short dot-separated words should not be detected as JWT"
     );
+}
+
+#[test]
+fn test_basic_auth_preserves_header_and_exact_encoded_source_spans() {
+    let encoded = STANDARD.encode(b"debug:example-password");
+    for value in [
+        encoded.clone(),
+        encoded.trim_end_matches('=').to_string(),
+        encoded.replace('=', "%3D"),
+        encoded.replace('=', r"\u003D"),
+        STANDARD.encode(b":"),
+        STANDARD.encode(b"debug:"),
+        STANDARD.encode(b":example-password"),
+        STANDARD.encode(b"debug:example:password"),
+        STANDARD.encode("utilisateur:exemple-é".as_bytes()),
+        STANDARD.encode([0xfb, b':', 0xff]),
+    ] {
+        for prefix in [
+            "Authorization: Basic ",
+            "Proxy-Authorization: bAsIc\t  ",
+            "🧪 request header=\"Basic ",
+        ] {
+            let input = format!("{prefix}{value}\"\r\n");
+            let mut a = Anonymizer::new(0.5);
+            let (result, detections) = a.anonymize_text(&input);
+            assert_eq!(detections.len(), 1, "{input:?}: {detections:?}");
+            let detected = &detections[0];
+            assert_eq!(detected.entity_type, "AUTH_TOKEN");
+            assert_eq!(detected.original, value);
+            assert_eq!(detected.start, prefix.len());
+            assert_eq!(detected.end, prefix.len() + value.len());
+            assert_eq!(&input[detected.start..detected.end], value);
+            assert!(result.starts_with(&format!("{prefix}[AUTH_TOKEN_")));
+            assert!(result.ends_with("]\"\r\n"));
+            assert_eq!(a.mapping.restore_bracketed(&result), input);
+        }
+    }
+}
+
+#[test]
+fn test_basic_auth_rejects_prose_missing_scheme_and_invalid_credentials() {
+    let credential = STANDARD.encode(b"debug:example-password");
+    let inputs = [
+        "Basic authentication is supported".to_string(),
+        "WWW-Authenticate: Basic realm=\"example\"".to_string(),
+        format!("Authorization: Bearer {credential}"),
+        format!("MyBasic {credential}"),
+        format!("Basic\n{credential}"),
+        credential.clone(),
+        format!("Basic {}", STANDARD.encode(b"not-a-credential")),
+        format!("Basic {}", STANDARD.encode(b"debug:example\npassword")),
+        format!("Basic {}", STANDARD.encode(b"debug:\0example")),
+        format!("Basic {credential}EXTRA"),
+        format!("Basic {credential}_suffix"),
+        format!("Basic {credential}-suffix"),
+        format!("Basic {credential}=="),
+        "Basic Oh==".to_string(), // Non-canonical trailing bits for ':'.
+        "Basic Og=".to_string(),  // Incorrect padding.
+    ];
+    let mut a = Anonymizer::new(0.0);
+    for input in inputs {
+        let (output, detections) = a.anonymize_text(&input);
+        assert!(detections.is_empty(), "{input:?}: {detections:?}");
+        assert_eq!(output, input);
+    }
+}
+
+#[test]
+fn test_basic_auth_respects_threshold_and_reuses_tokens() {
+    let credential = STANDARD.encode(b"debug:example-password");
+    let input = format!("Basic {credential}\nBasic {credential}");
+    let mut a = Anonymizer::new(0.95);
+    let (output, detections) = a.anonymize_text(&input);
+    assert_eq!(detections.len(), 2);
+    assert_eq!(a.mapping.mappings.len(), 1);
+    assert_eq!(a.mapping.restore_bracketed(&output), input);
+
+    let mut a = Anonymizer::new(0.96);
+    let (output, detections) = a.anonymize_text(&input);
+    assert!(detections.is_empty());
+    assert_eq!(output, input);
+}
+
+#[test]
+fn test_basic_auth_in_structured_values_roundtrips() {
+    let credential = STANDARD.encode(b"debug:example-password");
+    let mut a = Anonymizer::new(0.5);
+    let input = serde_json::json!({"Authorization": format!("Basic {credential}"), "count": 42});
+    let (output, detections) = a.anonymize_json_value(&input);
+    assert_eq!(detections.len(), 1);
+    assert!(
+        output["Authorization"]
+            .as_str()
+            .unwrap()
+            .starts_with("Basic [AUTH_TOKEN_")
+    );
+    let restored = a.mapping.restore_bracketed(&output.to_string());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&restored).unwrap(),
+        input
+    );
+
+    for (format, input) in [
+        ("csv", format!("header\r\n\"Basic {credential}\"\r\n")),
+        ("sql", format!("SELECT 'Basic {credential}' AS auth;")),
+    ] {
+        let (output, detections) = if format == "csv" {
+            a.anonymize_csv(&input)
+        } else {
+            a.anonymize_sql(&input)
+        };
+        assert_eq!(detections.len(), 1);
+        assert!(!output.contains(&credential));
+        assert!(output.contains("Basic [AUTH_TOKEN_"));
+        assert_eq!(a.mapping.restore_bracketed(&output), input);
+    }
 }

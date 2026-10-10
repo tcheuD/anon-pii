@@ -24,6 +24,13 @@ vhs demo/hero.tape
 Try the samples directly:
 
 ```bash
+# Preview locally without a child command or a saved mapping
+cargo run --quiet -- run --dry-run < demo/samples/support-ticket.txt
+
+# Exercise a complete local roundtrip; cat echoes the anonymized input
+cargo run --quiet -- run -- cat < demo/samples/support-ticket.txt
+
+# Detached workflows use a dedicated mapping file
 mkdir -p demo/tmp
 cargo run --quiet -- -i demo/samples/support-ticket.txt --mapping demo/tmp/demo-map.json
 cargo run --quiet -- --format sql -i demo/samples/queries.sql --mapping demo/tmp/demo-map.json

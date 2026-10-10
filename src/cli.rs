@@ -120,10 +120,14 @@ pub struct Cli {
 pub enum Commands {
     /// Anonymize stdin, run a command, and restore tokens from its stdout in memory
     Run {
-        /// Command and arguments to execute (place after --)
+        /// Preview anonymized stdin without starting a command or saving a mapping
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Command and arguments to execute (place after --; required unless --dry-run)
         #[arg(
             value_name = "COMMAND",
-            required = true,
+            required_unless_present = "dry_run",
             trailing_var_arg = true,
             allow_hyphen_values = true
         )]
