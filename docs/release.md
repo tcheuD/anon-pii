@@ -1,8 +1,8 @@
 # Release Process
 
 This checklist is the source of truth for repeatable releases. GitHub Releases
-is the supported binary distribution channel; v0.2.0 has already
-been published. The next release is v0.3.0.
+is the supported binary distribution channel. See the
+[releases page](https://github.com/tcheuD/anon-pii/releases) for published versions.
 
 ## Support Matrix
 
@@ -76,7 +76,10 @@ release binary is built or published. Each archive is then extracted on its
 target runner and checked with `scripts/release-smoke.py`. This verifies the
 version, preview without a child process, actual tokenized child stdin, exact
 `run -- cat` restoration, the support-ticket name/address roundtrip with `--ner`,
-and absence of a persisted transaction mapping.
+complete custom-regex masking for reverse-suffix and reverse-inner matches
+(including Unicode and percent-encoded source), and absence of a persisted
+transaction mapping. Custom-regex checks inspect both preview and actual child
+input, because exact restoration alone cannot reveal partially masked values.
 
 Packaging fails if README or LICENSE is missing. Release assets include
 `SHA256SUMS`, whose entries use archive basenames so downloads can be checked
