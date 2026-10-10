@@ -5,6 +5,11 @@
 
 use super::PiiPattern;
 
+// A single log-wrap boundary immediately after @. Keep this separate from the
+// ordinary matcher so an incomplete first line cannot hide a following email.
+pub(crate) const WRAPPED_EMAIL_PATTERN: &str =
+    r"[\p{L}\p{N}._%+\-]+@\r?\n[ \t]*(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}";
+
 pub const GLOBAL_PATTERNS: &[PiiPattern] = &[
     // ── Email ──
     PiiPattern {
@@ -13,6 +18,14 @@ pub const GLOBAL_PATTERNS: &[PiiPattern] = &[
         // Unicode letters and numbers in the local part avoid dangerous suffix-only
         // matches such as detecting only `es@example.com` inside `iñes@example.com`.
         pattern: r"[\p{L}\p{N}._%+\-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+        score: 0.9,
+        context_keywords: &[],
+        context_required: false,
+    },
+    PiiPattern {
+        name: "wrapped_email",
+        entity_type: "EMAIL_ADDRESS",
+        pattern: WRAPPED_EMAIL_PATTERN,
         score: 0.9,
         context_keywords: &[],
         context_required: false,
