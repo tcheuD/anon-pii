@@ -19,22 +19,9 @@ pub async fn analyze(Json(req): Json<AnalyzeRequest>) -> Response {
 
     let mut anonymizer = Anonymizer::new(req.score_threshold.clamp(0.0, 1.0));
 
-    // Enable NER based on compiled features
-    #[cfg(feature = "ner")]
-    {
-        use crate::ner::{NerConfig, download::model_exists, ml::MlNerDetector};
-        let config = NerConfig::default();
-        if model_exists(&config) {
-            if let Ok(Ok(det)) = std::panic::catch_unwind(|| MlNerDetector::new(&config)) {
-                anonymizer.set_ner_detector(Box::new(det));
-            }
-        }
-    }
-    #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
-    {
-        use crate::ner::heuristic::HeuristicNerDetector;
-        anonymizer.set_ner_detector(Box::new(HeuristicNerDetector::new()));
-    }
+    // ML builds also retain heuristics if the optional model/runtime is unavailable.
+    #[cfg(feature = "ner-lite")]
+    anonymizer.set_ner_detector(crate::ner::auto::detector(|_| {}));
 
     let detections = anonymizer.analyze(&req.text);
 
