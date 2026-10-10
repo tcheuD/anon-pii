@@ -118,7 +118,7 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
 <main>
   <div class="wrap hero">
     <div class="grid">
-      <div class="meta">Rust · MIT<br>v0.1.0<br><span class="red">local only</span></div>
+      <div class="meta">Rust · MIT<br>v0.2.0<br><span class="red">local only</span></div>
       <div>
         <p class="eyebrow">Reversible redaction for LLM workflows</p>
         <h1>Hand the model the <span class="redact" data-real="evidence" tabindex="0">[REDACTED]</span>. Keep the <span class="redact" data-real="names" tabindex="0">[REDACTED]</span>.</h1>
@@ -138,10 +138,10 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
       <div class="meta">Fig. 01<br><span class="red">Real engine</span><br>WASM</div>
       <div class="play">
         <h2>Redact something of your own.</h2>
-        <p class="lede">Paste a line with an email, an IP, a card, a French phone number. Processed in this page, then thrown away.</p>
-        <textarea id="in" spellcheck="false" aria-label="text to redact">Payment failed for marie.lefevre@acme.com from 192.168.4.20, card 4111 1111 1111 1111, callback +33 6 12 34 56 78</textarea>
+        <p class="lede">Try a fictional line with an email, an IP, a card, or a French phone number. The engine processes it locally in your browser.</p>
+        <textarea id="in" spellcheck="false" aria-label="text to redact">Payment failed for avery@example.invalid from 192.0.2.20, card 4111 1111 1111 1111, callback +33 6 12 34 56 78</textarea>
         <div class="out" id="out" aria-live="polite"></div>
-        <p class="note" id="engnote"><b>Nothing you type is sent anywhere.</b> This is not a demo mock: it is the actual Rust engine, compiled to WebAssembly, running in your browser — <span id="engstats" class="mono">loading engine…</span>. Click a bar to lift it; the lift calls the engine's real <span class="mono">restore</span> against the session mapping.</p>
+        <p class="note" id="engnote"><b>Nothing you type is sent anywhere.</b> This is not a demo mock: it is the actual Rust engine, compiled to WebAssembly, running in your browser — <span id="engstats" class="mono">loading engine…</span>. Click a bar to lift it; the lift calls the engine's real <span class="mono">restore</span> against the session mapping. That mapping stays in this page's memory while it is open; reload to start a fresh engine session.</p>
       </div>
     </div>
   </section>
@@ -164,15 +164,31 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
 
   <section id="install">
     <div class="wrap grid">
-      <div class="meta">Intake<br>~2 min</div>
+      <div class="meta">Start here<br>v0.2.0</div>
       <div>
-        <h2>Install.</h2>
-        <p class="lede">A local data-minimization aid, not a compliance guarantee — read the <a href="https://github.com/tcheuD/anon-pii/blob/main/SECURITY.md" style="border-bottom:1px solid var(--red)">security model</a> before trusting it with anything real.</p>
-        <div class="cmd"><div class="lbl">Pre-built binary — linux x86_64, macos x86_64 / aarch64</div><pre>curl -L https://github.com/tcheuD/anon-pii/releases/latest/download/anon-pii-macos-aarch64.tar.gz | tar xz
-sudo mv anon-pii /usr/local/bin/</pre></div>
-        <div class="cmd"><div class="lbl">From source</div><pre>git clone https://github.com/tcheuD/anon-pii && cd anon-pii
-cargo install --path .</pre></div>
-        <div class="cmd"><div class="lbl">The whole point, in one command</div><pre>cat error.log | anon-pii run -- claude -p <span class="g">"what failed?"</span></pre></div>
+        <h2>Install. Preview. Roundtrip.</h2>
+        <p class="lede">Choose your platform below. The first roundtrip runs locally with <span class="mono">cat</span>; no AI tool or API key needed.</p>
+        <p class="hint">Download <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/SHA256SUMS">SHA256SUMS</a> and compare your archive's SHA-256 digest with its matching entry before extracting. Use <span class="mono">sha256sum</span> on Linux or <span class="mono">shasum -a 256</span> on macOS.</p>
+        <div class="cmd"><div class="lbl">Linux x86_64 (glibc) · <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/anon-pii-linux-x86_64.tar.gz">Download archive ↗</a></div><pre>tar -xzf anon-pii-linux-x86_64.tar.gz</pre></div>
+        <div class="cmd"><div class="lbl">macOS Apple Silicon · <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/anon-pii-macos-aarch64.tar.gz">Download archive ↗</a></div><pre>tar -xzf anon-pii-macos-aarch64.tar.gz</pre></div>
+        <div class="cmd"><div class="lbl">macOS Intel · <a href="https://github.com/tcheuD/anon-pii/releases/download/v0.2.0/anon-pii-macos-x86_64.tar.gz">Download archive ↗</a></div><pre>tar -xzf anon-pii-macos-x86_64.tar.gz</pre></div>
+        <div class="cmd"><div class="lbl">Install the extracted binary for your user</div><pre>mkdir -p "$HOME/.local/bin"
+install -m 755 anon-pii "$HOME/.local/bin/anon-pii"
+export PATH="$HOME/.local/bin:$PATH"
+anon-pii --version</pre></div>
+        <p class="hint">Keep the PATH line in your shell profile. Release binaries include <span class="mono">ner-lite,proxy,pdf</span>; name detection requires <span class="mono">--ner</span>. ML NER, image OCR, and XLSX are excluded. The core workflow below needs no optional modes.</p>
+        <div class="cmd"><div class="lbl">Or build the default core from source · Rust 1.88+</div><pre>git clone https://github.com/tcheuD/anon-pii
+cd anon-pii
+cargo install --locked --path .</pre></div>
+        <p class="hint">Source builds use no optional features by default and install to <span class="mono">~/.cargo/bin</span>; keep that directory on your PATH.</p>
+        <div class="cmd"><div class="lbl">1 · Preview locally — inspect for missed sensitive values</div><pre>echo 'Error for john@example.com from 192.0.2.5' \
+  | anon-pii run --dry-run</pre></div>
+        <div class="cmd"><div class="lbl">2 · Prove the roundtrip — cat receives tokens, you see originals</div><pre>echo 'Error for john@example.com from 192.0.2.5' \
+  | anon-pii run -- cat
+<span class="g"># Error for john@example.com from 192.0.2.5</span></pre></div>
+        <div class="cmd"><div class="lbl">3 · Use your configured AI tool, for example Claude Code</div><pre>echo 'Error for john@example.com from 192.0.2.5' \
+  | anon-pii run -- claude -p <span class="g">"what failed?"</span></pre></div>
+        <p class="hint">Each invocation creates fresh tokens and keeps its mapping in memory. Detection can miss values. The child still has normal filesystem and network access; see the <a href="https://github.com/tcheuD/anon-pii/blob/main/README.md#run-contract-and-limitations">run contract and limitations</a>.</p>
       </div>
     </div>
   </section>
@@ -181,7 +197,7 @@ cargo install --path .</pre></div>
 <footer>
   <div class="wrap">
     <span>anon-pii · MIT · <a href="https://github.com/tcheuD/anon-pii/releases" style="border-bottom:1px solid var(--red)">releases</a></span>
-    <span>recognized values tokenized locally · v0.1.1</span>
+    <span>recognized values tokenized locally · v0.2.0</span>
   </div>
 </footer>
 
@@ -195,7 +211,7 @@ document.querySelectorAll('h1 .redact').forEach(el=>{
 
 const ex=document.getElementById('exhibit'),tabnote=document.getElementById('tabnote');
 const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
-const EMAIL='john@acme.com',IP='10.0.0.5',CARD='4111 1111 1111 1111';
+const EMAIL='john@example.invalid',IP='192.0.2.5',CARD='4111 1111 1111 1111';
 const bar=l=>`<span class="mask">[${l}]</span>`;
 const wait=ms=>new Promise(r=>setTimeout(r,reduce?0:ms));
 async function run(){
@@ -203,9 +219,9 @@ async function run(){
  ex.innerHTML=base+'<span class="caret"></span>';await wait(900);
  let a=base+`\n<span class="step"># anon-pii → redacted</span>\nError: charge declined for ${bar('EMAIL_ADDRESS_1efd90ed')} from ${bar('IP_ADDRESS_b2793174')}, card ${bar('CREDIT_CARD_b35f40e8')}\n`;
  tabnote.textContent='redacting…';ex.innerHTML=a;await wait(1050);
- a+=`\n<span class="step">claude →</span> ${bar('CREDIT_CARD_b35f40e8')} was declined; ${bar('IP_ADDRESS_b2793174')} looks like an internal NAT address.\n`;
+ a+=`\n<span class="step">claude →</span> ${bar('CREDIT_CARD_b35f40e8')} was declined; ${bar('IP_ADDRESS_b2793174')} is the source address in this log.\n`;
  tabnote.textContent='sent to claude — tokens only';ex.innerHTML=a;await wait(1050);
- a+=`\n<span class="step">restore →</span> <span class="pii">${CARD}</span> was declined; <span class="pii">${IP}</span> looks like an internal NAT address.`;
+ a+=`\n<span class="step">restore →</span> <span class="pii">${CARD}</span> was declined; <span class="pii">${IP}</span> is the source address in this log.`;
  tabnote.textContent='restored locally';ex.innerHTML=a+'\n<span class="caret"></span>';
 }
 run();

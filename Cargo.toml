@@ -1,6 +1,6 @@
 [package]
 name = "anon-pii"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Local reversible PII roundtrips for AI-assisted debugging"
@@ -25,6 +25,17 @@ include = [
     "/LICENSE",
     "/SECURITY.md",
     "/CONTRIBUTING.md",
+    "/.gitignore",
+    "/.github/workflows/ci.yml",
+    "/.github/workflows/release.yml",
+    "/.github/workflows/bench.yml",
+    "/scripts/release-preflight.sh",
+    "/scripts/release-smoke.py",
+    "/scripts/build-wasm.sh",
+    "/demo/README.md",
+    "/demo/record.sh",
+    "/demo/hero.tape",
+    "/demo/samples/**",
 ]
 
 [lints.clippy]
