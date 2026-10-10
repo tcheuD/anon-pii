@@ -40,6 +40,24 @@ are documented in [Quality and claim policy](quality.md).
 | `FLIGHT_NUMBER` | Amelia codes (IZM, RLA, AME, GJT, AF), IATA/ICAO (context-aware) | 0.4 - 0.9 |
 | `CREW_CODE` | 3-letter crew codes (context-aware, with blocklist) | 0.85 |
 
+## Authentication credentials
+
+| Entity | Description | Score |
+|--------|-------------|-------|
+| `AUTH_TOKEN` | JWT-shaped tokens and validated HTTP Basic credentials | 0.95 |
+
+Basic detection requires the case-insensitive `Basic` scheme, spaces or tabs,
+and a complete standard-Base64 credential (padded or unpadded). Decoded bytes
+must contain a username/password colon separator and no ASCII control bytes.
+Empty components and non-ASCII credential bytes are supported. Only the encoded
+credential is replaced; the scheme, header name, and surrounding syntax remain.
+Restoration returns the exact encoded source spelling, including supported
+URL-encoded or Unicode-escaped representations.
+
+The recognizer does not scan arbitrary Base64 strings. Invalid padding,
+non-canonical trailing bits, invalid suffixes, line breaks between the scheme
+and credential, and split credentials are outside this recognizer's coverage.
+
 ## NER Entities
 
 | Entity | Backend | Score | Feature flag |

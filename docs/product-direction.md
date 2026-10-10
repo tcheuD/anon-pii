@@ -22,11 +22,12 @@ usage, retention, willingness to pay, or detection performance on customer data.
 | Order | Outcome | Acceptance evidence |
 |-------|---------|---------------------|
 | 1 | Users can inspect a payload before trying an AI command | `run --dry-run` works without an AI tool, follows the normal preparation path, prints detection counts without original values, and leaves mappings untouched. Synthetic CLI tests cover supported core formats and failure paths. |
-| 2 | Common debugging credentials are covered predictably | Investigate the versioned corpus's Basic authentication miss first. Add synthetic positive and negative cases, verify exact source spans and roundtrips, and ratchet the existing baseline when it improves. Keep remaining misses visible. |
+| 2 | Common debugging credentials are covered predictably | Basic authentication now has synthetic positive and negative cases plus exact-span and roundtrip checks. On the unchanged versioned corpus, true positives increased from 41 to 42 with zero false positives; the baseline now requires the recovered case. Four misses remain visible. |
 | 3 | A new user can install and complete the workflow reliably | Follow the release checklist, verify supported binary archives on their target platforms, and exercise preview plus a local `run -- cat` roundtrip from a clean installation. |
 
-The first milestone is implemented in this change. The later milestones are
-prioritized work, not completed release claims.
+The first two milestones are implemented in this change. Installation and
+release verification on the supported target platforms remain the next
+milestone; local Linux checks are not a completed release claim.
 
 ## Product boundaries
 

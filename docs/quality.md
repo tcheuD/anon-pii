@@ -83,19 +83,25 @@ contains 62 fictional cases, 46 annotated exact spans, 18 negative cases, 16
 expected entity types, and both contract and challenge tiers. Matching requires
 the entity type, UTF-8 byte range, and raw source bytes to agree.
 
-At `anon-pii` revision
+Initially, at `anon-pii` revision
 `1a22680e43b29c80e141a39b0a66eb3dcafb7522`, default features, threshold `0.5`,
-and no NER, `cargo run --locked --example quality_report -- --check` reports
+and no NER, `cargo run --locked --example quality_report -- --check` reported
 41 TP, 0 FP, and 5 FN: 100.0000% measured precision and 89.1304% measured recall. Those
 numbers describe this project-owned corpus, not arbitrary production data.
 
-All contract cases and every non-exempt case must remain exact. The five
-reviewed challenge exceptions are intentionally visible in the baseline:
+After Basic authentication detection was added at revision
+`0e5d6f253753cc3cf8a8d34f27168f26b1b9e90c`, the same unchanged corpus,
+configuration, and command report 42 TP, 0 FP, and 4 FN: 100.0000% measured precision and 91.3043% measured recall.
+The Basic-auth case now matches its exact credential span, and the baseline
+requires that match. The overall, challenge, secrets, and AUTH_TOKEN gates were
+tightened; corpus labels and the remaining exceptions were not changed.
+
+All contract cases and every non-exempt case must remain exact. The four
+remaining reviewed challenge exceptions are intentionally visible in the baseline:
 
 - context-free phone;
 - context-free IBAN;
-- lowercase IBAN;
-- Basic authentication header; and
+- lowercase IBAN; and
 - newline-split email.
 
 An improvement to an exception passes. Moving a miss to any other case does
