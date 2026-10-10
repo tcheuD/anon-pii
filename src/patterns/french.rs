@@ -81,7 +81,9 @@ pub const FRENCH_PATTERNS: &[PiiPattern] = &[
         // Print format: groups of four characters followed by a final group of three.
         // The French BBAN is 5-digit bank + 5-digit branch + 11-character
         // alphanumeric account + 2-digit RIB key.
-        pattern: r"\bFR\d{2}[ \t]\d{4}[ \t]\d{4}[ \t]\d{2}[A-Z0-9]{2}[ \t][A-Z0-9]{4}[ \t][A-Z0-9]{4}[ \t][A-Z0-9]\d{2}\b",
+        // Explicit ASCII casing preserves the fixed field boundaries without
+        // enabling Unicode case folding or consuming surrounding prose.
+        pattern: r"\b[Ff][Rr]\d{2}[ \t]\d{4}[ \t]\d{4}[ \t]\d{2}[A-Za-z0-9]{2}[ \t][A-Za-z0-9]{4}[ \t][A-Za-z0-9]{4}[ \t][A-Za-z0-9]\d{2}\b",
         score: 0.95,
         context_keywords: &[
             "iban", "compte", "account", "virement", "bank", "banque", "bancaire",
@@ -91,7 +93,7 @@ pub const FRENCH_PATTERNS: &[PiiPattern] = &[
     PiiPattern {
         name: "fr_iban_compact",
         entity_type: "FR_IBAN",
-        pattern: r"\bFR\d{2}\d{5}\d{5}[A-Z0-9]{11}\d{2}\b",
+        pattern: r"\b[Ff][Rr]\d{2}\d{5}\d{5}[A-Za-z0-9]{11}\d{2}\b",
         score: 0.9,
         context_keywords: &[
             "iban", "compte", "account", "virement", "bank", "banque", "bancaire",

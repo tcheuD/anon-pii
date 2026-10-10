@@ -209,13 +209,127 @@ fn test_iban_off_by_one_checksum_rejected() {
 }
 
 #[test]
-fn test_iban_lowercase_rejected() {
-    let mut a = Anonymizer::new(0.0);
-    // Country code must be uppercase per pattern
-    let (_, dets) = a.anonymize_text("iban de89370400440532013000");
+fn test_iban_compact_ascii_casing_exact_spans_and_roundtrip() {
+    for iban in [
+        "gb82west12345698765432",
+        "gB82WeSt12345698765432",
+        "GB82west12345698765432",
+        "gb82WEST12345698765432",
+        "de89370400440532013000",
+        "nL91AbNa0417164300",
+        "be68539007547034",
+        "cH9300762011623852957",
+    ] {
+        for suffix in [
+            "",
+            " please investigate.",
+            " help",
+            " bank",
+            " 1234 AB12",
+            " abcd1234",
+        ] {
+            assert_iban_exact_roundtrip(iban, "IBAN_CODE", "Échec — IBAN ", suffix);
+        }
+    }
+}
+
+fn assert_iban_exact_roundtrip(iban: &str, entity_type: &str, prefix: &str, suffix: &str) {
+    let mut anonymizer = Anonymizer::new(0.5);
+    let input = format!("{prefix}{iban}{suffix}");
+    let (output, detections) = anonymizer.anonymize_text(&input);
+    assert_eq!(
+        detections.len(),
+        1,
+        "expected one complete IBAN: {input}; {detections:?}"
+    );
+    let detection = &detections[0];
+    assert_eq!(detection.entity_type, entity_type, "{input}");
+    assert_eq!(detection.original, iban, "{input}");
+    assert_eq!(detection.start, prefix.len(), "{input}");
+    assert_eq!(detection.end, prefix.len() + iban.len(), "{input}");
     assert!(
-        !dets.iter().any(|d| d.entity_type == "IBAN_CODE"),
-        "lowercase IBAN should not match the regex: {dets:?}"
+        output.starts_with(&format!("{prefix}[{entity_type}_")),
+        "{output}"
+    );
+    assert!(output.ends_with(&format!("]{suffix}")), "{output}");
+    assert_eq!(anonymizer.mapping.restore_bracketed(&output), input);
+}
+
+#[test]
+fn test_fr_iban_ascii_casing_keeps_priority_and_exact_source() {
+    for iban in [
+        "fr1420041010050500013m02606",
+        "Fr1420041010050500013m02606",
+        "fR1420041010050500013M02606",
+        "fr14 2004 1010 0505 0001 3m02 606",
+        "Fr14 2004 1010 0505 0001 3M02 606",
+        "fR14\t2004\t1010\t0505\t0001\t3m02\t606",
+    ] {
+        for prefix in ["Échec — IBAN ", "Échec — "] {
+            assert_iban_exact_roundtrip(iban, "FR_IBAN", prefix, " please investigate.");
+        }
+    }
+}
+
+#[test]
+fn test_iban_ascii_casing_keeps_checksum_and_context_gates() {
+    for input in [
+        "IBAN gb83west12345698765432", // wrong check digits
+        "IBAN gB82WeSt12345698765433", // modified account
+        "IBAN de90370400440532013000",
+        "IBAN fr1520041010050500013m02606",
+        "IBAN fr14 2004 1010 0505 0001 3m02 607",
+        "code gb82west12345698765432 here", // generic context is still required
+        "code gB82WeSt12345698765432 here",
+    ] {
+        assert_no_iban_detection(input);
+    }
+    let mut strict = Anonymizer::new(0.8);
+    let (_, detections) = strict.anonymize_text("IBAN gb82west12345698765432");
+    assert!(!detections.iter().any(|d| d.entity_type == "IBAN_CODE"));
+}
+
+#[test]
+fn test_iban_ascii_casing_rejects_embedded_or_extended_candidates() {
+    for input in [
+        "IBAN xgb82west12345698765432", // embedded within a larger word
+        "IBAN _gb82west12345698765432",
+        "IBAN gb82west12345698765432_foo",
+        "IBAN gb82west123456987654321", // valid prefix, invalid full checksum
+        "IBAN gB82WeSt12345698765432abc",
+        "IBAN gb82west12345698765432abcdefghijklmnop", // beyond compact length limit
+        "IBAN fr1420041010050500013m026061",
+        "IBAN fr14 2004 1010 0505 0001 3m02 6061",
+        "IBAN gb82weßt12345698765432", // non-ASCII letters are not case-folded
+        "IBAN gb82weİt12345698765432",
+    ] {
+        assert_no_iban_detection(input);
+    }
+}
+
+#[test]
+fn test_generic_grouped_lowercase_is_not_rescued_by_shorter_prefixes() {
+    // Generic mixed/lowercase support is deliberately compact-only. In
+    // particular, never trim a failed candidate until its checksum happens to
+    // pass. French print format has fixed field lengths and is covered above.
+    for input in [
+        "IBAN gb82 west 1234 5698 7654 32",
+        "IBAN gB82 WeSt 1234 5698 7654 32 help",
+        "IBAN gb82 west 1234 5698 7654 32 please investigate",
+        "IBAN gb83 west 1234 5698 7654 32 bank",
+    ] {
+        assert_no_iban_detection(input);
+    }
+}
+
+fn assert_no_iban_detection(input: &str) {
+    let mut anonymizer = Anonymizer::new(0.0);
+    let (_, detections) = anonymizer.anonymize_text(input);
+    assert!(
+        !detections
+            .iter()
+            .any(|d| matches!(d.entity_type.as_ref(), "FR_IBAN" | "IBAN_CODE")),
+        "unexpected IBAN detection: {input}; {detections:?}"
     );
 }
 

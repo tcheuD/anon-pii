@@ -111,9 +111,12 @@ pub const GLOBAL_PATTERNS: &[PiiPattern] = &[
     PiiPattern {
         name: "iban_generic",
         entity_type: "IBAN_CODE",
-        // 2 uppercase country letters + 2 check digits + 11-30 alphanumeric BBAN
-        // With optional spaces every 4 chars. Validated by mod-97 in detection pipeline.
-        pattern: r"\b[A-Z]{2}\d{2}[\s]?[\dA-Z]{4}(?:[\s]?[\dA-Z]{4}){2,7}(?:[\s]?[\dA-Z]{1,4})?\b",
+        // Keep the existing uppercase grouped form. ASCII lower/mixed case is
+        // accepted only as one compact candidate (15-34 characters): allowing
+        // spaces in that alternative could absorb following words such as
+        // "help" or "bank". Validate the whole candidate with mod-97; do not
+        // search for a checksum-valid prefix when a longer candidate fails.
+        pattern: r"\b(?:[A-Z]{2}\d{2}[\s]?[\dA-Z]{4}(?:[\s]?[\dA-Z]{4}){2,7}(?:[\s]?[\dA-Z]{1,4})?|[A-Za-z]{2}[0-9]{2}[A-Za-z0-9]{11,30})\b",
         score: 0.7,
         context_keywords: &[
             "iban", "compte", "account", "virement", "bank", "banque", "bancaire", "transfer",

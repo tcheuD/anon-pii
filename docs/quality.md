@@ -91,17 +91,49 @@ numbers describe this project-owned corpus, not arbitrary production data.
 
 After Basic authentication detection was added at revision
 `0e5d6f253753cc3cf8a8d34f27168f26b1b9e90c`, the same unchanged corpus,
-configuration, and command report 42 TP, 0 FP, and 4 FN: 100.0000% measured precision and 91.3043% measured recall.
+configuration, and command reported 42 TP, 0 FP, and 4 FN: 100.0000% measured precision and 91.3043% measured recall.
 The Basic-auth case now matches its exact credential span, and the baseline
 requires that match. The overall, challenge, secrets, and AUTH_TOKEN gates were
 tightened; corpus labels and the remaining exceptions were not changed.
 
-All contract cases and every non-exempt case must remain exact. The four
+After compact ASCII-case IBAN detection was added at revision
+`b678727b9e2efc5b495efb26a19c838a96dca383`, the same unchanged corpus,
+configuration, and command report 43 TP, 0 FP, and 3 FN: 100.0000% measured precision and 93.4782% measured recall.
+The lowercase IBAN case now matches its exact source span and is required by the
+baseline. Overall, challenge, financial, and IBAN_CODE limits were tightened;
+the corpus labels were not changed. These are maintainer regression measurements,
+not evidence of customer adoption or production accuracy.
+
+| Entity type | TP | FP | FN |
+|-------------|---:|---:|---:|
+| AUTH_TOKEN | 2 | 0 | 0 |
+| CONNECTION_STRING | 1 | 0 | 0 |
+| CREDIT_CARD | 4 | 0 | 0 |
+| DATE_TIME | 1 | 0 | 0 |
+| EMAIL_ADDRESS | 8 | 0 | 1 |
+| FR_IBAN | 1 | 0 | 0 |
+| FR_PHONE_NUMBER | 1 | 0 | 0 |
+| IBAN_CODE | 2 | 0 | 1 |
+| IP_ADDRESS | 4 | 0 | 0 |
+| MAC_ADDRESS | 2 | 0 | 0 |
+| PASSWORD | 3 | 0 | 0 |
+| PHONE_EXTENSION | 1 | 0 | 0 |
+| PHONE_NUMBER | 3 | 0 | 1 |
+| SECRET_KEY | 5 | 0 | 0 |
+| URL | 4 | 0 | 0 |
+| UUID | 1 | 0 | 0 |
+
+Generic lowercase and mixed-case IBAN recognition covers compact ASCII forms
+and retains the existing context and checksum requirements. French compact and
+fixed print forms also accept ASCII casing. Replacement and restoration preserve
+the original casing and surrounding text. Generic grouped lowercase forms remain
+unsupported; broadly accepting spaced words risks including following prose.
+
+All contract cases and every non-exempt case must remain exact. The three
 remaining reviewed challenge exceptions are intentionally visible in the baseline:
 
 - context-free phone;
-- context-free IBAN;
-- lowercase IBAN; and
+- context-free IBAN; and
 - newline-split email.
 
 An improvement to an exception passes. Moving a miss to any other case does
