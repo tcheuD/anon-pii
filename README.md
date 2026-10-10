@@ -13,8 +13,19 @@ proof that a payload is fully anonymized.
 
 ## Try it in 10 seconds
 
+Preview what the configured detectors remove, without installing an AI tool or
+sending data to one:
+
 ```bash
-echo 'Error for user john@acme.com (IP 10.0.0.5) card 4111111111111111' \
+echo 'Error for user john@example.com (IP 192.0.2.5)' \
+  | anon-pii run --dry-run
+```
+
+Inspect the preview for missed sensitive values. Then run your AI command with
+the original input:
+
+```bash
+echo 'Error for user john@example.com (IP 192.0.2.5)' \
   | anon-pii run -- claude -p "what failed?"
 ```
 
@@ -29,6 +40,8 @@ protected, so review the limitations below before using real data.
   child process instead of coordinating a mutable default mapping file.
 - **Fail-safe handoff** — the complete bounded input is read and anonymized
   before the child starts.
+- **Review before handoff** — `run --dry-run` previews the anonymized payload
+  without starting a command or saving a mapping.
 - **Format-aware core** — text, JSON values, CSV fields, and SQL string literals
   are transformed without treating the whole payload as an undifferentiated
   string.
@@ -148,6 +161,9 @@ To update after code changes, re-run the same `cargo install` command.
 ## Quick Start
 
 ```bash
+# Inspect anonymized input locally; no AI command or mapping file needed
+cat debug.json | anon-pii run --dry-run
+
 # Recommended: one in-memory AI roundtrip
 cat debug.json | anon-pii run -- claude -p "explain this error"
 
@@ -213,6 +229,35 @@ This contract covers recognized values only. Missed PII, values outside the
 configured recognizers, child-generated sensitive data, and sensitive stderr
 can still leave the intended boundary. `run` is not a compliance control or a
 substitute for reviewing what is sent to a third-party tool.
+
+### Preview before running a command
+
+```bash
+cat debug.json | anon-pii run --dry-run
+# Or preview an existing invocation without executing its command:
+cat debug.json | anon-pii run --dry-run -- claude -p "explain this error"
+```
+
+`--dry-run` uses the same input validation, detection options, and format
+processing as `run`. It writes the prepared child-stdin payload to stdout and
+a summary of unique detections by entity type to stderr. The summary contains
+no original values. Repeated occurrences of the same value and entity type
+count once. A command is optional and is never started in this mode. No mapping
+is saved, and existing detached-workflow mappings are left untouched.
+
+Place `--dry-run` before `--`; flags after the child program belong to that
+program. Detection options still go before `run`:
+
+```bash
+cat incident.txt | anon-pii --threshold 0.7 --format text run --dry-run
+```
+
+The preview can contain missed sensitive values, including when the summary
+reports zero detections. Inspect it locally before sharing. To execute the
+roundtrip, rerun with the original input and remove `--dry-run`. Each invocation
+generates fresh tokens: the preview is not a saved transaction or a guarantee
+that a later invocation sends the exact reviewed bytes. Preview tokens cannot
+be restored after the preview exits because its mapping is discarded.
 
 ## Mapping Persistence
 
@@ -337,7 +382,7 @@ sequenceDiagram
 
 <!-- BEGIN COMMANDS -->
 ```bash
-anon-pii run <COMMAND>       # Anonymize stdin, run a command, and restore tokens from its stdout in memory
+anon-pii run [COMMAND]       # Anonymize stdin, run a command, and restore tokens from its stdout in memory
 anon-pii restore [INPUT_POSITIONAL] # Restore original values from anonymized data
 anon-pii list-entities                 # List all supported entity types
 anon-pii api                 # Start Presidio-compatible REST API server (requires `proxy` feature)
@@ -383,6 +428,7 @@ See [docs/entities.md](docs/entities.md) for the exact entity inventory, confide
 | Guide | Description |
 |-------|-------------|
 | [Quality and claim policy](docs/quality.md) | Scope tiers, evidence requirements, and quality gates |
+| [Product direction](docs/product-direction.md) | Target workflow, current priorities, and evidence needed for expansion |
 | [Comparison with `censgate/redact`](docs/comparison-redact.md) | Pinned, configuration-specific product comparison without a winner claim |
 | [Entity types](docs/entities.md) | Exact recognizer inventory, scores, validators, and context requirements |
 | [Proxy mode](docs/proxy.md) | Anonymizing reverse proxy for Anthropic, OpenAI, and generic LLM APIs |

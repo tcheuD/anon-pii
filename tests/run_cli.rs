@@ -183,4 +183,197 @@ fn run_help_explains_transaction_owned_roundtrip() {
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("Anonymize stdin"));
     assert!(help.contains("COMMAND"));
+    assert!(help.contains("--dry-run"));
+}
+
+#[test]
+fn dry_run_previews_payload_without_starting_child_or_touching_mapping() {
+    let home = tempfile::tempdir().unwrap();
+    let mapping_dir = home.path().join(".anon-pii");
+    fs::create_dir(&mapping_dir).unwrap();
+    let mapping = mapping_dir.join("mapping.json");
+    fs::write(&mapping, b"existing detached workflow mapping").unwrap();
+    let marker = home.path().join("child-started");
+
+    let output = run_with_input(
+        home.path(),
+        &[
+            "--verbose",
+            "run",
+            "--dry-run",
+            "--",
+            "sh",
+            "-c",
+            "touch \"$1\"; cat",
+            "_",
+            marker.to_str().unwrap(),
+        ],
+        b"Contact john@example.com or john@example.com",
+    );
+
+    assert!(output.status.success());
+    assert!(!marker.exists(), "dry run must not execute the child");
+    assert_eq!(
+        fs::read(mapping).unwrap(),
+        b"existing detached workflow mapping"
+    );
+    assert_eq!(fs::read_dir(mapping_dir).unwrap().count(), 1);
+    let preview = String::from_utf8(output.stdout).unwrap();
+    assert!(!preview.contains("john@example.com"));
+    let email_token = regex::Regex::new(r"\[EMAIL_ADDRESS_[0-9a-f]{8}\]").unwrap();
+    let tokens: Vec<_> = email_token
+        .find_iter(&preview)
+        .map(|m| m.as_str())
+        .collect();
+    assert_eq!(tokens.len(), 2);
+    assert_eq!(tokens[0], tokens[1]);
+    assert_eq!(preview, format!("Contact {} or {}", tokens[0], tokens[1]));
+
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("no command was started; no mapping was saved"));
+    assert!(stderr.contains("Unique entities detected: 1"));
+    assert!(stderr.contains("EMAIL_ADDRESS: 1"));
+    assert!(stderr.contains("Review the preview for missed sensitive values"));
+    assert!(!stderr.contains("john@example.com"));
+    assert!(
+        !stderr.contains("j***m"),
+        "summary must not print masked originals"
+    );
+}
+
+#[test]
+fn dry_run_needs_no_command_and_keeps_no_detection_input_byte_exact() {
+    let home = tempfile::tempdir().unwrap();
+    for input in [b"".as_slice(), b"ordinary text", b"ordinary text\n"] {
+        let output = run_with_input(home.path(), &["run", "--dry-run"], input);
+        assert!(output.status.success());
+        assert_eq!(output.stdout, input);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("Unique entities detected: 0"));
+        assert!(stderr.contains("Review the preview"));
+    }
+    assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn dry_run_uses_the_run_format_and_detection_options() {
+    let home = tempfile::tempdir().unwrap();
+    for (format, input) in [
+        ("json", "{\"email\":\"john@example.com\",\"count\":42}"),
+        ("csv", "email,count\r\njohn@example.com,42\r\n"),
+        (
+            "sql",
+            "INSERT INTO users (email) VALUES ('john@example.com');",
+        ),
+    ] {
+        let output = run_with_input(
+            home.path(),
+            &["--format", format, "run", "--dry-run"],
+            input.as_bytes(),
+        );
+        assert!(output.status.success());
+        let preview = String::from_utf8(output.stdout).unwrap();
+        assert!(!preview.contains("john@example.com"));
+        let token = regex::Regex::new(r"\[EMAIL_ADDRESS_[0-9a-f]{8}\]").unwrap();
+        assert_eq!(token.find_iter(&preview).count(), 1);
+        let restored = token.replace_all(&preview, "john@example.com");
+        if format == "json" {
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&restored).unwrap(),
+                serde_json::from_str::<serde_json::Value>(input).unwrap()
+            );
+        } else {
+            assert_eq!(restored, input);
+        }
+        assert!(String::from_utf8_lossy(&output.stderr).contains(&format!("format: {format}")));
+    }
+
+    let config = home.path().join("recognizers.yaml");
+    fs::write(
+        &config,
+        "recognizers:\n  - name: Synthetic ID\n    entity_type: CUSTOMER_ID\n    patterns:\n      - regex: 'SYNTHETIC-[A-Z]{4}'\n        score: 0.8\n",
+    )
+    .unwrap();
+    for (threshold, expected) in [("0.5", true), ("0.9", false)] {
+        let output = run_with_input(
+            home.path(),
+            &[
+                "--config",
+                config.to_str().unwrap(),
+                "--threshold",
+                threshold,
+                "run",
+                "--dry-run",
+            ],
+            b"Customer SYNTHETIC-ABCD",
+        );
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let preview = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(preview.contains("[CUSTOMER_ID_"), expected);
+        assert_eq!(preview.contains("SYNTHETIC-ABCD"), !expected);
+    }
+}
+
+#[test]
+fn dry_run_rejects_invalid_input_before_output_or_child_spawn() {
+    let home = tempfile::tempdir().unwrap();
+    let marker = home.path().join("child-started");
+    for (format, input) in [("json", b"{invalid json".as_slice()), ("text", b"\xff")] {
+        let output = run_with_input(
+            home.path(),
+            &[
+                "--format",
+                format,
+                "run",
+                "--dry-run",
+                "--",
+                "touch",
+                marker.to_str().unwrap(),
+            ],
+            input,
+        );
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!marker.exists());
+    }
+    assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn dry_run_rejects_options_that_persist_or_expose_mapping() {
+    let home = tempfile::tempdir().unwrap();
+    for option in ["--mapping-stderr", "--include-mapping", "--share"] {
+        let output = run_with_input(
+            home.path(),
+            &[option, "run", "--dry-run"],
+            b"john@example.com",
+        );
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported option(s)"));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("john@example.com"));
+    }
+    assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn run_still_requires_a_command_without_dry_run() {
+    let home = tempfile::tempdir().unwrap();
+    let output = run_with_input(home.path(), &["run"], b"");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("COMMAND"));
+}
+
+#[test]
+fn run_forwards_dry_run_after_separator_to_child() {
+    let home = tempfile::tempdir().unwrap();
+    let output = run_with_input(
+        home.path(),
+        &["run", "--", "/usr/bin/printf", "%s", "--dry-run"],
+        b"",
+    );
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"--dry-run");
+    assert!(output.stderr.is_empty());
 }

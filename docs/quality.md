@@ -38,6 +38,16 @@ For `anon-pii run -- <command> [args...]`:
 sandbox: it does not restrict the child process's network, filesystem,
 environment, subprocesses, or other side effects.
 
+`run --dry-run` exercises the same preparation path but returns the prepared
+payload on stdout without starting a child. It accepts an optional command,
+reports unique detection counts on stderr without original values, and neither
+creates nor replaces a persisted mapping. Preview output keeps the prepared
+payload's exact bytes, including its trailing-newline behavior. Its tests cover
+text, JSON, CSV, SQL, custom recognizers, thresholds, invalid input, command
+argument forwarding, and preservation of an existing detached mapping.
+Preview tokens are invocation-local and cannot be restored after exit. A later
+`run` invocation is a fresh transaction, not execution of saved preview bytes.
+
 The contract applies only to values recognized by the selected recognizers and
 thresholds. False negatives, child-generated sensitive output, and sensitive
 stderr remain possible. The tool is not a compliance control and does not prove
