@@ -102,6 +102,93 @@ fn test_iban_british() {
 }
 
 #[test]
+fn test_uk_iban_compact_without_context_exact_spans_and_roundtrip() {
+    for iban in [
+        "GB82WEST12345698765432",
+        "GB29NWBK60161331926819",
+        "gb82west12345698765432",
+        "gb29nwbk60161331926819",
+        "gB82WeSt12345698765432",
+        "Gb29NwBk60161331926819",
+    ] {
+        for prefix in ["value=", "Échec 🧪 — value="] {
+            for suffix in ["", "; please investigate.", " HELP", " 1234 AB12"] {
+                assert_iban_exact_roundtrip(iban, "IBAN_CODE", prefix, suffix);
+            }
+        }
+    }
+}
+
+#[test]
+fn test_uk_iban_compact_keeps_score_and_strict_threshold_with_context() {
+    for prefix in ["value=", "IBAN "] {
+        let input = format!("{prefix}GB82WEST12345698765432");
+        let mut anonymizer = Anonymizer::new(0.7);
+        anonymizer.context_boost = 1.0;
+        let (_, detections) = anonymizer.anonymize_text(&input);
+        assert_eq!(detections.len(), 1, "{input}; {detections:?}");
+        assert_eq!(detections[0].entity_type, "IBAN_CODE");
+        assert_eq!(
+            detections[0].score, 0.7,
+            "context must not inflate the score"
+        );
+
+        let mut strict = Anonymizer::new(0.8);
+        strict.context_boost = 1.0;
+        let (output, detections) = strict.anonymize_text(&input);
+        assert_eq!(output, input);
+        assert!(detections.is_empty(), "{input}; {detections:?}");
+        assert!(strict.mapping.mappings.is_empty());
+    }
+}
+
+#[test]
+fn test_uk_iban_compact_rejects_checksum_valid_structural_impostors() {
+    // These fictional values all pass mod-97. A checksum alone cannot justify
+    // recognizing an unsupported country, wrong fields, or invalid check digits.
+    for iban in [
+        "ZZ33WEST12345698765432", // unsupported country
+        "GB88WEST1234569876543",  // wrong GB length
+        "GB93WES112345698765432", // digit in the four-letter bank code
+        "GB00TEST00000000000090", // check digits below 02
+        "GB01TEST00000000000072",
+        "GB99TEST00000000000054", // check digits above 98
+    ] {
+        assert!(
+            crate::patterns::iban_mod97(iban),
+            "fixture checksum: {iban}"
+        );
+        assert_no_iban_detection(&format!("value={iban}"));
+    }
+}
+
+#[test]
+fn test_uk_iban_compact_rejects_bad_checksums_and_embedded_values() {
+    for value in [
+        "GB83WEST12345698765432",
+        "GB82WEST12345698765433",
+        "xGB82WEST12345698765432",
+        "éGB82WEST12345698765432",
+        "_GB82WEST12345698765432",
+        "GB82WEST12345698765432_foo",
+        "GB82WEST12345698765432abc",
+        "GB82WEST12345698765432é",
+        "GB82WEST123456987654321",
+        "GB82WEST1234569876543",
+    ] {
+        assert_no_iban_detection(&format!("value={value}"));
+    }
+}
+
+#[test]
+fn test_uk_iban_grouped_uppercase_still_requires_context() {
+    for iban in ["GB82 WEST 1234 5698 7654 32", "GB29 NWBK 6016 1331 9268 19"] {
+        assert_no_iban_detection(&format!("value={iban}"));
+        assert_iban_exact_roundtrip(iban, "IBAN_CODE", "IBAN ", "");
+    }
+}
+
+#[test]
 fn test_iban_spanish() {
     let mut a = Anonymizer::new(0.0);
     // ES91 2100 0418 4502 0005 1332 - valid mod-97
@@ -244,6 +331,9 @@ fn assert_iban_exact_roundtrip(iban: &str, entity_type: &str, prefix: &str, suff
     );
     let detection = &detections[0];
     assert_eq!(detection.entity_type, entity_type, "{input}");
+    if entity_type == "IBAN_CODE" {
+        assert_eq!(detection.score, 0.7, "{input}");
+    }
     assert_eq!(detection.original, iban, "{input}");
     assert_eq!(detection.start, prefix.len(), "{input}");
     assert_eq!(detection.end, prefix.len() + iban.len(), "{input}");
@@ -279,8 +369,8 @@ fn test_iban_ascii_casing_keeps_checksum_and_context_gates() {
         "IBAN de90370400440532013000",
         "IBAN fr1520041010050500013m02606",
         "IBAN fr14 2004 1010 0505 0001 3m02 607",
-        "code gb82west12345698765432 here", // generic context is still required
-        "code gB82WeSt12345698765432 here",
+        "code de89370400440532013000 here", // non-UK generic context is still required
+        "code nL91AbNa0417164300 here",
     ] {
         assert_no_iban_detection(input);
     }
@@ -313,6 +403,7 @@ fn test_generic_grouped_lowercase_is_not_rescued_by_shorter_prefixes() {
     // particular, never trim a failed candidate until its checksum happens to
     // pass. French print format has fixed field lengths and is covered above.
     for input in [
+        "value=gb82 west 1234 5698 7654 32",
         "IBAN gb82 west 1234 5698 7654 32",
         "IBAN gB82 WeSt 1234 5698 7654 32 help",
         "IBAN gb82 west 1234 5698 7654 32 please investigate",

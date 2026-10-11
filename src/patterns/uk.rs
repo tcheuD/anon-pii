@@ -1,10 +1,20 @@
 //! UK-specific PII patterns.
 //!
-//! Contains patterns for: UK_NHS, UK_NINO.
+//! Contains patterns for: UK_NHS, UK_NINO, and compact GB IBAN_CODE.
 
 use super::PiiPattern;
 
 pub const UK_PATTERNS: &[PiiPattern] = &[
+    // A complete compact GB IBAN can stand alone without a financial keyword.
+    // Require the national field structure; IBAN_CODE also validates mod-97.
+    PiiPattern {
+        name: "uk_iban_compact",
+        entity_type: "IBAN_CODE",
+        pattern: r"\b[Gg][Bb](?:0[2-9]|[1-8][0-9]|9[0-8])[A-Za-z]{4}[0-9]{14}\b",
+        score: 0.7,
+        context_keywords: &[],
+        context_required: false,
+    },
     // ── UK NHS Number ──
     PiiPattern {
         name: "uk_nhs_spaced",
