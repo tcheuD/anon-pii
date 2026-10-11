@@ -142,8 +142,9 @@ not customer adoption or production-accuracy estimates.
 Generic lowercase and mixed-case IBAN recognition covers compact ASCII forms
 and retains the existing context and checksum requirements. French compact and
 fixed print forms also accept ASCII casing. Replacement and restoration preserve
-the original casing and surrounding text. Generic grouped lowercase forms remain
-unsupported; broadly accepting spaced words risks including following prose.
+the original casing and surrounding text. Outside the country-specific French
+and UK print rules, grouped lowercase forms remain unsupported; broadly
+accepting spaced words risks including following prose.
 
 The separate compact UK rule recognizes a complete 22-character GB IBAN without
 a context keyword: ASCII-case `GB`, check digits 02–98, four ASCII bank letters,
@@ -154,6 +155,16 @@ the existing context-gated generic rule remains broader. Grouped UK forms still
 require context. This improvement is included in source builds and the browser
 engine. Native archives through v0.3.5 do not include it; v0.3.6 is the first
 native release with this rule.
+
+Current source builds and the browser engine also recognize ASCII-case UK print
+groups such as `gb82 west 1234 5698 7654 32` with space/tab separators, financial
+context, and a valid mod-97 checksum. The fixed 4-4-4-4-4-2 groups enforce the
+same national fields and check-digit range as the compact UK rule. Replacement
+and restoration preserve the original separators and spelling. This rule does
+not extend lowercase/mixed-case support across line breaks. It keeps score
+`0.7` and requires context; threshold `0.8` rejects it. The broader generic
+uppercase matcher is unchanged. Native archives through v0.3.7 predate this
+grouped-casing addition.
 
 Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
 spaces/tabs and a complete domain. Preparation and restoration preserve the

@@ -1,6 +1,6 @@
 //! UK-specific PII patterns.
 //!
-//! Contains patterns for: UK_NHS, UK_NINO, and compact GB IBAN_CODE.
+//! Contains patterns for: UK_NHS, UK_NINO, and GB IBAN_CODE.
 
 use super::PiiPattern;
 
@@ -14,6 +14,19 @@ pub const UK_PATTERNS: &[PiiPattern] = &[
         score: 0.7,
         context_keywords: &[],
         context_required: false,
+    },
+    // Fixed print groups preserve field boundaries without consuming nearby
+    // prose. Grouped GB values still need financial context and valid mod-97.
+    PiiPattern {
+        name: "uk_iban_print",
+        entity_type: "IBAN_CODE",
+        pattern: r"\b[Gg][Bb](?:0[2-9]|[1-8][0-9]|9[0-8])[ \t][A-Za-z]{4}(?:[ \t][0-9]{4}){3}[ \t][0-9]{2}\b",
+        score: 0.7,
+        context_keywords: &[
+            "iban", "compte", "account", "virement", "bank", "banque", "bancaire", "transfer",
+            "swift", "bic", "payment", "paiement",
+        ],
+        context_required: true,
     },
     // ── UK NHS Number ──
     PiiPattern {

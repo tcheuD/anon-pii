@@ -475,6 +475,40 @@ try {
     assert.equal(await page.evaluate(() => window.__copied.at(-1)), ticket);
   });
 
+  await check('grouped UK IBAN casing roundtrips exactly with financial context', async () => {
+    // Casing variants of the public GB82 WEST and GB29 NWBK checksum examples.
+    const variants = [
+      'gb82 west 1234 5698 7654 32',
+      'gB82 wEsT 1234 5698 7654 32',
+      'gb29 nwbk 6016 1331 9268 19',
+      'gB29 nWbK 6016 1331 9268 19',
+    ];
+    for (const iban of variants) {
+      const prefix = 'Échec 🧪 — IBAN ';
+      const suffix = ' please investigate.\nréponse en attente.';
+      const ticket = `${prefix}${iban}${suffix}`;
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      const prepared = await input('ticket-prepared');
+      const token = prepared.match(/\[IBAN_CODE_[a-f0-9]{8}\]/)?.[0];
+      assert.ok(token, `${iban}: the complete grouped IBAN must be detected`);
+      assert.equal(prepared, `${prefix}${token}${suffix}`, 'mask only the IBAN, preserving Unicode and following prose');
+      await click('copy-ticket');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), prepared);
+      await field('ticket-reply').fill(prepared);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), ticket, 'restore exact casing, grouping, Unicode, and newline');
+      await click('copy-reply');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), ticket);
+    }
+    for (const iban of [variants[0], variants[3]]) {
+      const ticket = `Échec 🧪 — valeur ${iban} please investigate.`;
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      assert.equal(await input('ticket-prepared'), ticket, 'grouped UK IBANs still require financial context');
+    }
+  });
+
   await check('emails wrapped immediately after @ prepare, copy, and restore exact source text', async () => {
     // Textareas normalize CRLF to LF; native tests cover the CRLF source form.
     for (const email of [

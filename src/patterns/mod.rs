@@ -388,10 +388,10 @@ mod tests {
 
     #[test]
     fn test_patterns_count() {
-        // Current count: 103 patterns. Update this if patterns are added/removed.
+        // Current count: 104 patterns. Update this if patterns are added/removed.
         assert_eq!(
             PATTERNS.len(),
-            103,
+            104,
             "PATTERNS count changed - update this test if intentional"
         );
     }
