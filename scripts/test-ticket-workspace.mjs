@@ -636,6 +636,126 @@ try {
     assert.equal(await input('ticket-restored'), ticket, 'rejected selections must retain both kinds of mapping');
   });
 
+  await check('readonly output history shortcuts preserve source, manual mappings, and restoration provenance', async () => {
+    const workspaceValues = () => page.evaluate(() => Object.fromEntries(
+      ['ticket-source', 'ticket-prepared', 'ticket-reply', 'ticket-restored'].map(id => [id, document.getElementById(id).value]),
+    ));
+    for (const outputField of ['ticket-prepared', 'ticket-restored']) {
+      // A fresh document gives native editing history a deterministic starting
+      // point. Programmatic selection is only used for the manual protection.
+      await page.reload({ waitUntil: 'networkidle' });
+      await page.waitForFunction(() => document.getElementById('engstats').textContent.includes('Local engine ready'));
+      await field('ticket-source').focus();
+      await page.keyboard.insertText(manualSource);
+      await click('prepare-ticket');
+      if (outputField === 'ticket-prepared') {
+        await field('ticket-source').focus();
+        await page.keyboard.press('Control+End');
+        await page.keyboard.insertText(' queued source edit');
+        await page.keyboard.press('Control+z');
+        assert.equal(await input('ticket-source'), manualSource);
+        await click('prepare-ticket');
+      }
+      const { output, token } = await protectFirst(manualValue);
+      if (outputField === 'ticket-restored') {
+        const replyText = `${output} [UNKNOWN_deadbeef]`;
+        await field('ticket-reply').focus();
+        await page.keyboard.insertText(replyText);
+        await click('restore-reply');
+        await field('ticket-reply').focus();
+        await page.keyboard.press('Control+End');
+        await page.keyboard.insertText(' queued reply edit');
+        await page.keyboard.press('Control+z');
+        assert.equal(await input('ticket-reply'), replyText);
+        await click('restore-reply');
+      }
+      const expected = await workspaceValues();
+      const outcome = outputField === 'ticket-restored' ? await field('ticket-status').textContent() : '';
+      await field(outputField).focus();
+      // Undo and redo entries are both available in the last editable field.
+      for (const shortcut of ['Control+z', 'Control+Shift+z', 'Control+y']) {
+        await page.keyboard.press(shortcut);
+        assert.deepEqual(await workspaceValues(), expected, `${outputField}: ${shortcut}`);
+        assert.equal(await page.evaluate(() => document.activeElement.id), outputField);
+        const status = await field('ticket-status').textContent();
+        assert.match(status, /read-only.*ticket and mapping are unchanged/);
+        if (outcome) assert.ok(status.endsWith(outcome), 'keep restored and unresolved counts visible');
+      }
+      await page.keyboard.press('Control+a');
+      assert.equal(await field(outputField).evaluate(element => element.value.slice(element.selectionStart, element.selectionEnd)), expected[outputField]);
+      await click('copy-ticket');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), output);
+      if (outputField === 'ticket-restored') {
+        await click('copy-reply');
+        assert.equal(await page.evaluate(() => window.__copied.at(-1)), `${manualSource} [UNKNOWN_deadbeef]`);
+        assert.equal(await field('ticket-status').textContent(), `Reply copied. ${outcome}`);
+      }
+      await field('ticket-reply').fill(`${output} ${token}`);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), `${manualSource} ${manualValue}`, 'automatic and manual tokens must remain usable');
+    }
+  });
+
+  await check('editable source and reply retain native undo and both redo shortcuts', async () => {
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForFunction(() => document.getElementById('engstats').textContent.includes('Local engine ready'));
+    const ticket = 'contact avery@example.invalid';
+    await field('ticket-source').focus();
+    await page.keyboard.insertText(ticket);
+    await click('prepare-ticket');
+    for (const id of ['ticket-source', 'ticket-reply']) {
+      const original = id === 'ticket-source' ? ticket : await input('ticket-prepared');
+      if (id === 'ticket-reply') {
+        await field(id).focus();
+        await page.keyboard.insertText(original);
+        await click('restore-reply');
+      }
+      await field(id).focus();
+      await page.keyboard.press('Control+End');
+      await page.keyboard.insertText(' updated');
+      for (const redo of ['Control+Shift+z', 'Control+y']) {
+        await page.keyboard.press('Control+z');
+        assert.equal(await input(id), original, `${id}: native undo`);
+        assert.equal(await input('ticket-restored'), '');
+        assert.equal(await disabled('copy-reply'), true);
+        await page.keyboard.press(redo);
+        assert.equal(await input(id), `${original} updated`, `${id}: native redo`);
+      }
+      if (id === 'ticket-source') {
+        assert.equal(await input('ticket-prepared'), '', 'source edits still invalidate the mapping');
+        await click('prepare-ticket');
+      }
+    }
+    await click('restore-reply');
+    assert.equal(await input('ticket-restored'), `${ticket} updated updated`);
+  });
+
+  await check('history key prevention is scoped to readonly outputs and preserves other shortcuts', async () => {
+    // Linux cannot exercise native macOS editing history. Check cancellation
+    // of Command+Z events explicitly, and keep Command+Y browser History free.
+    const results = await page.evaluate(() => {
+      const keys = [
+        ['Control+Z', { key: 'z', ctrlKey: true }, true],
+        ['Control+Shift+Z', { key: 'Z', ctrlKey: true, shiftKey: true }, true],
+        ['Control+Y', { key: 'y', ctrlKey: true }, true],
+        ['Meta+Z', { key: 'z', metaKey: true }, true],
+        ['Meta+Shift+Z', { key: 'Z', metaKey: true, shiftKey: true }, true],
+        ['Meta+Y', { key: 'y', metaKey: true }, false],
+        ['Control+Shift+Y', { key: 'Y', ctrlKey: true, shiftKey: true }, false],
+        ['Control+A', { key: 'a', ctrlKey: true }, false],
+        ['Control+C', { key: 'c', ctrlKey: true }, false],
+        ['Control+Alt+Z', { key: 'z', ctrlKey: true, altKey: true }, false],
+        ['plain Z', { key: 'z' }, false],
+      ];
+      return ['ticket-prepared', 'ticket-restored', 'ticket-source', 'ticket-reply', 'copy-ticket'].flatMap(id => keys.map(([shortcut, options, history]) => {
+        const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...options });
+        document.getElementById(id).dispatchEvent(event);
+        return { label: `${id}: ${shortcut}`, prevented: event.defaultPrevented, expected: history && ['ticket-prepared', 'ticket-restored'].includes(id) };
+      }));
+    });
+    for (const result of results) assert.equal(result.prevented, result.expected, result.label);
+  });
+
   const settleClipboard = async outcome => {
     await page.evaluate(outcome => {
       window.__clipboardPending = false;
