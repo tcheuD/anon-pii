@@ -148,6 +148,50 @@ fn versioned_workflows_roundtrip_without_structural_loss() {
 }
 
 #[test]
+fn encoded_url_schemes_preserve_complete_raw_spans_and_roundtrip() {
+    for (opening, url, suffix) in [
+        (
+            "",
+            "%68ttps://example.invalid/?note=left%20right",
+            " ; please investigate.\r\n",
+        ),
+        (
+            "\"",
+            "http%3A%2F%2Fexample.invalid/?note=%22quoted%22",
+            "\" ; please investigate.\r\n",
+        ),
+        (
+            "",
+            "%68%74%74%70%73%3a%2f%2fexample.invalid/?note=first%0Asecond",
+            "\nréponse en attente.\r\n",
+        ),
+        (
+            "(",
+            "%68%74%74%70%3A%2F%2Fexample.invalid/?note=left%20%22middle%22%0Aright",
+            ") ; please investigate.\r\n",
+        ),
+    ] {
+        let prefix = format!("Échec 🧪 — {opening}");
+        let source = format!("{prefix}{url}{suffix}");
+        let mut anonymizer = Anonymizer::new(0.0);
+        let (output, detections) = anonymizer.anonymize_text(&source);
+
+        assert_eq!(detections.len(), 1, "expected one complete URL: {source}");
+        let detected = &detections[0];
+        assert_eq!(detected.entity_type, "URL");
+        assert_eq!(detected.start, prefix.len());
+        assert_eq!(detected.end, prefix.len() + url.len());
+        assert_eq!(detected.original, url);
+        assert_eq!(anonymizer.mapping.mappings.len(), 1);
+        let (token, original) = anonymizer.mapping.mappings.iter().next().unwrap();
+        assert!(token.starts_with("[URL_") && token.ends_with(']'));
+        assert_eq!(original.as_str(), url);
+        assert_eq!(output, format!("{prefix}{token}{suffix}"));
+        assert_eq!(anonymizer.mapping.restore_bracketed(&output), source);
+    }
+}
+
+#[test]
 fn workflow_schema_covers_each_supported_debug_format() {
     let corpus = load_workflows();
     let ids: BTreeSet<&str> = corpus.cases.iter().map(|case| case.id.as_str()).collect();

@@ -328,12 +328,16 @@ try {
   });
 
   await check('percent-encoded URLs are fully masked before copying and restore exact source text', async () => {
-    const prefix = 'Échec 🧪 — ';
-    for (const [url, suffix] of [
+    for (const [url, suffix, opening = ''] of [
       ['https://example.invalid/?account=GB82%20WEST%201234%205698%207654%2032', '.'],
       ['https://example.invalid/?iban=gb29%20nwbk%206016%201331%209268%2019', ' please investigate.\nréponse en attente.'],
       ['https://example.invalid/debug?note=before%29middle%5Dafter%22quote%27end%3E&next=ok', ' ; ticket remains open.'],
+      ['%68ttps://example.invalid/?note=left%20right', ' ; please investigate.'],
+      ['http%3A%2F%2Fexample.invalid/?note=%22quoted%22', '" ; please investigate.', '"'],
+      ['%68%74%74%70%73%3a%2f%2fexample.invalid/?note=first%0Asecond', '\nréponse en attente.'],
+      ['%68%74%74%70%3A%2F%2Fexample.invalid/?note=left%20%22middle%22%0Aright', ') ; ticket remains open.', '('],
     ]) {
+      const prefix = `Échec 🧪 — ${opening}`;
       const ticket = `${prefix}${url}${suffix}`;
       await field('ticket-source').fill(ticket);
       await click('prepare-ticket');

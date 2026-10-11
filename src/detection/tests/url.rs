@@ -189,6 +189,164 @@ fn url_boundary_view_does_not_change_custom_recognizer_collisions() {
 }
 
 #[test]
+fn url_percent_encoded_scheme_preserves_complete_encoded_body() {
+    let mut a = Anonymizer::new(0.5);
+    for scheme in [
+        "https%3A%2F%2F",
+        "http%3a%2f%2f",
+        "%68%74%74%70%73%3a%2f%2f",
+        "%68ttp%73:%2F/",
+        "h%74t%70%3A/%2f",
+    ] {
+        for body in [
+            "example.invalid%2F%3Faccount%3DGB82%20WEST%201234%205698%207654%2032",
+            "example.invalid/?note=before%22after",
+            "example.invalid/?note=before%0aafter",
+            "example.invalid/?note=before%20",
+            "example.invalid/?note=before%22",
+        ] {
+            let url = format!("{scheme}{body}");
+            let input = format!("Échec 🧪 — callback={url}, then retry.");
+            let detections = assert_complete_url(&mut a, &input, &url);
+            assert_eq!(
+                detections
+                    .iter()
+                    .find(|d| d.entity_type == "URL")
+                    .unwrap()
+                    .score,
+                0.9
+            );
+        }
+    }
+}
+
+#[test]
+fn url_percent_encoded_scheme_keeps_literal_boundaries_and_source_spelling() {
+    let mut a = Anonymizer::new(0.5);
+    for scheme in [r"\u0068ttps%3a%2f%2f", "ｈｔｔｐｓ％３Ａ％２Ｆ％２Ｆ"] {
+        let url = format!("{scheme}example.invalid/?note=before%20after");
+        for suffix in [
+            " next",
+            "\tnext",
+            "\nnext",
+            "\r\nnext",
+            "\")",
+            "'].",
+            ">",
+            ", then retry.",
+        ] {
+            let input = format!("Échec 🧪 — {url}{suffix}");
+            assert_complete_url(&mut a, &input, &url);
+        }
+    }
+}
+
+#[test]
+fn url_percent_encoded_scheme_does_not_decode_recursively_or_expand_schemes() {
+    let mut a = Anonymizer::new(0.5);
+    // Isolate URL recognition: other entity recognizers may legitimately match
+    // text in an unsupported URL, but must not manufacture a complete URL.
+    a.patterns.retain(|p| p.name == "url");
+    for scheme in [
+        "https%253A%252F%252F",
+        "%2568ttps%3A%2F%2F",
+        "https%3A%2F",
+        "https%3A%2",
+        "https%3G%2F%2F",
+        "ftp%3A%2F%2F",
+        "HTTPS%3A%2F%2F",
+        "%48ttps%3A%2F%2F",
+    ] {
+        let input = format!("{scheme}example.invalid/?note=before%20after");
+        let (prepared, detections) = a.anonymize_text(&input);
+        assert_eq!(prepared, input);
+        assert!(detections.is_empty(), "{input:?}: {detections:?}");
+    }
+    assert!(a.mapping.mappings.is_empty());
+}
+
+#[test]
+fn url_percent_encoded_scheme_preserves_threshold_selection_and_password() {
+    let url = "https%3A%2F%2Fexample.invalid/?note=before%20after";
+    let mut strict = Anonymizer::new(0.95);
+    let (prepared, detections) = strict.anonymize_text(url);
+    assert_eq!(prepared, url);
+    assert!(detections.is_empty());
+    assert!(strict.mapping.mappings.is_empty());
+
+    let mut a = Anonymizer::new(0.5);
+    assert!(a.analyze_with_entities(url, Some(&[])).is_empty());
+    assert!(a.mapping.mappings.is_empty());
+    let input = format!(r#"password="private-prefix {url} private-suffix""#);
+    let (prepared, detections) = a.anonymize_text(&input);
+    assert_eq!(detections.len(), 1, "{detections:?}");
+    assert_eq!(detections[0].entity_type, "PASSWORD");
+    assert_eq!(detections[0].original, input);
+    assert_eq!(a.mapping.mappings.len(), 1);
+    let token = a.mapping.mappings.keys().next().unwrap();
+    assert_eq!(&prepared, token);
+    assert_eq!(a.mapping.restore_bracketed(&prepared), input);
+}
+
+#[test]
+fn url_percent_encoded_scheme_keeps_raw_query_audit_boundaries() {
+    for (query, expected_audits) in [("?note=a%26b%3Dc%3Fd", 1), ("%3Fnote%3Da%26b%3Dc%3Fd", 0)] {
+        let mut a = Anonymizer::new(0.5);
+        a.patterns.push(CompiledPattern {
+            name: "query_value".into(),
+            entity_type: "QUERY_VALUE".into(),
+            regex: Regex::new(r"^a&b=c\?d$").unwrap(),
+            score: 0.9,
+            context_keywords: Cow::Borrowed(&[]),
+            context_required: false,
+        });
+        let url = format!("https%3a%2f%2fexample.invalid/{query}");
+        let input = format!("Échec 🧪 — {url} done");
+        let detections = assert_complete_url(&mut a, &input, &url);
+        let audits: Vec<_> = detections
+            .iter()
+            .filter(|d| d.entity_type == "QUERY_VALUE")
+            .collect();
+        assert_eq!(audits.len(), expected_audits, "{detections:?}");
+        if let Some(audit) = audits.first() {
+            assert_eq!(audit.original, "a%26b%3Dc%3Fd");
+        }
+        assert_eq!(a.mapping.mappings.len(), 1);
+    }
+}
+
+#[test]
+fn url_percent_encoded_scheme_does_not_extend_custom_recognizers() {
+    let input = "https%3A%2F%2Fexample.invalid/?note=before%20after";
+    let truncated = "https%3A%2F%2Fexample.invalid/?note=before";
+    for collision in ["regex", "entity", "context"] {
+        let mut a = Anonymizer::new(0.5);
+        a.patterns.retain(|p| p.name == "url");
+        let pattern = &mut a.patterns[0];
+        match collision {
+            "regex" => pattern.regex = Regex::new(r"https://example\.invalid/[^\s]+").unwrap(),
+            "entity" => pattern.entity_type = "CUSTOM_URL".into(),
+            "context" => {
+                pattern.context_keywords = Cow::Borrowed(&["allowed"]);
+                pattern.context_required = true;
+            }
+            _ => unreachable!(),
+        }
+        let (prepared, detections) = a.anonymize_text(input);
+        if collision == "context" {
+            assert_eq!(prepared, input);
+            assert!(detections.is_empty());
+            assert!(a.mapping.mappings.is_empty());
+        } else {
+            assert_eq!(detections.len(), 1, "{collision}: {detections:?}");
+            assert_eq!(detections[0].original, truncated, "{collision}");
+            assert!(prepared.ends_with("%20after"));
+            assert_eq!(a.mapping.restore_bracketed(&prepared), input);
+        }
+    }
+}
+
+#[test]
 fn url_percent_encoded_scheme_keeps_the_decoded_fallback() {
     let mut a = Anonymizer::new(0.5);
     let url = "https%3A%2F%2Fexample.invalid%2Fpath%3Femail%3Dada%40example.invalid";
