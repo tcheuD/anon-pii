@@ -184,6 +184,19 @@ an encoded suffix visible after the URL token. Source and browser workflow
 checks cover both forms. Review prepared text before sharing; URL recognition
 is not semantic URL validation.
 
+Column-header context compares Unicode scalar-value columns in normalized
+detection text rather than UTF-8 byte offsets. An accented header such as
+`Éléments déjà vérifiés  phone` can
+therefore supply context to a phone value aligned beneath `phone`, even when the
+header is outside the local keyword window. The existing lookback of up to 20
+preceding lines and four-scalar tolerance around the header keyword remain in
+place; context requirements and score thresholds still apply. This is limited
+text alignment, not a table parser or a measurement of screen columns: tabs are
+not expanded, and combining marks and wide characters do not necessarily match
+their displayed width. Review prepared text when alignment is uncertain.
+The correction is included in current source and browser builds. Native archives
+through v0.3.9 lack it; the native release containing this correction is pending.
+
 Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
 spaces/tabs and a complete domain. Preparation and restoration preserve the
 source newline, indentation, and spelling. Blank lines, whitespace before the
