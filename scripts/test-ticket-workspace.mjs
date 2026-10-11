@@ -107,8 +107,63 @@ try {
     await field('ticket-reply').fill(`${tokenized}\nUnknown: ${unknown}`);
     await click('restore-reply');
     assert.equal(await input('ticket-restored'), `${source}\nUnknown: ${unknown}`);
+    const outcome = 'Restored 2 token occurrences with the current ticket mapping. Original sensitive values are visible. 1 unrecognized token-shaped placeholder left unchanged. Check that the reply uses this ticket’s unchanged tokens.';
+    assert.equal(await field('ticket-status').textContent(), outcome);
     await click('copy-reply');
     assert.equal(await page.evaluate(() => window.__copied.at(-1)), `${source}\nUnknown: ${unknown}`);
+    assert.equal(await field('ticket-status').textContent(), `Reply copied. ${outcome}`);
+  });
+
+  await check('restore status counts repeated known token occurrences', async () => {
+    for (const [reply, expected, outcome] of [
+      [
+        oldToken,
+        'avery@example.invalid',
+        'Restored 1 token occurrence with the current ticket mapping. Original sensitive values are visible. Review the reply; changed or incomplete tokens may not be recognized.',
+      ],
+      [
+        `${oldToken} / ${oldToken}`,
+        'avery@example.invalid / avery@example.invalid',
+        'Restored 2 token occurrences with the current ticket mapping. Original sensitive values are visible. Review the reply; changed or incomplete tokens may not be recognized.',
+      ],
+    ]) {
+      await field('ticket-reply').fill(reply);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), expected);
+      assert.equal(await field('ticket-status').textContent(), outcome);
+      await click('copy-reply');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), expected);
+      assert.equal(await field('ticket-status').textContent(), `Reply copied. ${outcome}`);
+    }
+  });
+
+  await check('unknown-only replies report unchanged placeholder occurrences when restored and copied', async () => {
+    const unknown = '[UNRECOGNIZED2_VALUE_deadbeef]';
+    const reply = `${unknown} / ${unknown}`;
+    const outcome = 'No token occurrences were restored. 2 unrecognized token-shaped placeholders left unchanged. Check that the reply uses this ticket’s unchanged tokens.';
+    await field('ticket-reply').fill(reply);
+    await click('restore-reply');
+    assert.equal(await input('ticket-restored'), reply);
+    assert.equal(await field('ticket-status').textContent(), outcome);
+    await click('copy-reply');
+    assert.equal(await page.evaluate(() => window.__copied.at(-1)), reply);
+    assert.equal(await field('ticket-status').textContent(), `Reply copied. ${outcome}`);
+  });
+
+  await check('plain replies and malformed placeholders do not claim a restoration', async () => {
+    const outcome = 'No token occurrences were restored. Review the reply; changed or incomplete tokens may not be recognized.';
+    for (const reply of [
+      'Please retry the upload.',
+      '[email_address_deadbeef] [EMAIL_ADDRESS_DEADBEEF] [1EMAIL_deadbeef] [EMAIL-ADDRESS_deadbeef] [EMAIL_ADDRESS_deadbee] [EMAIL_ADDRESS_deadbeefx] EMAIL_ADDRESS_deadbeef [EMAIL_ADDRESS_deadbeef',
+    ]) {
+      await field('ticket-reply').fill(reply);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), reply);
+      assert.equal(await field('ticket-status').textContent(), outcome);
+      await click('copy-reply');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), reply);
+      assert.equal(await field('ticket-status').textContent(), `Reply copied. ${outcome}`);
+    }
   });
 
   await check('editing a reply invalidates the restored copy', async () => {
@@ -126,6 +181,10 @@ try {
     await field('ticket-reply').fill(oldToken);
     await click('restore-reply');
     assert.equal(await input('ticket-restored'), oldToken, 'old ticket mapping must not survive');
+    assert.equal(
+      await field('ticket-status').textContent(),
+      'No token occurrences were restored. 1 unrecognized token-shaped placeholder left unchanged. Check that the reply uses this ticket’s unchanged tokens.',
+    );
   });
 
   await check('preparing again starts a new mapping and clears the previous reply', async () => {
@@ -154,6 +213,29 @@ try {
     await page.evaluate(() => { window.__clipboardReject = false; });
   });
 
+  await check('reply clipboard fallback preserves the restoration outcome and selected output', async () => {
+    const known = (await input('ticket-prepared')).match(/\[EMAIL_ADDRESS_[a-f0-9]{8}\]/)[0];
+    const unknown = '[UNRECOGNIZED2_VALUE_deadbeef]';
+    const expected = `blair@example.invalid / blair@example.invalid / ${unknown}`;
+    const outcome = 'Restored 2 token occurrences with the current ticket mapping. Original sensitive values are visible. 1 unrecognized token-shaped placeholder left unchanged. Check that the reply uses this ticket’s unchanged tokens.';
+    await field('ticket-reply').fill(`${known} / ${known} / ${unknown}`);
+    await click('restore-reply');
+    assert.equal(await field('ticket-status').textContent(), outcome);
+    await page.evaluate(() => { window.__clipboardReject = true; });
+    await click('copy-reply');
+    await page.waitForFunction(() => document.getElementById('ticket-status').textContent.includes('Clipboard access was unavailable'));
+    assert.equal(
+      await field('ticket-status').textContent(),
+      `Clipboard access was unavailable. The text is selected; use your browser’s Copy command or Ctrl+C / ⌘C. ${outcome}`,
+    );
+    const selection = await field('ticket-restored').evaluate(element => ({
+      text: element.value.slice(element.selectionStart, element.selectionEnd),
+      focused: document.activeElement === element,
+    }));
+    assert.deepEqual(selection, { text: expected, focused: true });
+    await page.evaluate(() => { window.__clipboardReject = false; });
+  });
+
   await check('HTML-looking source and reply are literal text, never active markup', async () => {
     const literal = '<img src=x onerror="window.__injected=true"> avery@example.invalid';
     await field('ticket-source').fill(literal);
@@ -163,6 +245,58 @@ try {
     assert.equal(await input('ticket-restored'), literal);
     assert.equal(await page.evaluate(() => window.__injected), undefined);
     assert.equal(await page.locator('#try img, #try script').count(), 0);
+  });
+
+  await check('WASM restore reports count input occurrences once and preserve the existing restore API', async () => {
+    const result = await page.evaluate(async () => {
+      const { Engine } = await import('/playground/pkg/anon_pii.js');
+      const engine = new Engine();
+      try {
+        const email = 'ada@example.invalid';
+        const emailToken = JSON.parse(engine.anonymize(email)).output;
+        const unknown = '[UNRECOGNIZED2_VALUE_deadbeef]';
+        // A password fixture can contain both a known token and an unknown
+        // token-shaped literal. Restoring it must not scan that inserted text.
+        const original = `password="${emailToken} ${unknown}"`;
+        const secretToken = JSON.parse(engine.anonymize(original)).output;
+        const malformed = '[email_deadbeef] [EMAIL_DEADBEEF] [1EMAIL_deadbeef] [EMAIL-ADDRESS_deadbeef] [EMAIL_deadbee] [EMAIL_deadbeefx] EMAIL_deadbeef [EMAIL_deadbeef';
+        const cases = [
+          ['known token', emailToken, email, 1, 0],
+          ['repeated known token', `${emailToken} ${emailToken}`, `${email} ${email}`, 2, 0],
+          ['mixed known and repeated unknown', `${emailToken} ${unknown} ${unknown}`, `${email} ${unknown} ${unknown}`, 1, 2],
+          ['unknown-only input', `${unknown} ${unknown}`, `${unknown} ${unknown}`, 0, 2],
+          ['single-letter entity placeholder', '[A_deadbeef]', '[A_deadbeef]', 0, 1],
+          ['neutral plain text', 'Please retry the upload.', 'Please retry the upload.', 0, 0],
+          ['malformed placeholders', malformed, malformed, 0, 0],
+          ['token-shaped originals are not rescanned', secretToken, original, 1, 0],
+          ['input unknown is counted separately from restored originals', `${secretToken} ${unknown}`, `${original} ${unknown}`, 1, 1],
+        ];
+        return {
+          emailToken,
+          secretToken,
+          cases: cases.map(([label, text, expected, restored, unresolved]) => ({
+            label,
+            expected,
+            restored,
+            unresolved,
+            report: JSON.parse(engine.restore_report(text)),
+            legacy: engine.restore(text),
+          })),
+        };
+      } finally {
+        engine.free();
+      }
+    });
+    assert.match(result.emailToken, /^\[EMAIL_ADDRESS_[a-f0-9]{8}\]$/);
+    assert.match(result.secretToken, /^\[PASSWORD_[a-f0-9]{8}\]$/);
+    for (const sample of result.cases) {
+      assert.deepEqual(sample.report, {
+        output: sample.expected,
+        restored_count: sample.restored,
+        unresolved_count: sample.unresolved,
+      }, sample.label);
+      assert.equal(sample.legacy, sample.expected, `${sample.label}: existing restore API must agree`);
+    }
   });
 
   await check('no detections still shows a review warning and roundtrips unchanged', async () => {

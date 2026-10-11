@@ -41,6 +41,7 @@ export function mountTicketWorkspace() {
   let sourceSnapshot = null;
   let preparedText = null;
   let restoredText = null;
+  let restoreOutcome = '';
   let revision = 0;
 
   function updateControls() {
@@ -61,6 +62,7 @@ export function mountTicketWorkspace() {
     sourceSnapshot = null;
     preparedText = null;
     restoredText = null;
+    restoreOutcome = '';
     prepared.value = '';
     reply.value = '';
     restored.value = '';
@@ -140,6 +142,7 @@ export function mountTicketWorkspace() {
   reply.addEventListener('input', () => {
     revision += 1;
     restoredText = null;
+    restoreOutcome = '';
     restored.value = '';
     replyCopyFeedback.textContent = '';
     updateControls();
@@ -151,20 +154,35 @@ export function mountTicketWorkspace() {
     revision += 1;
     replyCopyFeedback.textContent = '';
     try {
-      restoredText = engine.restore(reply.value);
+      const result = JSON.parse(engine.restore_report(reply.value));
+      if (typeof result.output !== 'string'
+        || !Number.isSafeInteger(result.restored_count) || result.restored_count < 0
+        || !Number.isSafeInteger(result.unresolved_count) || result.unresolved_count < 0) {
+        throw new Error('Invalid restore result');
+      }
+      restoredText = result.output;
+      const count = result.restored_count;
+      const unresolved = result.unresolved_count;
+      restoreOutcome = count > 0
+        ? `Restored ${count} token ${count === 1 ? 'occurrence' : 'occurrences'} with the current ticket mapping. Original sensitive values are visible.`
+        : 'No token occurrences were restored.';
+      restoreOutcome += unresolved > 0
+        ? ` ${unresolved} unrecognized token-shaped ${unresolved === 1 ? 'placeholder' : 'placeholders'} left unchanged. Check that the reply uses this ticket’s unchanged tokens.`
+        : ' Review the reply; changed or incomplete tokens may not be recognized.';
       restored.value = restoredText;
       reply.scrollTop = 0;
       updateControls();
-      status.textContent = 'Reply restored with the current ticket mapping. Original sensitive values are visible; unknown or changed tokens stay unchanged.';
+      status.textContent = restoreOutcome;
     } catch {
       restoredText = null;
+      restoreOutcome = '';
       restored.value = '';
       updateControls();
       status.textContent = 'The reply could not be restored. Check the reply and try again, or prepare a fresh ticket.';
     }
   });
 
-  async function copy(text, field, feedback, successMessage) {
+  async function copy(text, field, feedback, successMessage, outcome = '') {
     if (text === null) return;
     const copyRevision = revision;
     feedback.textContent = '';
@@ -180,7 +198,7 @@ export function mountTicketWorkspace() {
       field.focus();
       field.select();
       feedback.textContent = 'Text selected for manual copy';
-      status.textContent = 'Clipboard access was unavailable. The text is selected; use your browser’s Copy command or Ctrl+C / ⌘C.';
+      status.textContent = 'Clipboard access was unavailable. The text is selected; use your browser’s Copy command or Ctrl+C / ⌘C.' + (outcome ? ` ${outcome}` : '');
     }
   }
 
@@ -190,7 +208,7 @@ export function mountTicketWorkspace() {
   });
   copyReplyButton.addEventListener('click', () => {
     if (!currentSession()) return;
-    void copy(restoredText, restored, replyCopyFeedback, 'Restored reply copied, including original sensitive values.');
+    void copy(restoredText, restored, replyCopyFeedback, `Reply copied. ${restoreOutcome}`, restoreOutcome);
   });
 
   loadEngine().then(module => {

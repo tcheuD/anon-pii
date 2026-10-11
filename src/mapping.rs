@@ -8,6 +8,41 @@ use std::io::{self, Read, Write};
 const MAPPING_INTEGRITY_VERSION: u8 = 1;
 const MAPPING_INTEGRITY_ALGORITHM: &str = "sha256";
 
+/// Exact restoration outcome. Counts refer to occurrences in the input, not
+/// unique mappings or token-like text inside restored original values.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct RestoreReport {
+    pub output: String,
+    pub restored_count: usize,
+    /// Unmapped placeholders with the built-in token shape:
+    /// `[A-Z][A-Z0-9_]*` plus an underscore and eight lowercase hex digits,
+    /// enclosed in brackets. This is not a count of every damaged token.
+    pub unresolved_count: usize,
+}
+
+fn has_builtin_token_shape(candidate: &str) -> bool {
+    let Some(inner) = candidate
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let Some((entity, suffix)) = inner.rsplit_once('_') else {
+        return false;
+    };
+    entity
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_uppercase)
+        && entity
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        && suffix.len() == 8
+        && suffix
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MappingIntegrity {
     pub version: u8,
@@ -334,10 +369,18 @@ impl Mapping {
     /// Restore only bracket-delimited tokens: `[EMAIL_ADDRESS_a1b2c3d4]` → original.
     /// Safe for use in proxy responses where bare token injection is a risk.
     pub fn restore_bracketed_with_count(&self, text: &str) -> (String, usize) {
+        let report = self.restore_bracketed_report(text);
+        (report.output, report.restored_count)
+    }
+
+    /// Restore exact known tokens and report unrecognized built-in-shaped
+    /// placeholders in the input. Unknown or altered text is never modified.
+    pub fn restore_bracketed_report(&self, text: &str) -> RestoreReport {
         let mut result = String::with_capacity(text.len());
         let bytes = text.as_bytes();
         let mut i = 0;
         let mut replacements = 0;
+        let mut unresolved = 0;
 
         while i < bytes.len() {
             if bytes[i] == b'[' {
@@ -349,6 +392,9 @@ impl Mapping {
                         replacements += 1;
                         continue;
                     }
+                    if has_builtin_token_shape(candidate) {
+                        unresolved += 1;
+                    }
                 }
             }
             let ch = text[i..].chars().next().unwrap();
@@ -356,7 +402,11 @@ impl Mapping {
             i += ch.len_utf8();
         }
 
-        (result, replacements)
+        RestoreReport {
+            output: result,
+            restored_count: replacements,
+            unresolved_count: unresolved,
+        }
     }
 
     pub fn restore_bracketed(&self, text: &str) -> String {
@@ -606,6 +656,103 @@ mod tests {
         let (result, count) = m.restore_bracketed_with_count(&input);
         assert_eq!(result, "Réponse pour john@example.com — 東京");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_restore_report_counts_known_and_unknown_occurrences() {
+        let mut mapping = Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_abcdef12]".into(),
+            "avery@example.invalid".into(),
+        );
+        let input = "Réponse [EMAIL_ADDRESS_abcdef12] [EMAIL_ADDRESS_00000000] — 東京 [EMAIL_ADDRESS_abcdef12] [EMAIL_ADDRESS_00000000]";
+        let report = mapping.restore_bracketed_report(input);
+        assert_eq!(
+            report.output,
+            "Réponse avery@example.invalid [EMAIL_ADDRESS_00000000] — 東京 avery@example.invalid [EMAIL_ADDRESS_00000000]"
+        );
+        assert_eq!(report.restored_count, 2);
+        assert_eq!(report.unresolved_count, 2);
+        assert_eq!(
+            mapping.restore_bracketed_with_count(input),
+            (report.output, 2)
+        );
+    }
+
+    #[test]
+    fn test_restore_report_only_counts_canonical_unknown_input() {
+        let mapping = Mapping::new();
+        for input in [
+            "",
+            "plain reply",
+            "[ordinary brackets]",
+            "EMAIL_ADDRESS_deadbeef",
+            "[EMAIL_ADDRESS_deadbeef",
+            "[EMAIL_ADDRESS_DEADBEEF]",
+            "[EMAIL_ADDRESS_deadbee]",
+            "[EMAIL_ADDRESS_deadbeef0]",
+            "[EMAIL_ADDRESS_deadbeeg]",
+            "[email_deadbeef]",
+            "[ÉMAIL_deadbeef]",
+            "[1CUSTOM_deadbeef]",
+            "[_deadbeef]",
+        ] {
+            assert_eq!(
+                mapping.restore_bracketed_report(input),
+                RestoreReport {
+                    output: input.into(),
+                    restored_count: 0,
+                    unresolved_count: 0,
+                }
+            );
+        }
+        let input = "[EMAIL_ADDRESS_deadbeef] [CUSTOM2_01234567] [EMAIL_ADDRESS_deadbeef]";
+        assert_eq!(
+            mapping.restore_bracketed_report(input),
+            RestoreReport {
+                output: input.into(),
+                restored_count: 0,
+                unresolved_count: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn test_restore_report_preserves_nested_bracket_fallback() {
+        let mut mapping = Mapping::new();
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_abcdef12]".into(),
+            "avery@example.invalid".into(),
+        );
+        let report = mapping.restore_bracketed_report(
+            "[outer [EMAIL_ADDRESS_abcdef12]] [[EMAIL_ADDRESS_00000000]]",
+        );
+        assert_eq!(
+            report.output,
+            "[outer avery@example.invalid] [[EMAIL_ADDRESS_00000000]]"
+        );
+        assert_eq!(report.restored_count, 1);
+        assert_eq!(report.unresolved_count, 1);
+    }
+
+    #[test]
+    fn test_restore_report_exact_lookup_precedes_shape_and_does_not_recurse() {
+        let mut mapping = Mapping::new();
+        mapping.mappings.insert(
+            "[custom-key]".into(),
+            "[EMAIL_ADDRESS_deadbeef] [EMAIL_ADDRESS_00000000]".into(),
+        );
+        mapping.mappings.insert(
+            "[EMAIL_ADDRESS_deadbeef]".into(),
+            "[EMAIL_ADDRESS_deadbeef]".into(),
+        );
+        let report = mapping.restore_bracketed_report("[custom-key] [EMAIL_ADDRESS_deadbeef]");
+        assert_eq!(
+            report.output,
+            "[EMAIL_ADDRESS_deadbeef] [EMAIL_ADDRESS_00000000] [EMAIL_ADDRESS_deadbeef]"
+        );
+        assert_eq!(report.restored_count, 2);
+        assert_eq!(report.unresolved_count, 0);
     }
 
     #[test]
