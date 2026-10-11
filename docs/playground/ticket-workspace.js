@@ -46,6 +46,20 @@ export function mountTicketWorkspace() {
   let revision = 0;
   let copyPending = false;
 
+  for (const output of [prepared, restored]) {
+    output.addEventListener('keydown', event => {
+      const key = event.key.toLowerCase();
+      const undoOrRedo = (key === 'z' && (event.ctrlKey || event.metaKey))
+        || (key === 'y' && event.ctrlKey && !event.metaKey && !event.shiftKey);
+      if (!output.readOnly || event.altKey || !undoOrRedo) return;
+      // Native history in a readonly textarea can edit the last editable field
+      // instead, silently clearing the current ticket and its mapping.
+      event.preventDefault();
+      status.textContent = 'This output is read-only. Undo and Redo are unavailable here; the ticket and mapping are unchanged.'
+        + (restoredText === null ? '' : ` ${restoreOutcome}`);
+    });
+  }
+
   function updateControls() {
     prepareButton.disabled = !engineModule || !source.value.trim();
     protectButton.disabled = !engine || !preparedText;
