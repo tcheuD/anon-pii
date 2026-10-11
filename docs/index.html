@@ -6,11 +6,11 @@
 <title>anon-pii — prepare support tickets for AI, restore the reply</title>
 <meta name="description" content="Prepare support tickets locally in your browser or CLI. Review recognized PII replaced with tokens, then restore the original references in an AI reply using the ticket's local mapping.">
 <style>
-:root{--paper:#f7f5ef;--panel:#fffefa;--ink:#213630;--dim:#5c6962;--rule:#ccd3c9;--accent:#25634d;--soft:#eaf0e7;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;--red:var(--accent)}
+:root{--paper:#fff;--panel:#fff;--ink:#141414;--dim:#595959;--rule:#d4d4d4;--orange:#ff6b1a;--accent:#a83d00;--soft:#f3f3f3;--control:#777;--sans:"Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
-body{background:var(--paper);color:var(--ink);font:400 16px/1.6 "Helvetica Neue",Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-::selection{background:#d6e5b8;color:var(--ink)}
+body{background:var(--paper);color:var(--ink);font:400 16px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+::selection{background:var(--orange);color:var(--ink)}
 a{color:inherit;text-underline-offset:4px;text-decoration-thickness:1px}
 a:hover{color:var(--accent)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:4px}
@@ -21,65 +21,65 @@ a:hover{color:var(--accent)}
 .skip-link:focus{transform:none;color:var(--panel)}
 header .wrap{display:flex;justify-content:space-between;align-items:center;gap:24px;min-height:88px;border-bottom:1px solid var(--rule)}
 .brand{display:flex;align-items:center;gap:10px;font-size:21px;letter-spacing:-.05em;font-weight:700;text-decoration:none}
-.brand-mark{font:700 15px/1 var(--mono);letter-spacing:-.1em;background:var(--ink);color:var(--paper);padding:8px 7px}
+.brand-mark{font:700 15px/1 var(--mono);letter-spacing:-.1em;background:var(--orange);color:var(--ink);padding:8px 7px}
 nav{display:flex;align-items:center;gap:28px;font-size:13px}
 nav a{display:inline-flex;align-items:center;gap:5px;min-height:44px;text-decoration:none}
 nav a:hover{text-decoration:underline}
 .hero{display:grid;grid-template-columns:1fr 1fr;gap:70px;align-items:center;padding-top:72px;padding-bottom:64px}
 .eyebrow,.meta,.ticket-caption,.case-heading,.stage-label{font:12px/1.6 var(--mono);letter-spacing:.045em}
 .eyebrow{color:var(--accent);margin-bottom:22px}
-h1{font:400 clamp(42px,4.5vw,64px)/1.06 Georgia,"Times New Roman",serif;letter-spacing:-.045em;max-width:15ch}
-h1 em{font-weight:400;color:var(--accent)}
+h1{font:700 clamp(42px,4.5vw,64px)/1.16 var(--sans);letter-spacing:-.055em;max-width:16ch}
+h1 .redaction{background:var(--ink);color:var(--panel);padding:0 .1em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .sub{margin-top:24px;font-size:17px;line-height:1.65;max-width:39ch;color:var(--dim)}
 .hero-actions{display:flex;align-items:center;gap:24px;flex-wrap:wrap;margin-top:28px;font-size:14px}
-.action{display:inline-flex;justify-content:center;align-items:center;gap:20px;min-height:48px;padding:12px 20px;background:var(--accent);color:var(--panel);text-decoration:none;font-weight:600;border:1px solid var(--accent)}
+.action{display:inline-flex;justify-content:center;align-items:center;gap:20px;min-height:48px;padding:12px 20px;background:var(--orange);color:var(--ink);text-decoration:none;font-weight:700;border:1px solid var(--ink)}
 .action:hover{background:var(--ink);color:var(--panel)}
 .hero-note{margin-top:16px;font:12px/1.6 var(--mono);color:var(--dim)}
-.ticket-example{min-width:0;background:var(--panel);border:1px solid #aebcaf;box-shadow:7px 7px 0 #e5e9df}
-.case-heading{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 22px;border-bottom:1px solid var(--rule);color:var(--dim)}
-.case-heading strong{font-weight:500;color:var(--ink)}
+.ticket-example{min-width:0;background:var(--panel);border:1px solid var(--ink);border-top:4px solid var(--orange)}
+.case-heading{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 22px;border-bottom:1px solid var(--ink);background:var(--ink);color:var(--panel)}
+.case-heading strong{font-weight:500}
 .example-stage{padding:21px 24px;border-bottom:1px solid var(--rule)}
 .example-stage:last-of-type{border-bottom:0}
 .stage-label{display:flex;gap:12px;align-items:center;color:var(--dim);margin-bottom:12px}
 .stage-number{color:var(--accent)}
 .example-stage p{font-size:16px;line-height:1.8;overflow-wrap:anywhere}
 .example-stage code{font:12px/1.8 var(--mono);background:var(--ink);color:var(--panel);padding:4px 5px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
-.original-value{border-bottom:2px solid #c0cda8}
+.original-value{border-bottom:2px solid var(--orange)}
 .prepared-stage{background:var(--soft)}
 .ticket-caption{padding:12px 24px;color:var(--dim);border-top:1px dashed var(--rule);font-size:11px}
 .product-facts{display:flex;gap:24px;justify-content:space-between;padding-top:18px;padding-bottom:18px;border-top:1px solid var(--rule);font:12px/1.6 var(--mono);color:var(--dim)}
 .product-facts span{display:flex;align-items:center;gap:10px}
-.product-facts span::before{content:"";width:5px;height:5px;background:var(--accent);flex-shrink:0}
+.product-facts span::before{content:"";width:5px;height:5px;background:var(--orange);flex-shrink:0}
 section{padding:64px 0;border-top:1px solid var(--rule);scroll-margin-top:24px}
-h2{font:400 clamp(29px,3.3vw,42px)/1.15 Georgia,"Times New Roman",serif;letter-spacing:-.03em;margin-bottom:16px}
+h2{font:700 clamp(29px,3.3vw,42px)/1.15 var(--sans);letter-spacing:-.045em;margin-bottom:16px}
 .lede{color:var(--dim);font-size:16px;line-height:1.65;max-width:57ch;margin-bottom:28px}
 .grid{display:grid;grid-template-columns:180px minmax(0,1fr);gap:48px}
 .grid>div{min-width:0}
 .meta{color:var(--dim);padding-top:7px}
-.workspace-section{background:#edf1e9}
+.workspace-section{background:var(--paper);border-top:2px solid var(--ink)}
 .workspace-intro{display:flex;justify-content:space-between;align-items:flex-end;gap:40px;margin-bottom:28px}
 .workspace-intro .lede{margin-bottom:0;max-width:46ch}
 .workspace-intro .eyebrow{margin-bottom:12px}
-.workspace-intro h2{margin-bottom:0;max-width:17ch}
-.workspace-toolbar{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;padding:16px 0;border-top:1px solid #bdc9bc;border-bottom:1px solid #bdc9bc}
+.workspace-intro h2{margin-bottom:0;max-width:22ch}
+.workspace-toolbar{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;padding:16px 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
 .ticket-engine{font:11px/1.8 var(--mono);color:var(--dim)}
 .ticket-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
 .workspace-toolbar .ticket-actions{margin-top:0}
 .ticket-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:30px 24px;margin-top:28px}
 .ticket-field{min-width:0;display:flex;flex-direction:column;align-items:flex-start}
 .ticket-field label{display:block;font-size:15px;font-weight:600;margin-bottom:12px}
-.field-number{font:12px/1 var(--mono);padding:5px 7px;margin-right:8px;background:#dbe5d5;color:var(--accent)}
-.play textarea{display:block;width:100%;min-height:210px;resize:vertical;background:var(--panel);color:var(--ink);border:1px solid #71816f;padding:16px;font:14px/1.75 var(--mono);border-radius:0}
+.field-number{font:12px/1 var(--mono);padding:5px 7px;margin-right:8px;background:var(--orange);color:var(--ink)}
+.play textarea{display:block;width:100%;min-height:210px;resize:vertical;background:var(--panel);color:var(--ink);border:1px solid var(--control);padding:16px;font:14px/1.75 var(--mono);border-radius:0}
 .play textarea:focus{outline:2px solid var(--accent);outline-offset:2px}
-.play textarea::placeholder{color:#6c766d;opacity:1}
-.play textarea:disabled{background:#e4e9e0}
+.play textarea::placeholder{color:var(--dim);opacity:1}
+.play textarea:disabled{background:var(--soft)}
 .ticket-field .help{font-size:13px;color:var(--dim);line-height:1.6;margin:12px 0;max-width:65ch}
 .ticket-field>button,.ticket-field>.ticket-actions{margin-top:auto}
-.play button{font:500 13px/1.4 "Helvetica Neue",Helvetica,Arial,sans-serif;cursor:pointer;min-height:44px;padding:10px 15px;border:1px solid var(--accent);background:var(--accent);color:var(--panel);border-radius:0}
-.play button.secondary{background:transparent;color:var(--ink);border-color:#71816f}
+.play button{font:600 13px/1.4 var(--sans);cursor:pointer;min-height:44px;padding:10px 15px;border:1px solid var(--ink);background:var(--orange);color:var(--ink);border-radius:0}
+.play button.secondary{background:transparent;color:var(--ink);border-color:var(--control)}
 .play button:hover:not(:disabled){border-color:var(--ink);background:var(--ink);color:var(--panel)}
-.play button:disabled{opacity:.5;cursor:not-allowed}
-.ticket-status{margin-top:28px;padding:14px 18px;border-left:3px solid var(--accent);font-size:14px;min-height:50px;background:var(--panel)}
+.play button:disabled{background:#e6e6e6;color:#666;border-color:#aaa;cursor:not-allowed}
+.ticket-status{margin-top:28px;padding:14px 18px;border-left:3px solid var(--orange);font-size:14px;min-height:50px;background:var(--soft)}
 .copy-feedback{font-size:12px;color:var(--accent)}
 .session-notes{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px}
 .play .note{font-size:13px;line-height:1.7;color:var(--dim)}
@@ -90,10 +90,10 @@ h2{font:400 clamp(29px,3.3vw,42px)/1.15 Georgia,"Times New Roman",serif;letter-s
 .reason h3{font-size:18px;font-weight:600;margin-bottom:6px;letter-spacing:-.02em}
 .reason p{color:var(--dim);font-size:15px;line-height:1.65;max-width:63ch}
 .reason .mono{font-size:12px;color:var(--ink);white-space:nowrap}
-#install{background:#e6ebe2}
+#install{background:var(--paper)}
 .hint{margin:16px 0;font-size:13px;line-height:1.7;color:var(--dim)}
-.cmd{border:1px solid #bac5b5;background:var(--panel);margin-bottom:12px}
-.cmd .lbl{border-bottom:1px solid var(--rule);padding:10px 16px;font:11px/1.7 var(--mono);color:var(--dim)}
+.cmd{border:1px solid var(--rule);background:var(--panel);margin-bottom:12px}
+.cmd .lbl{border-bottom:1px solid var(--rule);padding:10px 16px;font:11px/1.7 var(--mono);color:var(--dim);background:var(--soft)}
 .cmd pre{padding:14px 16px;font:12px/1.9 var(--mono);overflow-x:auto}
 .cmd .g{color:var(--accent)}
 footer{border-top:1px solid var(--rule);padding:28px 0}
@@ -112,7 +112,7 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
   nav{gap:16px;font-size:12px}
   nav .nav-details{display:none}
   .hero{grid-template-columns:1fr;gap:36px;padding-top:42px;padding-bottom:36px}
-  h1{font-size:clamp(42px,10vw,60px);max-width:13ch}
+  h1{font-size:clamp(36px,10vw,60px);max-width:16ch}
   .sub{max-width:44ch;font-size:16px}
   .hero-actions{gap:20px}
   .case-heading{padding:12px 18px}
@@ -125,7 +125,7 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
   .meta{padding-top:0}
   .workspace-toolbar{gap:12px}
   .play textarea{font-size:16px;min-height:190px}
-  .ticket-field:nth-child(3){border-top:1px solid #bdc9bc;padding-top:24px}
+  .ticket-field:nth-child(3){border-top:1px solid var(--rule);padding-top:24px}
 }
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
@@ -148,7 +148,7 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
   <div class="wrap hero">
     <div>
       <p class="eyebrow">Before you paste that support ticket</p>
-      <h1>Share the issue.<br><em>Mask the details.</em></h1>
+      <h1>Share the issue.<br><span class="redaction">Mask the details.</span></h1>
       <p class="sub">Replace recognized sensitive values with reversible tokens. Get help with the ticket, then bring the original references back into the reply.</p>
       <div class="hero-actions">
         <a class="action" href="#try">Open ticket workspace <span aria-hidden="true">↓</span></a>
