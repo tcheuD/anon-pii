@@ -11,6 +11,11 @@ Keep the same tab open until you finish restoring the reply.
 2. Inspect the prepared text. Detected values appear as bracketed tokens such
    as `[EMAIL_ADDRESS_a1b2c3d4]`; surrounding incident details remain readable.
    Review the whole ticket for values that were missed or redacted incorrectly.
+   For a missed value, select its exact text in the prepared field and choose
+   **Protect selected text**. That occurrence becomes a reversible `[MANUAL_…]`
+   token; other occurrences still need review. Existing tokens cannot be included
+   in the selection. Protect missed values before handing off the ticket;
+   protecting another value clears any previous reply and restored result.
 3. Choose **Copy tokenized ticket**. For a local trial, paste it into the reply
    field in the same workspace instead of opening an AI tool.
 4. Choose **Restore reply**. Known tokens become their original values again.
@@ -63,12 +68,14 @@ image, or attachment redaction from what happens in the text workspace.
 | Action | What happens to the prepared ticket and mapping |
 |--------|-----------------------------------------------|
 | Copy tokenized ticket or restore a reply | The current prepared mapping remains available in this tab |
+| Protect selected text | Only the selected occurrence is replaced; its mapping joins the current session, and previous replies are cleared |
 | Edit the source ticket | Prepared output and replies are cleared; prepare the edited ticket before copying again |
 | Prepare ticket again | A fresh mapping replaces the previous one and clears the old reply |
 | Load another example | The old session is discarded; prepare the new source before copying |
 | Clear session | Source, prepared output, reply, restored output, and the page's mapping are cleared |
 | Reload or close the page | The mapping is lost; saved tokens cannot be restored in a new session |
 
+Automatic and manually protected values share the same session boundaries.
 The workspace does not save your ticket or mapping to an account or browser
 storage. Keep the tab and its source unchanged while waiting for a response.
 Unknown, altered, or old-session tokens remain unchanged; inspect any tokens

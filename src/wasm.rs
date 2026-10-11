@@ -3,6 +3,8 @@
 //! Exposes the same detection engine the CLI uses, compiled to wasm32.
 //! Everything runs client-side; no text ever leaves the page.
 
+use regex::Regex;
+use std::sync::LazyLock;
 use wasm_bindgen::prelude::*;
 
 use crate::detection::Anonymizer;
@@ -47,6 +49,51 @@ impl Engine {
             })
             .collect();
         serde_json::json!({ "output": output, "detections": dets }).to_string()
+    }
+
+    /// Protect one selected value using UTF-8 byte offsets. Returns JSON with
+    /// output and token, preserving all other bytes and existing mappings.
+    /// Invalid ranges and selections intersecting placeholders leave the
+    /// session unchanged.
+    pub fn protect_range(
+        &mut self,
+        text: &str,
+        start: usize,
+        end: usize,
+    ) -> Result<String, JsValue> {
+        if start >= end || end > text.len() {
+            return Err(JsValue::from_str(
+                "Select a nonempty range within the prepared ticket.",
+            ));
+        }
+        if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            return Err(JsValue::from_str("Select whole characters only."));
+        }
+
+        static TOKEN_SHAPE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"\[[A-Z][A-Z0-9_]*_[0-9a-f]{8}\]").unwrap());
+        let intersects =
+            |token_start: usize, token_end: usize| start < token_end && token_start < end;
+        let overlaps_known = self.anon.mapping.mappings.keys().any(|token| {
+            text.match_indices(token.as_str())
+                .any(|(offset, _)| intersects(offset, offset + token.len()))
+        });
+        if overlaps_known
+            || TOKEN_SHAPE
+                .find_iter(text)
+                .any(|token| intersects(token.start(), token.end()))
+        {
+            return Err(JsValue::from_str(
+                "Selection cannot include an existing token-shaped placeholder.",
+            ));
+        }
+
+        let token = self.anon.mapping.add("MANUAL", &text[start..end]);
+        let mut output = String::with_capacity(text.len() - (end - start) + token.len());
+        output.push_str(&text[..start]);
+        output.push_str(&token);
+        output.push_str(&text[end..]);
+        Ok(serde_json::json!({ "output": output, "token": token }).to_string())
     }
 
     /// Restore bracketed tokens from this session's mapping.
