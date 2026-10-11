@@ -111,6 +111,15 @@ The newline-split email now matches its exact source span and is required by the
 baseline. Overall, challenge, normalization, and EMAIL_ADDRESS limits were
 tightened without changing corpus labels.
 
+After context-free compact UK IBAN detection was added at revision
+`1e5f82ee0172b0ffafb05305a82fbd0be06b0313`, the same unchanged corpus and
+configuration measured with `cargo run --locked --example quality_report -- --json`
+report 45 TP, 0 FP, and 1 FN: 100.0000% measured precision and 97.8260% measured recall.
+The compact GB case now matches its exact source span and is required by the
+baseline. Overall, challenge, financial, and IBAN_CODE gates were tightened;
+the corpus labels remain unchanged. These are maintainer regression measurements,
+not customer adoption or production-accuracy estimates.
+
 | Entity type | TP | FP | FN |
 |-------------|---:|---:|---:|
 | AUTH_TOKEN | 2 | 0 | 0 |
@@ -120,7 +129,7 @@ tightened without changing corpus labels.
 | EMAIL_ADDRESS | 9 | 0 | 0 |
 | FR_IBAN | 1 | 0 | 0 |
 | FR_PHONE_NUMBER | 1 | 0 | 0 |
-| IBAN_CODE | 2 | 0 | 1 |
+| IBAN_CODE | 3 | 0 | 0 |
 | IP_ADDRESS | 4 | 0 | 0 |
 | MAC_ADDRESS | 2 | 0 | 0 |
 | PASSWORD | 3 | 0 | 0 |
@@ -136,6 +145,15 @@ fixed print forms also accept ASCII casing. Replacement and restoration preserve
 the original casing and surrounding text. Generic grouped lowercase forms remain
 unsupported; broadly accepting spaced words risks including following prose.
 
+The separate compact UK rule recognizes a complete 22-character GB IBAN without
+a context keyword: ASCII-case `GB`, check digits 02–98, four ASCII bank letters,
+and fourteen digits, with word boundaries and a valid mod-97 checksum. It keeps
+score `0.7`, including when financial context is present; threshold `0.8`
+rejects it. These structural guarantees apply to this new context-free rule;
+the existing context-gated generic rule remains broader. Grouped UK forms still
+require context. This improvement is included in source builds and the browser
+engine; the published v0.3.5 native archives do not include it.
+
 Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
 spaces/tabs and a complete domain. Preparation and restoration preserve the
 source newline, indentation, and spelling. Blank lines, whitespace before the
@@ -145,11 +163,9 @@ line can be indistinguishable from a wrapped address; review the prepared text.
 This improvement applies to v0.3.3 native archives, source builds, and the browser
 engine. Older v0.3.2 native archives do not include it.
 
-All contract cases and every non-exempt case must remain exact. The two
-remaining reviewed challenge exceptions are intentionally visible in the baseline:
-
-- context-free phone; and
-- context-free IBAN.
+All contract cases and every non-exempt case must remain exact. The remaining
+reviewed challenge exception, context-free phone, is intentionally visible in
+the baseline.
 
 An improvement to an exception passes. Moving a miss to any other case does
 not. Baseline limits also apply overall, by tier, category, and entity type.

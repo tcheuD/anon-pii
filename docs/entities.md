@@ -16,7 +16,7 @@ are documented in [Quality and claim policy](quality.md).
 | `IP_ADDRESS` | IPv4 and IPv6 addresses (full, collapsed, link-local, loopback, IPv4-mapped) | 0.9 |
 | `PHONE_NUMBER` | International phone numbers — E.164 format with separators, parenthesized area codes (context-aware) | 0.6 |
 | `PHONE_EXTENSION` | Phone extensions (poste, ext, extension + 3-5 digits) | 0.85 |
-| `IBAN_CODE` | All-country IBANs with mod-97 checksum validation (context-aware) | 0.7 |
+| `IBAN_CODE` | Generic IBANs with mod-97 checksum validation and required context; complete compact UK IBANs also match without context | 0.7 |
 | `CREDIT_CARD` | 16-digit card numbers (Luhn validated, context-aware) | 0.7 |
 | `UUID` | Standard UUIDs | 0.95 |
 | `MAC_ADDRESS` | MAC addresses — colon, hyphen, and Cisco dot formats (broadcast/null rejected) | 0.85 |
@@ -103,9 +103,13 @@ Context keywords work in two modes:
 | `FLIGHT_NUMBER` (IATA/ICAO) | flight, vol, departure, arrival, schedule, rotation |
 | `AIRCRAFT_REGISTRATION` (US) | aircraft, avion, registration, immat, immatriculation, tail |
 | `PHONE_NUMBER` | telephone, tel, phone, mobile, contact, call, number, whatsapp, sms, cell, fax |
-| `IBAN_CODE` | iban, compte, account, virement, bank, banque, bancaire, transfer, swift, bic, payment, paiement |
+| `IBAN_CODE` (generic rule) | iban, compte, account, virement, bank, banque, bancaire, transfer, swift, bic, payment, paiement |
 | `DATE_TIME` (EU format) | date, naissance, birth, born, dob, expir, valid, depart, arrive, issued, delivre |
 | `CREDIT_CARD` | card, carte, credit, debit, payment, paiement, cb |
+
+The separate compact UK IBAN rule needs no context keyword or score boost.
+It requires the complete GB field structure and mod-97 checksum; see the
+[scope and release limits](quality.md#default-feature-corpus-v1).
 
 **Score boost** — Pattern always matches, but confidence gets +0.15 when keywords are nearby:
 
