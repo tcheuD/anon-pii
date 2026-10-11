@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "anon-pii"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "aes",
  "aho-corasick",
