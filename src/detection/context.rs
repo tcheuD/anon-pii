@@ -1,5 +1,5 @@
-use super::Anonymizer;
-use crate::patterns::CONTEXT_WINDOW;
+use super::{Anonymizer, CompiledPattern};
+use crate::patterns::{CONTEXT_WINDOW, UK_IBAN_PRINT_PATTERN};
 
 impl Anonymizer {
     pub(super) fn has_context(
@@ -7,8 +7,9 @@ impl Anonymizer {
         text: &str,
         start: usize,
         end: usize,
-        keywords: &[&str],
+        pattern: &CompiledPattern,
     ) -> bool {
+        let keywords = &pattern.context_keywords;
         if keywords.is_empty() {
             return false;
         }
@@ -26,9 +27,25 @@ impl Anonymizer {
             .nth(CONTEXT_WINDOW)
             .map(|(i, _)| end + i)
             .unwrap_or(text.len());
-        let window = &text[window_start..window_end];
-        let lower = window.to_lowercase();
-        if keywords.iter().any(|kw| lower.contains(*kw)) {
+        // A GB print value's bank letters can themselves spell "bank" or
+        // contain "bic". This rule requires context outside the full match.
+        // Check its identity as well as its name so unrelated custom rules
+        // retain their established context behavior.
+        let external_only = pattern.name == "uk_iban_print"
+            && pattern.entity_type == "IBAN_CODE"
+            && pattern.regex.as_str() == UK_IBAN_PRINT_PATTERN
+            && pattern.context_required;
+        let has_local_context = if external_only {
+            let before = text[window_start..start].to_lowercase();
+            let after = text[end..window_end].to_lowercase();
+            keywords
+                .iter()
+                .any(|kw| before.contains(*kw) || after.contains(*kw))
+        } else {
+            let lower = text[window_start..window_end].to_lowercase();
+            keywords.iter().any(|kw| lower.contains(*kw))
+        };
+        if has_local_context {
             return true;
         }
         // 2. Column-header check: find the column offset of the match on its

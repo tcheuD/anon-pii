@@ -417,11 +417,15 @@ def main():
             )
 
         # Fictional checksum-valid fixtures: casing must not leave an IBAN
-        # visible or consume the adjacent prose. French print format has fixed
-        # fields; generic lowercase support is deliberately compact-only.
+        # visible or consume the adjacent prose. French and UK print formats
+        # have fixed fields; generic lowercase support remains compact-only.
         for label, entity, iban, prefix in [
             ("generic lowercase", "IBAN_CODE", "gb82west12345698765432", "Échec — IBAN "),
             ("generic mixed case", "IBAN_CODE", "gB82WeSt12345698765432", "Échec — IBAN "),
+            ("UK print lowercase", "IBAN_CODE", "gb82 west 1234 5698 7654 32", "Échec 🧪 — IBAN "),
+            ("UK print mixed case", "IBAN_CODE", "gB29\tNwBk\t6016\t1331\t9268\t19", "Échec 🧪 — account "),
+            ("UK print bank code with external context", "IBAN_CODE", "gb69 bank 1234 5698 7654 32", "Échec 🧪 — IBAN "),
+            ("UK print BIC-like code with external context", "IBAN_CODE", "gb86 bica 1234 5698 7654 32", "Échec 🧪 — account "),
             ("French print lowercase", "FR_IBAN", "fr14 2004 1010 0505 0001 3m02 606", "Échec — "),
             ("French print mixed case", "FR_IBAN", "Fr14 2004 1010 0505 0001 3M02 606", "Échec — "),
         ]:
@@ -449,7 +453,13 @@ def main():
             ("French print invalid checksum", "IBAN fr14 2004 1010 0505 0001 3m02 607"),
             ("generic lowercase without context", "code de89370400440532013000 here"),
             ("generic mixed case without context", "code nL91AbNa0417164300 here"),
-            ("unsupported generic grouped lowercase", "IBAN gb82 west 1234 5698 7654 32"),
+            ("unsupported generic grouped lowercase", "IBAN ch93 0076 2011 6238 5295 7"),
+            ("UK print lowercase without context", "value=gb82 west 1234 5698 7654 32"),
+            ("UK print mixed case without context", "value=gB29 NwBk 6016 1331 9268 19"),
+            ("UK print bank code is not context", "value=gb69 bank 1234 5698 7654 32"),
+            ("UK print BIC-like bank code is not context", "value=gb86 bica 1234 5698 7654 32"),
+            ("UK print invalid checksum", "IBAN gb83 west 1234 5698 7654 32"),
+            ("UK print lowercase across lines", "IBAN gb82 west 1234\n5698 7654 32"),
         ]:
             source = text.encode()
             preview = run(["run", "--dry-run"], source)
