@@ -90,6 +90,43 @@ fn support_ticket_starter_hides_four_values_and_restores_reply_references() {
 }
 
 #[test]
+fn password_fragments_never_reach_preview_or_child_input() {
+    let ticket_home = tempfile::tempdir().unwrap();
+    let child_input = ticket_home.path().join("child-input.txt");
+    let prefix = "Réponse 📨 — ";
+    let suffix = "\nplease investigate.\n";
+    let assignment = r#"password="private-prefix ada@example.invalid private-suffix""#;
+    let input = format!("{prefix}{assignment}{suffix}");
+    let preview = run_with_input(ticket_home.path(), &["run", "--dry-run"], input.as_bytes());
+    assert!(preview.status.success());
+    let output = run_with_input(
+        ticket_home.path(),
+        &["run", "--", "tee", child_input.to_str().unwrap()],
+        input.as_bytes(),
+    );
+    assert!(output.status.success());
+    assert_eq!(output.stdout, input.as_bytes());
+    let token_pattern = regex::Regex::new(r"^\[PASSWORD_[a-f0-9]{8}\]$").unwrap();
+    // Each invocation gets its own mapping; compare boundaries, not token IDs.
+    for prepared in [
+        String::from_utf8(preview.stdout).unwrap(),
+        fs::read_to_string(child_input).unwrap(),
+    ] {
+        let token = prepared
+            .strip_prefix(prefix)
+            .unwrap()
+            .strip_suffix(suffix)
+            .unwrap();
+        assert!(token_pattern.is_match(token), "{prepared}");
+        for original in ["private-prefix", "ada@example.invalid", "private-suffix"] {
+            assert!(!prepared.contains(original));
+            assert!(!String::from_utf8_lossy(&preview.stderr).contains(original));
+        }
+    }
+    assert!(!ticket_home.path().join(".anon-pii/mapping.json").exists());
+}
+
+#[test]
 fn wrapped_email_preview_and_child_input_mask_exactly_then_restore() {
     let ticket_home = tempfile::tempdir().unwrap();
     let child_input = ticket_home.path().join("child-input.txt");

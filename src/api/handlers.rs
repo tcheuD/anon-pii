@@ -23,9 +23,9 @@ pub async fn analyze(Json(req): Json<AnalyzeRequest>) -> Response {
     #[cfg(feature = "ner-lite")]
     anonymizer.set_ner_detector(crate::ner::auto::detector(|_| {}));
 
-    let detections = anonymizer.analyze(&req.text);
+    let detections = anonymizer.analyze_with_entities(&req.text, req.entities.as_deref());
 
-    let mut results: Vec<RecognizerResult> = detections
+    let results: Vec<RecognizerResult> = detections
         .into_iter()
         .map(|d| RecognizerResult {
             entity_type: d.entity_type.to_string(),
@@ -34,12 +34,6 @@ pub async fn analyze(Json(req): Json<AnalyzeRequest>) -> Response {
             score: d.score,
         })
         .collect();
-
-    // Filter by requested entity types if specified
-    if let Some(ref entities) = req.entities {
-        let allowed: BTreeSet<&str> = entities.iter().map(|s| s.as_str()).collect();
-        results.retain(|r| allowed.contains(r.entity_type.as_str()));
-    }
 
     Json(results).into_response()
 }

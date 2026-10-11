@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
@@ -31,6 +32,33 @@ fn basic_auth_value_start(candidate: &str) -> Option<usize> {
     // RFC 7617 permits empty components and non-ASCII octets, but requires a
     // colon separator and forbids control characters in the user/password.
     (decoded.contains(&b':') && !decoded.iter().any(u8::is_ascii_control)).then_some(start)
+}
+
+fn password_value_range(assignment: &str) -> Option<std::ops::Range<usize>> {
+    let separator = assignment.find(['=', ':'])?;
+    let key = assignment[..separator].trim_end();
+    let key = key.strip_suffix(['\'', '"']).unwrap_or(key);
+    // Detection uses normalized text, but this is its original source spelling.
+    // If the key/separator was encoded or otherwise transformed, a later ':' or
+    // '=' could be inside the password. Keep the whole detection in that case.
+    if key.is_empty()
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return None;
+    }
+    let value = assignment[separator + 1..].trim_start();
+    let start = assignment.len() - value.len();
+    match value.as_bytes().first()? {
+        quote @ (b'\'' | b'"') => {
+            if value.len() < 2 || value.as_bytes().last() != Some(quote) {
+                return None;
+            }
+            Some(start + 1..assignment.len() - 1)
+        }
+        _ => Some(start..assignment.len()),
+    }
 }
 
 fn has_address_city_continuation(suffix: &str) -> bool {
@@ -150,7 +178,7 @@ fn locate_ner_span(
 
 impl Anonymizer {
     pub fn anonymize_text(&mut self, raw_text: &str) -> (String, Vec<Detection>) {
-        self.anonymize_source_text(raw_text, None)
+        self.anonymize_source_text(raw_text, None, None)
     }
 
     pub(super) fn anonymize_sql_literal(
@@ -161,18 +189,24 @@ impl Anonymizer {
         self.anonymize_source_text(
             raw_text,
             Some(DecodedSourceText::sql_literal(raw_text, backslash_escapes)),
+            None,
         )
     }
 
     pub(super) fn anonymize_csv_field(&mut self, raw_text: &str) -> (String, Vec<Detection>) {
-        self.anonymize_source_text(raw_text, Some(DecodedSourceText::csv_field(raw_text)))
+        self.anonymize_source_text(raw_text, Some(DecodedSourceText::csv_field(raw_text)), None)
     }
 
-    fn anonymize_source_text(
+    pub(super) fn anonymize_source_text(
         &mut self,
         source_text: &str,
         source_view: Option<DecodedSourceText<'_>>,
+        entities: Option<&[String]>,
     ) -> (String, Vec<Detection>) {
+        let allowed: Option<HashSet<&str>> =
+            entities.map(|types| types.iter().map(String::as_str).collect());
+        let entity_allowed =
+            |entity: &str| allowed.as_ref().is_none_or(|types| types.contains(entity));
         // All detector passes see decoded format content, including NER and name
         // consistency. The final projection below preserves source spelling.
         let raw_text = source_view
@@ -186,6 +220,9 @@ impl Anonymizer {
         let mut detections: Vec<Detection> = Vec::new();
 
         for pat in &self.patterns {
+            if !entity_allowed(&pat.entity_type) {
+                continue;
+            }
             // Early threshold check: consider maximum possible score (with boost)
             let max_score = if !pat.context_keywords.is_empty() && !pat.context_required {
                 (pat.score + self.context_boost).min(1.0)
@@ -277,7 +314,9 @@ impl Anonymizer {
         // Detections are mapped back to original byte positions.
         if let Some(collapsed) = collapse_newlines(text) {
             for pat in &self.patterns {
-                if !MULTILINE_ENTITY_TYPES.contains(&pat.entity_type.as_ref()) {
+                if !entity_allowed(&pat.entity_type)
+                    || !MULTILINE_ENTITY_TYPES.contains(&pat.entity_type.as_ref())
+                {
                     continue;
                 }
                 let max_score = if !pat.context_keywords.is_empty() && !pat.context_required {
@@ -361,7 +400,7 @@ impl Anonymizer {
                     let is_person = span.label == "PERSON" || span.label == "PER";
                     let is_location = span.label == "LOCATION" || span.label == "LOC";
 
-                    if is_person {
+                    if is_person && entity_allowed("PERSON") {
                         if PERSON_BLOCKLIST.contains(&trimmed) {
                             continue;
                         }
@@ -374,7 +413,7 @@ impl Anonymizer {
                             end: ext_end,
                             score: span.score,
                         });
-                    } else if is_location {
+                    } else if is_location && entity_allowed("LOCATION") {
                         detections.push(Detection {
                             entity_type: Cow::Borrowed("LOCATION"),
                             original: raw_span.to_string(),
@@ -389,7 +428,7 @@ impl Anonymizer {
 
         // Sign-off name detection: find names after common closing salutations.
         // Catches nicknames and informal names like "Best regards,\nPrzemek".
-        {
+        if entity_allowed("PERSON") {
             static SIGNOFF_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
                 Regex::new(
                     r"(?im)(?:best\s+regards|regards|brgds|brds|cordialement|cdlt|bien\s+[àa]\s+vous|sincerely|cheers|merci|thanks)[,.]?\s*\n?\s*([A-Z\p{Lu}][\p{L}'-]+)"
@@ -462,8 +501,10 @@ impl Anonymizer {
             }
         }
 
-        // Drop PASSWORD detections that fully contain a more specific detection
-        // (e.g., PASSWORD wrapping a SECRET_KEY or AUTH_TOKEN value).
+        // Prefer a specific classification only when it covers the entire
+        // password value. A detected fragment must not expose the rest of a
+        // recognized credential. Keep whitespace inside quotes and punctuation
+        // such as '&': neither is proof that the password has ended.
         if detections.iter().any(|d| d.entity_type == "PASSWORD") {
             let specific_spans: Vec<(usize, usize)> = detections
                 .iter()
@@ -475,9 +516,12 @@ impl Anonymizer {
                     if det.entity_type != "PASSWORD" {
                         return true;
                     }
+                    let Some(value) = password_value_range(&det.original) else {
+                        return true;
+                    };
                     !specific_spans
                         .iter()
-                        .any(|&(s, e)| s >= det.start && e <= det.end)
+                        .any(|&(s, e)| s == det.start + value.start && e == det.start + value.end)
                 });
             }
         }
@@ -533,7 +577,7 @@ impl Anonymizer {
                             let normalized_value = NormalizedText::new(value);
                             let decoded = normalized_value.as_str();
                             for pat in &self.patterns {
-                                if pat.entity_type == "URL" {
+                                if pat.entity_type == "URL" || !entity_allowed(&pat.entity_type) {
                                     continue;
                                 }
                                 let max_score =

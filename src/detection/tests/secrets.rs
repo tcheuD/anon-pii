@@ -280,6 +280,84 @@ fn test_password_prefixed_keyword() {
     assert!(result.contains("[PASSWORD_"));
 }
 
+#[test]
+fn test_password_containing_detected_fragments_is_masked_completely() {
+    let key = synthetic_secret(&["ghp", "_", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]);
+    let jwt = synthetic_secret(&["eyJhbGciOiJub25lIn0", ".", "eyJzdWIiOiJleGFtcGxlIn0"]);
+    for assignment in [
+        r#"password="private-prefix ada@example.invalid private-suffix""#.to_string(),
+        "pwd='private-prefix 192.0.2.20 private-suffix'".to_string(),
+        "DB_PASSWORD=private-prefix192.0.2.20private-suffix".to_string(),
+        format!("secret=\"private-prefix {key} private-suffix\""),
+        format!("token=\" {jwt} \""),
+        // '&' can be part of a credential: do not assume a query delimiter.
+        format!("token={jwt}&cc_last4=4242"),
+    ] {
+        let prefix = "Échec 📨 — ";
+        let suffix = "\nplease investigate.";
+        let input = format!("{prefix}{assignment}{suffix}");
+        let mut a = Anonymizer::new(0.5);
+        let (output, detections) = a.anonymize_text(&input);
+        assert_eq!(detections.len(), 1, "{assignment}: {detections:?}");
+        let detection = &detections[0];
+        assert_eq!(detection.entity_type, "PASSWORD", "{assignment}");
+        assert_eq!(detection.original, assignment);
+        assert_eq!(detection.start, prefix.len());
+        assert_eq!(detection.end, prefix.len() + assignment.len());
+        let token = a.mapping.mappings.keys().next().unwrap();
+        assert_eq!(output, format!("{prefix}{token}{suffix}"));
+        assert_eq!(a.mapping.restore_bracketed(&output), input);
+    }
+}
+
+#[test]
+fn test_password_normalized_assignment_syntax_keeps_complete_masking() {
+    for assignment in [
+        "password%3Dada@example.invalid",
+        "password＝ada@example.invalid",
+        "password=%22ada@example.invalid%22",
+        "password%3Dprivate-prefix:ada@example.invalid",
+        "password＝private-prefix:ada@example.invalid",
+        r"password\u003Dprivate-prefix:ada@example.invalid",
+        "password%3Dprivate-prefix=ada@example.invalid",
+    ] {
+        let mut a = Anonymizer::new(0.5);
+        let (output, detections) = a.anonymize_text(assignment);
+        assert_eq!(detections.len(), 1, "{assignment}: {detections:?}");
+        assert_eq!(detections[0].entity_type, "PASSWORD", "{assignment}");
+        assert_eq!(detections[0].original, assignment);
+        let token = a.mapping.mappings.keys().next().unwrap();
+        assert_eq!(&output, token, "{assignment}");
+        assert_eq!(a.mapping.restore_bracketed(&output), assignment);
+    }
+}
+
+#[test]
+fn test_password_complete_value_keeps_specific_detection() {
+    let key = synthetic_secret(&["ghp", "_", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]);
+    let jwt = synthetic_secret(&["eyJhbGciOiJub25lIn0", ".", "eyJzdWIiOiJleGFtcGxlIn0"]);
+    for (value, entity_type) in [
+        (key.as_str(), "SECRET_KEY"),
+        (jwt.as_str(), "AUTH_TOKEN"),
+        ("ada@example.invalid", "EMAIL_ADDRESS"),
+    ] {
+        for (prefix, suffix) in [("token=", ""), ("secret = '", "'"), ("password=\"", "\"")] {
+            let input = format!("{prefix}{value}{suffix}");
+            let mut a = Anonymizer::new(0.5);
+            let (output, detections) = a.anonymize_text(&input);
+            assert_eq!(detections.len(), 1, "{input}: {detections:?}");
+            let detection = &detections[0];
+            assert_eq!(detection.entity_type, entity_type, "{input}");
+            assert_eq!(detection.original, value);
+            assert_eq!(detection.start, prefix.len());
+            assert_eq!(detection.end, prefix.len() + value.len());
+            let token = a.mapping.mappings.keys().next().unwrap();
+            assert_eq!(output, format!("{prefix}{token}{suffix}"));
+            assert_eq!(a.mapping.restore_bracketed(&output), input);
+        }
+    }
+}
+
 // -- AUTH_TOKEN (JWT) tests --
 
 #[test]
@@ -305,13 +383,13 @@ fn test_jwt_three_segments_detected() {
 #[test]
 fn test_jwt_two_segments_detected() {
     let mut a = Anonymizer::new(0.0);
-    // JWT without signature (2 segments) — common in URL params
+    // JWT without signature (2 segments), covering the complete assigned value.
     let jwt = synthetic_secret(&[
         "eyJhbGciOiJIUzI1NiJ9",
         ".",
         "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0",
     ]);
-    let input = format!("token={jwt}&cc_last4=4242");
+    let input = format!("token={jwt}");
     let (result, dets) = a.anonymize_text(&input);
     assert!(
         dets.iter().any(|d| d.entity_type == "AUTH_TOKEN"),

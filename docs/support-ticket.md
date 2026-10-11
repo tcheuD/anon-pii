@@ -46,6 +46,15 @@ names. Postal-address support covers selected French forms, not every address
 or country. Inspect names, addresses, credentials, and organization-specific
 identifiers yourself. Detection counts do not prove that a ticket is anonymous.
 
+The browser and current source builds keep a recognized password assignment
+fully masked when it contains a detected email, address, or credential fragment.
+A more specific token is used only when it covers the complete assigned value
+and the original assignment syntax establishes that boundary. Encoded or
+ambiguous assignment syntax can keep the whole assignment under one token.
+Punctuation and spaces inside quoted passwords remain part of the value, and
+restoration preserves the exact source text. The v0.3.3 native archives predate
+this overlap fix.
+
 The browser works with ticket text; use the CLI's format-aware paths when you
 need JSON-value, CSV-field, or SQL-literal processing. Do not infer document,
 image, or attachment redaction from what happens in the text workspace.

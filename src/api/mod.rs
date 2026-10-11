@@ -178,6 +178,154 @@ mod tests {
         assert!(results.iter().all(|r| r.entity_type == "EMAIL_ADDRESS"));
     }
 
+    async fn post_json(uri: &str, body: serde_json::Value) -> serde_json::Value {
+        let response = app()
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_analyze_selected_entities_resolve_password_overlaps() {
+        let assignment = r#"password="prefix ada@example.invalid suffix""#;
+        let text = format!("Échec 📨 {assignment}");
+        for (entities, expected) in [
+            (
+                Some(vec!["EMAIL_ADDRESS"]),
+                Some(("EMAIL_ADDRESS", "ada@example.invalid")),
+            ),
+            (Some(vec!["PASSWORD"]), Some(("PASSWORD", assignment))),
+            (None, Some(("PASSWORD", assignment))),
+            (Some(vec![]), None),
+            (Some(vec!["UNKNOWN_ENTITY"]), None),
+        ] {
+            let mut request = serde_json::json!({"text": text, "language": "en"});
+            if let Some(entities) = entities {
+                request["entities"] = serde_json::json!(entities);
+            }
+            let results: Vec<types::RecognizerResult> =
+                serde_json::from_value(post_json("/analyze", request).await).unwrap();
+            if let Some((entity, original)) = expected {
+                assert_eq!(results.len(), 1, "{results:?}");
+                assert_eq!(results[0].entity_type, entity);
+                assert_eq!(&text[results[0].start..results[0].end], original);
+            } else {
+                assert!(results.is_empty(), "{results:?}");
+            }
+        }
+
+        // A full-value EMAIL normally supersedes PASSWORD. An unrequested
+        // EMAIL must not suppress the explicitly requested assignment.
+        let text = r#"password="ada@example.invalid""#;
+        let results: Vec<types::RecognizerResult> = serde_json::from_value(
+            post_json(
+                "/analyze",
+                serde_json::json!({
+                    "text": text, "language": "en", "entities": ["PASSWORD"]
+                }),
+            )
+            .await,
+        )
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entity_type, "PASSWORD");
+        assert_eq!(&text[results[0].start..results[0].end], text);
+    }
+
+    #[tokio::test]
+    async fn test_analyze_selected_url_excludes_unrequested_inner_audit_types() {
+        let text = "https://example.invalid/help?email=ada%40example.invalid";
+        for (entity, expected) in [("URL", text), ("EMAIL_ADDRESS", "ada%40example.invalid")] {
+            let results: Vec<types::RecognizerResult> = serde_json::from_value(
+                post_json(
+                    "/analyze",
+                    serde_json::json!({
+                        "text": text, "language": "en", "entities": [entity]
+                    }),
+                )
+                .await,
+            )
+            .unwrap();
+            assert_eq!(results.len(), 1, "{results:?}");
+            assert_eq!(results[0].entity_type, entity);
+            assert_eq!(&text[results[0].start..results[0].end], expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_analyze_selected_email_feeds_anonymize() {
+        let text = r#"Échec 📨 password="prefix ada@example.invalid suffix""#;
+        let results = post_json(
+            "/analyze",
+            serde_json::json!({
+                "text": text, "language": "en", "entities": ["EMAIL_ADDRESS"]
+            }),
+        )
+        .await;
+        assert_eq!(results.as_array().unwrap().len(), 1);
+        let response: types::AnonymizeResponse = serde_json::from_value(
+            post_json(
+                "/anonymize",
+                serde_json::json!({
+                    "text": text,
+                    "analyzer_results": results,
+                    "anonymizers": {"EMAIL_ADDRESS": {"type": "mask", "masking_char": "*"}}
+                }),
+            )
+            .await,
+        )
+        .unwrap();
+        assert_eq!(
+            response.text,
+            text.replace(
+                "ada@example.invalid",
+                &"*".repeat("ada@example.invalid".len())
+            )
+        );
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].entity_type, "EMAIL_ADDRESS");
+    }
+
+    #[tokio::test]
+    async fn test_analyze_selected_signoff_person_survives_password_overlap() {
+        let text = r#"password="Cheers, Avery""#;
+        for (entities, expected) in [
+            (vec!["PERSON"], Some("Avery")),
+            (vec![], None),
+            (vec!["UNKNOWN_ENTITY"], None),
+        ] {
+            let results: Vec<types::RecognizerResult> = serde_json::from_value(
+                post_json(
+                    "/analyze",
+                    serde_json::json!({
+                        "text": text, "language": "en", "entities": entities
+                    }),
+                )
+                .await,
+            )
+            .unwrap();
+            if let Some(expected) = expected {
+                assert_eq!(results.len(), 1, "{results:?}");
+                assert_eq!(results[0].entity_type, "PERSON");
+                assert_eq!(&text[results[0].start..results[0].end], expected);
+            } else {
+                assert!(results.is_empty(), "{results:?}");
+            }
+        }
+    }
+
     #[cfg(all(feature = "ner-lite", not(feature = "ner")))]
     #[tokio::test]
     async fn test_analyze_automatically_enables_heuristic_names() {
