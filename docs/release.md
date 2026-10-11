@@ -78,8 +78,9 @@ version, preview without a child process, actual tokenized child stdin, exact
 `run -- cat` restoration, the support-ticket name/address roundtrip with `--ner`,
 complete custom-regex masking for reverse-suffix and reverse-inner matches
 (including Unicode and percent-encoded source), lowercase/mixed-case compact
-and fixed French IBAN spans with checksum/context controls, wrapped-email and
-SQL E-string spans with format/boundary controls, and absence of a
+and fixed French IBAN spans with checksum/context controls, compact UK IBANs
+without financial context (including field/boundary and threshold controls),
+wrapped-email and SQL E-string spans with format/boundary controls, and absence of a
 persisted transaction mapping. Span checks inspect both preview and actual child
 input, because exact restoration alone cannot reveal values left visible.
 

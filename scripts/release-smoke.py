@@ -447,14 +447,60 @@ def main():
         for label, text in [
             ("generic invalid checksum", "IBAN gb83west12345698765432"),
             ("French print invalid checksum", "IBAN fr14 2004 1010 0505 0001 3m02 607"),
-            ("generic lowercase without context", "code gb82west12345698765432 here"),
-            ("generic mixed case without context", "code gB82WeSt12345698765432 here"),
+            ("generic lowercase without context", "code de89370400440532013000 here"),
+            ("generic mixed case without context", "code nL91AbNa0417164300 here"),
             ("unsupported generic grouped lowercase", "IBAN gb82 west 1234 5698 7654 32"),
         ]:
             source = text.encode()
             preview = run(["run", "--dry-run"], source)
             require(preview.stdout == source, f"{label} control changed in preview")
             child = run(["run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, f"{label} control changed during roundtrip")
+            require(observed.read_bytes() == source, f"{label} control changed in child input")
+
+        # Public GB examples qualify at score 0.7 without financial context.
+        # Keep the Unicode surroundings outside one complete IBAN_CODE token.
+        uk_prefix = "Échec 🧪 — value=".encode()
+        uk_suffix = "; à vérifier.\n".encode()
+        uk_expected = (
+            re.escape(uk_prefix)
+            + rb"\[IBAN_CODE_[0-9a-f]{8}\]"
+            + re.escape(uk_suffix)
+        )
+        for iban in [
+            "gb82west12345698765432",
+            "gB82WeSt12345698765432",
+            "gb29nwbk60161331926819",
+            "Gb29NwBk60161331926819",
+        ]:
+            source = uk_prefix + iban.encode() + uk_suffix
+            flags = ["--threshold", "0.7"]
+            preview = run([*flags, "run", "--dry-run"], source)
+            require(
+                re.fullmatch(uk_expected, preview.stdout) is not None,
+                f"compact UK IBAN {iban!r} preview did not mask the exact span without context",
+            )
+            child = run([*flags, "run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, "compact UK IBAN roundtrip changed source bytes")
+            require(
+                re.fullmatch(uk_expected, observed.read_bytes()) is not None,
+                "compact UK IBAN child input did not preserve the exact token span",
+            )
+
+        # Mod-97 alone is insufficient for UK structure, and neither a word
+        # boundary nor a stricter threshold may be bypassed by the new path.
+        for label, flags, value in [
+            ("UK wrong length with valid checksum", [], "GB55WEST9234569876543"),
+            ("UK invalid bank code with valid checksum", [], "GB52WES992345698765432"),
+            ("UK invalid checksum without context", [], "GB83WEST12345698765432"),
+            ("UK Unicode leading boundary", [], "éGB82WEST12345698765432"),
+            ("UK Unicode trailing boundary", [], "GB82WEST12345698765432é"),
+            ("UK threshold above score 0.7", ["--threshold", "0.8"], "GB82WEST12345698765432"),
+        ]:
+            source = uk_prefix + value.encode() + uk_suffix
+            preview = run([*flags, "run", "--dry-run"], source)
+            require(preview.stdout == source, f"{label} control changed in preview")
+            child = run([*flags, "run", "--", "tee", str(observed)], source)
             require(child.stdout == source, f"{label} control changed during roundtrip")
             require(observed.read_bytes() == source, f"{label} control changed in child input")
 
@@ -542,7 +588,7 @@ def main():
 
     print(
         f"Release smoke passed: anon-pii {args.version}; "
-        "preview, roundtrip, support ticket, custom regex spans, IBAN casing, "
+        "preview, roundtrip, support ticket, custom regex spans, IBAN casing, compact UK IBANs, "
         "wrapped emails, SQL E-string controls, complete passwords, specific credentials, "
         "local API analyze/anonymize handoff"
     )

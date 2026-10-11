@@ -28,17 +28,19 @@ and a CLI starter that demonstrates the handoff without an AI service.
 
 ## Installation
 
-Download the archive for your platform from [v0.3.5](https://github.com/tcheuD/anon-pii/releases/tag/v0.3.5). No Rust toolchain is needed for these binaries.
+Download the archive for your platform from the [latest release](https://github.com/tcheuD/anon-pii/releases/latest). No Rust toolchain is needed for these binaries.
 
 | Platform | Archive | Extract after downloading |
 |----------|---------|--------------------------|
-| Linux x86_64 (glibc) | [anon-pii-linux-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.3.5/anon-pii-linux-x86_64.tar.gz) | `tar -xzf anon-pii-linux-x86_64.tar.gz` |
-| macOS Apple Silicon | [anon-pii-macos-aarch64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.3.5/anon-pii-macos-aarch64.tar.gz) | `tar -xzf anon-pii-macos-aarch64.tar.gz` |
-| macOS Intel | [anon-pii-macos-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/download/v0.3.5/anon-pii-macos-x86_64.tar.gz) | `tar -xzf anon-pii-macos-x86_64.tar.gz` |
+| Linux x86_64 (glibc) | [anon-pii-linux-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/latest/download/anon-pii-linux-x86_64.tar.gz) | `tar -xzf anon-pii-linux-x86_64.tar.gz` |
+| macOS Apple Silicon | [anon-pii-macos-aarch64.tar.gz](https://github.com/tcheuD/anon-pii/releases/latest/download/anon-pii-macos-aarch64.tar.gz) | `tar -xzf anon-pii-macos-aarch64.tar.gz` |
+| macOS Intel | [anon-pii-macos-x86_64.tar.gz](https://github.com/tcheuD/anon-pii/releases/latest/download/anon-pii-macos-x86_64.tar.gz) | `tar -xzf anon-pii-macos-x86_64.tar.gz` |
 
-Before extracting, download [SHA256SUMS](https://github.com/tcheuD/anon-pii/releases/download/v0.3.5/SHA256SUMS)
+Before extracting, download [SHA256SUMS](https://github.com/tcheuD/anon-pii/releases/latest/download/SHA256SUMS)
 and verify the archive against its matching entry. Use `sha256sum` on Linux
 or `shasum -a 256` on macOS with the downloaded archive's filename.
+For a specific version, choose it from the [release history](https://github.com/tcheuD/anon-pii/releases)
+and download both the archive and checksum file from that release.
 
 From the directory containing the extracted binary, install for your user:
 
