@@ -44,14 +44,18 @@ export function mountTicketWorkspace() {
   let restoredText = null;
   let restoreOutcome = '';
   let revision = 0;
+  let copyPending = false;
 
   function updateControls() {
     prepareButton.disabled = !engineModule || !source.value.trim();
     protectButton.disabled = !engine || !preparedText;
     copyTicketButton.disabled = preparedText === null;
+    // Keep keyboard focus during a pending write; copy() enforces this lock.
+    copyTicketButton.setAttribute('aria-disabled', String(copyPending || copyTicketButton.disabled));
     reply.disabled = !engine;
     restoreButton.disabled = !engine || !reply.value.trim();
     copyReplyButton.disabled = restoredText === null;
+    copyReplyButton.setAttribute('aria-disabled', String(copyPending || copyReplyButton.disabled));
   }
 
   function clearPrepared() {
@@ -235,9 +239,14 @@ export function mountTicketWorkspace() {
   });
 
   async function copy(text, field, feedback, successMessage, outcome = '') {
-    if (text === null) return;
+    if (text === null || copyPending) return;
+    // A pending clipboard write cannot be cancelled. Keep this shared lock even
+    // when the session changes, so an older write cannot finish after a new one.
+    copyPending = true;
     const copyRevision = revision;
-    feedback.textContent = '';
+    feedback.textContent = 'Copying…';
+    status.textContent = 'Copying to clipboard…';
+    updateControls();
     try {
       await navigator.clipboard.writeText(text);
       if (copyRevision === revision) {
@@ -251,6 +260,10 @@ export function mountTicketWorkspace() {
       field.select();
       feedback.textContent = 'Text selected for manual copy';
       status.textContent = 'Clipboard access was unavailable. The text is selected; use your browser’s Copy command or Ctrl+C / ⌘C.' + (outcome ? ` ${outcome}` : '');
+    } finally {
+      copyPending = false;
+      if (copyRevision !== revision) feedback.textContent = '';
+      updateControls();
     }
   }
 

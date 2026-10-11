@@ -77,8 +77,8 @@ h2{font:700 clamp(29px,3.3vw,42px)/1.15 var(--sans);letter-spacing:-.045em;margi
 .ticket-field>button,.ticket-field>.ticket-actions{margin-top:auto}
 .play button{font:600 13px/1.4 var(--sans);cursor:pointer;min-height:44px;padding:10px 15px;border:1px solid var(--ink);background:var(--orange);color:var(--ink);border-radius:0}
 .play button.secondary{background:transparent;color:var(--ink);border-color:var(--control)}
-.play button:hover:not(:disabled){border-color:var(--ink);background:var(--ink);color:var(--panel)}
-.play button:disabled{background:#e6e6e6;color:#666;border-color:#aaa;cursor:not-allowed}
+.play button:hover:not(:disabled):not([aria-disabled="true"]){border-color:var(--ink);background:var(--ink);color:var(--panel)}
+.play button:disabled,.play button[aria-disabled="true"]{background:#e6e6e6;color:#666;border-color:#aaa;cursor:not-allowed}
 .ticket-status{margin-top:28px;padding:14px 18px;border-left:3px solid var(--orange);font-size:14px;min-height:50px;background:var(--soft)}
 .copy-feedback{font-size:12px;color:var(--accent)}
 .session-notes{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px}
