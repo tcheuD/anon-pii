@@ -45,16 +45,22 @@ try {
   const context = await browser.newContext();
   await context.addInitScript(() => {
     window.__copied = [];
+    window.__clipboardWrites = [];
     window.__clipboardReject = false;
     window.__clipboardPending = false;
     window.__resolveClipboard = null;
+    window.__rejectClipboard = null;
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
         writeText: async text => {
+          window.__clipboardWrites.push(text);
           if (window.__clipboardReject) throw new Error('Clipboard denied for test');
           if (window.__clipboardPending) {
-            await new Promise(resolve => { window.__resolveClipboard = resolve; });
+            await new Promise((resolve, reject) => {
+              window.__resolveClipboard = resolve;
+              window.__rejectClipboard = reject;
+            });
           }
           window.__copied.push(text);
         },
@@ -630,29 +636,140 @@ try {
     assert.equal(await input('ticket-restored'), ticket, 'rejected selections must retain both kinds of mapping');
   });
 
-  await check('late clipboard completion cannot reinstate feedback from before a manual protection', async () => {
-    for (const copyButton of ['copy-ticket', 'copy-reply']) {
+  const settleClipboard = async outcome => {
+    await page.evaluate(outcome => {
+      window.__clipboardPending = false;
+      if (outcome === 'success') window.__resolveClipboard();
+      else window.__rejectClipboard(new Error('Delayed clipboard denial for test'));
+      window.__resolveClipboard = null;
+      window.__rejectClipboard = null;
+    }, outcome);
+    await page.waitForFunction(() => {
+      const button = document.getElementById('copy-ticket');
+      return !button.disabled && button.getAttribute('aria-disabled') !== 'true';
+    });
+  };
+  const assertCopyLocked = async () => {
+    for (const id of ['copy-ticket', 'copy-reply']) assert.equal(await disabled(id), true, id);
+    const writes = await page.evaluate(() => window.__clipboardWrites.length);
+    // Direct dispatch exercises the handler guard independently of the
+    // accessible disabled state that Playwright honors for normal clicks.
+    for (const id of ['copy-ticket', 'copy-reply']) await field(id).dispatchEvent('click');
+    assert.equal(await page.evaluate(() => window.__clipboardWrites.length), writes);
+  };
+
+  await check('one pending clipboard write locks both actions until the next explicit copy', async () => {
+    const initial = await prepareManualTicket();
+    await field('ticket-reply').fill(initial);
+    await click('restore-reply');
+    const writes = await page.evaluate(() => window.__clipboardWrites.length);
+    await page.evaluate(() => { window.__clipboardPending = true; });
+    await field('copy-reply').focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => typeof window.__resolveClipboard === 'function');
+    assert.equal(await field('copy-reply-feedback').textContent(), 'Copying…');
+    assert.equal(await field('ticket-status').textContent(), 'Copying to clipboard…');
+    await page.keyboard.press('Enter');
+    await assertCopyLocked();
+    await settleClipboard('success');
+    assert.equal(await page.evaluate(() => window.__clipboardWrites.length), writes + 1, 'do not queue another write');
+    assert.equal(await page.evaluate(() => window.__copied.at(-1)), manualSource);
+    assert.equal(await field('copy-reply-feedback').textContent(), 'Copied');
+    assert.match(await field('ticket-status').textContent(), /^Reply copied\./);
+    assert.equal(await disabled('copy-reply'), false);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'copy-reply', 'successful keyboard copy must retain focus');
+    await click('copy-ticket');
+    assert.equal(await page.evaluate(() => window.__copied.at(-1)), initial, 'the next explicit copy must contain tokens');
+    assert.equal(await page.evaluate(() => window.__clipboardWrites.length), writes + 2);
+    await page.evaluate(() => { window.__clipboardPending = true; });
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'ticket-reply');
+    await settleClipboard('success');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'ticket-reply', 'completion must not steal focus after Tab');
+    assert.equal(await page.evaluate(() => window.__clipboardWrites.length), writes + 3);
+  });
+
+  await check('pending clipboard rejection selects the requested current output and permits retry', async () => {
+    for (const [button, outputField, feedback] of [
+      ['copy-ticket', 'ticket-prepared', 'copy-ticket-feedback'],
+      ['copy-reply', 'ticket-restored', 'copy-reply-feedback'],
+    ]) {
       const initial = await prepareManualTicket();
       await field('ticket-reply').fill(initial);
       await click('restore-reply');
-      const copyCount = await page.evaluate(() => window.__copied.length);
+      const expected = await input(outputField);
+      const copied = await page.evaluate(() => window.__copied.length);
       await page.evaluate(() => { window.__clipboardPending = true; });
-      await click(copyButton);
-      await page.waitForFunction(() => typeof window.__resolveClipboard === 'function');
-      const { output } = await protectFirst(manualValue);
-      const status = await field('ticket-status').textContent();
-      await page.evaluate(() => {
-        window.__clipboardPending = false;
-        window.__resolveClipboard();
-        window.__resolveClipboard = null;
-      });
-      await page.waitForFunction(count => window.__copied.length === count + 1, copyCount);
-      assert.equal(await field('ticket-status').textContent(), status);
-      for (const id of ['copy-ticket-feedback', 'copy-reply-feedback']) assert.equal(await field(id).textContent(), '');
-      assert.equal(await input('ticket-restored'), '');
-      // A pending OS copy cannot be undone; the next copy must use the new output.
+      await click(button);
+      await assertCopyLocked();
+      await settleClipboard('failure');
+      assert.equal(await page.evaluate(() => window.__copied.length), copied);
+      assert.equal(await disabled('copy-reply'), false);
+      assert.equal(await field(feedback).textContent(), 'Text selected for manual copy');
+      assert.match(await field('ticket-status').textContent(), /^Clipboard access was unavailable/);
+      assert.deepEqual(await field(outputField).evaluate(element => ({
+        text: element.value.slice(element.selectionStart, element.selectionEnd),
+        focused: document.activeElement === element,
+      })), { text: expected, focused: true });
+      await click(button);
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), expected);
+      assert.equal(await field(feedback).textContent(), 'Copied');
+    }
+  });
+
+  await check('state changes retain the clipboard lock and suppress obsolete completion effects', async () => {
+    for (const [action, outcome, button] of [
+      ['clear', 'success', 'copy-reply'],
+      ['clear', 'failure', 'copy-reply'],
+      ['source edit', 'success', 'copy-reply'],
+      ['reprepare', 'failure', 'copy-reply'],
+      ['manual protection', 'success', 'copy-ticket'],
+      ['manual protection', 'failure', 'copy-reply'],
+      ['reply edit', 'failure', 'copy-ticket'],
+    ]) {
+      const label = `${action}, ${outcome}`;
+      const initial = await prepareManualTicket();
+      await field('ticket-reply').fill(initial);
+      await click('restore-reply');
+      const oldCopy = button === 'copy-reply' ? manualSource : initial;
+      const copied = await page.evaluate(() => window.__copied.length);
+      const writes = await page.evaluate(() => window.__clipboardWrites.length);
+      await page.evaluate(() => { window.__clipboardPending = true; });
+      await click(button);
+      if (action === 'clear') await click('clear-session');
+      if (action === 'clear' || action === 'source edit') {
+        await field('ticket-source').fill('updated ticket — contact blair@example.invalid.');
+        await click('prepare-ticket');
+      }
+      if (action === 'reprepare') await click('prepare-ticket');
+      if (action === 'manual protection') await protectFirst(manualValue);
+      if (action === 'reply edit') await field('ticket-reply').fill(`${initial} please retry.`);
+      await assertCopyLocked();
+      const current = await page.evaluate(() => ({
+        status: document.getElementById('ticket-status').textContent,
+        prepared: document.getElementById('ticket-prepared').value,
+        reply: document.getElementById('ticket-reply').value,
+        restored: document.getElementById('ticket-restored').value,
+        focus: document.activeElement.id,
+      }));
+      await settleClipboard(outcome);
+      assert.deepEqual(await page.evaluate(() => ({
+        status: document.getElementById('ticket-status').textContent,
+        prepared: document.getElementById('ticket-prepared').value,
+        reply: document.getElementById('ticket-reply').value,
+        restored: document.getElementById('ticket-restored').value,
+        focus: document.activeElement.id,
+      })), current, label);
+      assert.equal(await page.evaluate(() => window.__clipboardWrites.length), writes + 1, `${label}: no queued write`);
+      assert.equal(await page.evaluate(() => window.__copied.length), copied + (outcome === 'success' ? 1 : 0), label);
+      // Session changes cannot cancel an already requested clipboard write.
+      if (outcome === 'success') assert.equal(await page.evaluate(() => window.__copied.at(-1)), oldCopy, label);
+      for (const id of ['copy-ticket-feedback', 'copy-reply-feedback']) assert.equal(await field(id).textContent(), '', label);
+      assert.equal(await disabled('copy-reply'), true, 'a changed reply must still require restoration');
       await click('copy-ticket');
-      assert.equal(await page.evaluate(() => window.__copied.at(-1)), output);
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), current.prepared, label);
+      assert.equal(await page.evaluate(() => window.__clipboardWrites.length), writes + 2, label);
     }
   });
 
