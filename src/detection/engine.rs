@@ -245,7 +245,7 @@ impl Anonymizer {
                 };
                 // Check context presence
                 let has_ctx = if !pat.context_keywords.is_empty() {
-                    self.has_context(text, mat.start(), mat.end(), &pat.context_keywords)
+                    self.has_context(text, mat.start(), mat.end(), pat)
                 } else {
                     false
                 };
@@ -343,12 +343,7 @@ impl Anonymizer {
                     }
 
                     let has_ctx = if !pat.context_keywords.is_empty() {
-                        self.has_context(
-                            text,
-                            normalized_range.start,
-                            normalized_range.end,
-                            &pat.context_keywords,
-                        )
+                        self.has_context(text, normalized_range.start, normalized_range.end, pat)
                     } else {
                         false
                     };
@@ -611,12 +606,7 @@ impl Anonymizer {
                                     let local_start = value_start + value_range.start;
                                     let local_end = value_start + value_range.end;
                                     let has_ctx = if !pat.context_keywords.is_empty() {
-                                        self.has_context(
-                                            &det.original,
-                                            local_start,
-                                            local_end,
-                                            &pat.context_keywords,
-                                        )
+                                        self.has_context(&det.original, local_start, local_end, pat)
                                     } else {
                                         false
                                     };

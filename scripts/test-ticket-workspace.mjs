@@ -476,12 +476,14 @@ try {
   });
 
   await check('grouped UK IBAN casing roundtrips exactly with financial context', async () => {
-    // Casing variants of the public GB82 WEST and GB29 NWBK checksum examples.
+    // Public GB82 WEST/GB29 NWBK examples and synthetic checksum-valid bank codes.
     const variants = [
       'gb82 west 1234 5698 7654 32',
       'gB82 wEsT 1234 5698 7654 32',
       'gb29 nwbk 6016 1331 9268 19',
       'gB29 nWbK 6016 1331 9268 19',
+      'gb69 bank 1234 5698 7654 32',
+      'gb86 bica 1234 5698 7654 32',
     ];
     for (const iban of variants) {
       const prefix = 'Échec 🧪 — IBAN ';
@@ -501,7 +503,7 @@ try {
       await click('copy-reply');
       assert.equal(await page.evaluate(() => window.__copied.at(-1)), ticket);
     }
-    for (const iban of [variants[0], variants[3]]) {
+    for (const iban of [variants[0], variants[3], variants[4], variants[5]]) {
       const ticket = `Échec 🧪 — valeur ${iban} please investigate.`;
       await field('ticket-source').fill(ticket);
       await click('prepare-ticket');

@@ -157,10 +157,10 @@ engine. Native archives through v0.3.5 do not include it; v0.3.6 is the first
 native release with this rule.
 
 Current source builds and the browser engine also recognize ASCII-case UK print
-groups such as `gb82 west 1234 5698 7654 32` with space/tab separators, financial
-context, and a valid mod-97 checksum. The fixed 4-4-4-4-4-2 groups enforce the
-same national fields and check-digit range as the compact UK rule. Replacement
-and restoration preserve the original separators and spelling. This rule does
+groups such as `gb82 west 1234 5698 7654 32` with space/tab separators, a financial
+keyword outside the IBAN, and a valid mod-97 checksum. The fixed 4-4-4-4-4-2 groups
+enforce the same national fields and check-digit range as the compact UK rule.
+Replacement and restoration preserve the original separators and spelling. This rule does
 not extend lowercase/mixed-case support across line breaks. It keeps score
 `0.7` and requires context; threshold `0.8` rejects it. The broader generic
 uppercase matcher is unchanged. Native archives through v0.3.7 predate this

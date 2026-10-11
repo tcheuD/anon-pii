@@ -4,6 +4,9 @@
 
 use super::PiiPattern;
 
+pub(crate) const UK_IBAN_PRINT_PATTERN: &str =
+    r"\b[Gg][Bb](?:0[2-9]|[1-8][0-9]|9[0-8])[ \t][A-Za-z]{4}(?:[ \t][0-9]{4}){3}[ \t][0-9]{2}\b";
+
 pub const UK_PATTERNS: &[PiiPattern] = &[
     // A complete compact GB IBAN can stand alone without a financial keyword.
     // Require the national field structure; IBAN_CODE also validates mod-97.
@@ -20,7 +23,7 @@ pub const UK_PATTERNS: &[PiiPattern] = &[
     PiiPattern {
         name: "uk_iban_print",
         entity_type: "IBAN_CODE",
-        pattern: r"\b[Gg][Bb](?:0[2-9]|[1-8][0-9]|9[0-8])[ \t][A-Za-z]{4}(?:[ \t][0-9]{4}){3}[ \t][0-9]{2}\b",
+        pattern: UK_IBAN_PRINT_PATTERN,
         score: 0.7,
         context_keywords: &[
             "iban", "compte", "account", "virement", "bank", "banque", "bancaire", "transfer",

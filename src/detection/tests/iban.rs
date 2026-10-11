@@ -253,6 +253,144 @@ fn test_uk_iban_print_keeps_context_gate_score_and_threshold() {
 }
 
 #[test]
+fn test_uk_iban_print_cannot_supply_its_own_context() {
+    for iban in [
+        "gb69 bank 1234 5698 7654 32",
+        "gb86 bica 1234 5698 7654 32",
+        "gB69\tBaNk\t1234\t5698\t7654\t32",
+    ] {
+        assert!(
+            crate::patterns::iban_mod97(iban),
+            "fixture checksum: {iban}"
+        );
+        let input = format!("Échec 🧪 — value={iban}");
+        let mut anonymizer = Anonymizer::new(0.5);
+        let (output, detections) = anonymizer.anonymize_text(&input);
+        assert_eq!(output, input, "bank letters must not supply context");
+        assert!(detections.is_empty(), "{input}; {detections:?}");
+        assert!(anonymizer.mapping.mappings.is_empty());
+    }
+}
+
+#[test]
+fn test_uk_iban_print_accepts_external_financial_context() {
+    for (iban, prefix, suffix) in [
+        (
+            "gb69 bank 1234 5698 7654 32",
+            "Échec 🧪 — bank ",
+            "; review.",
+        ),
+        (
+            "gb86 bica 1234 5698 7654 32",
+            "Échec 🧪 — bic ",
+            "; review.",
+        ),
+        ("gb69 bank 1234 5698 7654 32", "IBAN ", ""),
+        ("gb86 bica 1234 5698 7654 32", "account ", ""),
+        ("gB69\tBaNk\t1234\t5698\t7654\t32", "value=", "; bank"),
+        ("gb86 bica 1234 5698 7654 32", "value=", "; bic"),
+    ] {
+        assert_iban_exact_roundtrip(iban, "IBAN_CODE", prefix, suffix);
+    }
+
+    // The header is outside the nearby 80-character window but aligned with
+    // the value's column, which remains a supported source of context.
+    let prefix = format!("IBAN\n{}\n", "-".repeat(100));
+    assert_iban_exact_roundtrip(
+        "gb69 bank 1234 5698 7654 32",
+        "IBAN_CODE",
+        &prefix,
+        "; review.",
+    );
+}
+
+#[test]
+fn test_uk_iban_print_custom_url_audit_context_excludes_the_encoded_value() {
+    let selected = vec!["IBAN_CODE".to_string()];
+    // The default URL regex stops at normalized spaces. A custom recognizer
+    // that includes them exercises URL-inner auditing of grouped values.
+    let config = crate::config::RecognizerConfigFile::from_yaml(
+        r#"
+recognizers:
+  - name: complete_query_url
+    entity_type: URL
+    patterns:
+      - regex: 'https://example\.invalid/\?[^\r\n]+'
+        score: 1.0
+"#,
+    )
+    .unwrap();
+    for iban in ["gb69 bank 1234 5698 7654 32", "gb86 bica 1234 5698 7654 32"] {
+        let encoded = iban.replace(' ', "%20");
+        for (key, expected_count) in [("value", 0), ("account", 1)] {
+            let input = format!("Échec 🧪 — https://example.invalid/?{key}={encoded}");
+            let mut anonymizer = Anonymizer::new(0.5);
+            anonymizer.add_custom_patterns(&config);
+            // Unfiltered analysis exercises the URL-inner audit path; selecting
+            // IBAN_CODE alone exercises the main normalized-text matcher.
+            for entities in [None, Some(selected.as_slice())] {
+                let detections = anonymizer.analyze_with_entities(&input, entities);
+                let ibans: Vec<_> = detections
+                    .iter()
+                    .filter(|d| d.entity_type == "IBAN_CODE")
+                    .collect();
+                assert_eq!(ibans.len(), expected_count, "{input}; {detections:?}");
+                assert_eq!(
+                    detections.iter().filter(|d| d.entity_type == "URL").count(),
+                    usize::from(entities.is_none()),
+                );
+                if let Some(url) = detections.iter().find(|d| d.entity_type == "URL") {
+                    assert_eq!(url.start, input.find("https://").unwrap());
+                    assert_eq!(url.end, input.len());
+                }
+                if let Some(detection) = ibans.first() {
+                    let start = input.find(&encoded).unwrap();
+                    assert_eq!(detection.original, encoded);
+                    assert_eq!(
+                        (detection.start, detection.end),
+                        (start, start + encoded.len())
+                    );
+                    assert_eq!(detection.score, 0.7);
+                }
+                assert!(anonymizer.mapping.mappings.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn test_uk_iban_print_context_guard_preserves_generic_matching() {
+    // The existing broad uppercase recognizer retains its inclusive context
+    // behavior; only the separate UK print rule excludes its own match.
+    for iban in ["GB69 BANK 1234 5698 7654 32", "GB86 BICA 1234 5698 7654 32"] {
+        assert_iban_exact_roundtrip(iban, "IBAN_CODE", "value=", "");
+    }
+}
+
+#[test]
+fn test_uk_iban_print_context_guard_preserves_custom_name_collisions() {
+    for (entity_type, regex) in [
+        ("IBAN_CODE", "gb69 bank 1234 5698 7654 32"),
+        ("CUSTOM_IBAN", crate::patterns::UK_IBAN_PRINT_PATTERN),
+    ] {
+        let yaml = format!(
+            "recognizers:\n  - name: uk_iban_print\n    entity_type: {entity_type}\n    patterns:\n      - regex: '{regex}'\n        score: 0.7\n    context_keywords: [bank]\n    context_required: true\n"
+        );
+        let config = crate::config::RecognizerConfigFile::from_yaml(&yaml).unwrap();
+        let mut anonymizer = Anonymizer::new(0.5);
+        anonymizer.add_custom_patterns(&config);
+        let input = "value=gb69 bank 1234 5698 7654 32";
+        let (output, detections) = anonymizer.anonymize_text(input);
+        assert_eq!(detections.len(), 1, "{entity_type}; {detections:?}");
+        assert_eq!(detections[0].entity_type, entity_type);
+        assert_eq!(detections[0].original, "gb69 bank 1234 5698 7654 32");
+        assert_eq!((detections[0].start, detections[0].end), (6, input.len()));
+        assert!(output.starts_with(&format!("value=[{entity_type}_")));
+        assert_eq!(anonymizer.mapping.restore_bracketed(&output), input);
+    }
+}
+
+#[test]
 fn test_uk_iban_print_rejects_checksum_valid_structural_impostors() {
     // Lowercase print fields exercise the new rule, not the pre-existing broad
     // uppercase matcher. Each fictional malformed value still passes mod-97.
