@@ -27,20 +27,22 @@ fn has_builtin_token_shape(candidate: &str) -> bool {
     else {
         return false;
     };
-    let Some((entity, suffix)) = inner.rsplit_once('_') else {
+    // The suffix has a fixed byte width. Searching backward for an underscore
+    // would repeatedly scan nested malformed candidates such as "[[[[...]".
+    let Some(separator) = inner.len().checked_sub(9) else {
         return false;
     };
-    entity
-        .as_bytes()
-        .first()
-        .is_some_and(u8::is_ascii_uppercase)
+    let (entity, suffix) = inner.as_bytes().split_at(separator);
+    if suffix[0] != b'_' {
+        return false;
+    }
+    entity.first().is_some_and(u8::is_ascii_uppercase)
         && entity
-            .bytes()
-            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
-        && suffix.len() == 8
-        && suffix
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            .iter()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
+        && suffix[1..]
+            .iter()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -381,20 +383,40 @@ impl Mapping {
         let mut i = 0;
         let mut replacements = 0;
         let mut unresolved = 0;
+        let max_token_len = self.mappings.keys().map(String::len).max().unwrap_or(0);
+        let mut next_close = None;
 
         while i < bytes.len() {
             if bytes[i] == b'[' {
-                if let Some(close) = text[i..].find(']') {
-                    let candidate = &text[i..i + close + 1];
+                // Nested opening brackets share one closing position. Do not
+                // search the same suffix again for every malformed opening.
+                let close = match next_close.filter(|close| *close >= i) {
+                    Some(close) => close,
+                    None => match text[i..].find(']') {
+                        Some(offset) => {
+                            next_close = Some(i + offset);
+                            i + offset
+                        }
+                        None => {
+                            result.push_str(&text[i..]);
+                            break;
+                        }
+                    },
+                };
+                let candidate = &text[i..=close];
+                // Avoid hashing a potentially huge malformed suffix. Exact
+                // lookup remains valid for arbitrary imported mapping keys;
+                // its work is bounded by the longest key in this mapping.
+                if candidate.len() <= max_token_len {
                     if let Some(original) = self.mappings.get(candidate) {
                         result.push_str(original);
-                        i += close + 1;
+                        i = close + 1;
                         replacements += 1;
                         continue;
                     }
-                    if has_builtin_token_shape(candidate) {
-                        unresolved += 1;
-                    }
+                }
+                if has_builtin_token_shape(candidate) {
+                    unresolved += 1;
                 }
             }
             let ch = text[i..].chars().next().unwrap();
@@ -753,6 +775,64 @@ mod tests {
         );
         assert_eq!(report.restored_count, 2);
         assert_eq!(report.unresolved_count, 0);
+    }
+
+    #[test]
+    fn test_restore_report_preserves_large_malformed_bracket_runs() {
+        let mut mapping = Mapping::new();
+        let token = "[EMAIL_ADDRESS_abcdef12]";
+        mapping
+            .mappings
+            .insert(token.into(), "avery@example.invalid".into());
+        let unknown = format!("[{}_deadbeef]", "LONG_ENTITY_".repeat(64));
+        for opening in ["[", "[A", "[é🧪"] {
+            let prefix = opening.repeat(20_000);
+            for (suffix, restored_suffix, count, unresolved) in [
+                ("", "", 0, 0),
+                ("]", "]", 0, 0),
+                (token, "avery@example.invalid", 1, 0),
+                (unknown.as_str(), unknown.as_str(), 0, 1),
+            ] {
+                let report = mapping.restore_bracketed_report(&format!("{prefix}{suffix}"));
+                assert_eq!(report.output, format!("{prefix}{restored_suffix}"));
+                assert_eq!(report.restored_count, count);
+                assert_eq!(report.unresolved_count, unresolved);
+            }
+        }
+    }
+
+    #[test]
+    fn test_restore_report_retains_arbitrary_nested_mapping_precedence() {
+        let mut mapping = Mapping::new();
+        mapping.mappings.insert("[inner]".into(), "inside".into());
+        mapping
+            .mappings
+            .insert("[outer [inner]".into(), "outside".into());
+        mapping.mappings.insert("[é🧪]".into(), "unicode".into());
+        // Exact lookup still takes precedence over the inner token. A key with
+        // an earlier closing bracket remains unreachable, as before.
+        mapping
+            .mappings
+            .insert("[outer [inner]]".into(), "unreachable".into());
+        let report = mapping.restore_bracketed_report(
+            "[outer [inner]] [unmapped [inner]] [é🧪] [CUSTOM_ENTITY_deadbeef]",
+        );
+        assert_eq!(
+            report.output,
+            "outside] [unmapped inside] unicode [CUSTOM_ENTITY_deadbeef]"
+        );
+        assert_eq!(report.restored_count, 3);
+        assert_eq!(report.unresolved_count, 1);
+    }
+
+    #[test]
+    fn test_restore_report_shape_validation_keeps_unicode_unchanged() {
+        let mapping = Mapping::new();
+        let input = "[A_😀abcdef] [A😀_deadbeef] [É_deadbeef] [A_abcdefé] [A_deadbeef]";
+        let report = mapping.restore_bracketed_report(input);
+        assert_eq!(report.output, input);
+        assert_eq!(report.restored_count, 0);
+        assert_eq!(report.unresolved_count, 1);
     }
 
     #[test]
