@@ -152,7 +152,8 @@ score `0.7`, including when financial context is present; threshold `0.8`
 rejects it. These structural guarantees apply to this new context-free rule;
 the existing context-gated generic rule remains broader. Grouped UK forms still
 require context. This improvement is included in source builds and the browser
-engine; the published v0.3.5 native archives do not include it.
+engine. Native archives through v0.3.5 do not include it; v0.3.6 is the first
+native release with this rule.
 
 Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
 spaces/tabs and a complete domain. Preparation and restoration preserve the
