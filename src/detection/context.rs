@@ -1,5 +1,29 @@
 use super::{Anonymizer, CompiledPattern};
 use crate::patterns::{CONTEXT_WINDOW, UK_IBAN_PRINT_PATTERN};
+use std::ops::Range;
+
+// Project a match in the lowercased header to scalar columns in the original
+// header. A hit touching part of an expansion (İ -> i + combining dot) covers
+// that whole original scalar. Only lengths use per-scalar casing: matching
+// still uses str::to_lowercase, including context-sensitive final sigma.
+fn lowercase_span_columns(header: &str, span: Range<usize>) -> Range<usize> {
+    let mut lowered_end = 0;
+    let mut columns = 0..0;
+    for ch in header.chars() {
+        let lowered_start = lowered_end;
+        lowered_end += ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        if lowered_end <= span.start {
+            columns.start += 1;
+        }
+        if lowered_start < span.end {
+            columns.end += 1;
+        }
+        if lowered_end >= span.end {
+            break;
+        }
+    }
+    columns
+}
 
 impl Anonymizer {
     pub(super) fn has_context(
@@ -55,11 +79,12 @@ impl Anonymizer {
     }
 
     /// Look above the match for a header line where a keyword sits at the same
-    /// column position (+/-4 chars) as the match.
+    /// column position (+/-4 Unicode scalars) as the match. Columns refer to
+    /// this helper's input: tabs count once, without measuring display width.
     fn has_column_header_context(&self, text: &str, start: usize, keywords: &[&str]) -> bool {
         // Find the line containing the match and its column offset.
         let line_start = text[..start].rfind('\n').map_or(0, |p| p + 1);
-        let col = start - line_start;
+        let col = text[line_start..start].chars().count();
 
         // Scan up to 20 lines above for a header line.
         let prefix = &text[..line_start];
@@ -69,9 +94,8 @@ impl Anonymizer {
             let header_lower = header_line.to_lowercase();
             for kw in keywords {
                 if let Some(kw_pos) = header_lower.find(kw) {
-                    // Check if the keyword column overlaps with the match column (+/-4 chars tolerance)
-                    let kw_end = kw_pos + kw.len();
-                    if col + 4 >= kw_pos && col <= kw_end + 4 {
+                    let columns = lowercase_span_columns(header_line, kw_pos..kw_pos + kw.len());
+                    if col + 4 >= columns.start && col <= columns.end + 4 {
                         return true;
                     }
                 }

@@ -296,6 +296,38 @@ try {
     assert.equal(await page.locator('#try img, #try script').count(), 0);
   });
 
+  await check('aligned Unicode column headers provide context without accepting unrelated columns', async () => {
+    const phone = '+1 202 555 0142';
+    // Both positive headers put phone at scalar column 24. In the accented
+    // header that is byte 30; the separator keeps it outside local context.
+    for (const [header, detected] of [
+      ['Éléments déjà vérifiés  phone', true],
+      ['Elements deja verifies  phone', true],
+      ['phone', false],
+      ['Éléments déjà vérifiés  notes', false],
+    ]) {
+      const prefix = `${header}\n${'-'.repeat(100)}\nexample${' '.repeat(17)}`;
+      const ticket = prefix + phone;
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      const prepared = await input('ticket-prepared');
+      if (detected) {
+        const token = prepared.match(/\[PHONE_NUMBER_[a-f0-9]{8}\]/)?.[0];
+        assert.ok(token, `${header}: aligned header must supply context`);
+        assert.equal(prepared, prefix + token, 'mask the complete phone and preserve the header and row');
+      } else {
+        assert.equal(prepared, ticket, `${header}: unrelated headers must not supply context`);
+      }
+      await click('copy-ticket');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), prepared);
+      await field('ticket-reply').fill(prepared);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), ticket);
+      await click('copy-reply');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), ticket);
+    }
+  });
+
   await check('complete password assignments mask nested PII before copying and restore exactly', async () => {
     const nestedSecret = ['sk', 'test', 'fictionalvalue1234567890'].join('_');
     for (const [label, assignment, nestedValue] of [

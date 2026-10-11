@@ -307,6 +307,34 @@ def main():
         require(b"[EMAIL_ADDRESS_" in outgoing, "child did not receive an email token")
         require(b"[AUTH_TOKEN_" in outgoing, "child did not receive a credential token")
 
+        # Headers beyond local context use scalar columns, not UTF-8 byte
+        # columns. Accents must not break an otherwise aligned phone header.
+        phone = b"+1 202 555 0142"
+        for label, header, flags, detected in [
+            ("accented aligned header", "Éléments déjà vérifiés  phone", [], True),
+            ("ASCII aligned header", "Elements deja verifies  phone", [], True),
+            ("wrong-column header", "phone", [], False),
+            ("absent phone header", "Éléments déjà vérifiés  notes", [], False),
+            (
+                "aligned header below threshold", "Éléments déjà vérifiés  phone",
+                ["--threshold", "0.7"], False,
+            ),
+        ]:
+            prefix = (header + "\n" + "-" * 100 + "\nexample" + " " * 17).encode()
+            source = prefix + phone
+            expected = (
+                re.escape(prefix) + rb"\[PHONE_NUMBER_[0-9a-f]{8}\]"
+                if detected else re.escape(source)
+            )
+            preview = run([*flags, "run", "--dry-run"], source)
+            require(re.fullmatch(expected, preview.stdout), f"{label} changed the preview span")
+            child = run([*flags, "run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, f"{label} roundtrip changed exact source bytes")
+            require(
+                re.fullmatch(expected, observed.read_bytes()),
+                f"{label} changed the actual child-input span",
+            )
+
         # Percent escapes inside a URL must not become outer URL delimiters.
         # Observe child stdin as well as restoration to reject partial masking.
         url_prefix = "Échec 🧪 — ".encode()

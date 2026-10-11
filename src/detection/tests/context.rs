@@ -160,3 +160,138 @@ fn test_context_window_counts_chars_not_bytes_cjk() {
         phone.score
     );
 }
+
+fn assert_phone_column(header: &str, row_prefix: &str, intervening: usize, expected: bool) {
+    let phone = "+1 202 555 0142";
+    // Keep the header outside the local context window, even on the next line.
+    let separator = format!("{}\n", "-".repeat(100));
+    let input = format!(
+        "{header}\n{}{row_prefix}{phone}",
+        separator.repeat(intervening)
+    );
+    let mut a = Anonymizer::new(0.5);
+    let (prepared, dets) = a.anonymize_text(&input);
+    let phones: Vec<_> = dets
+        .iter()
+        .filter(|d| d.entity_type == "PHONE_NUMBER")
+        .collect();
+    assert_eq!(phones.len(), usize::from(expected), "{input:?}: {dets:?}");
+    if expected {
+        let start = input.len() - phone.len();
+        assert_eq!(phones[0].original, phone);
+        assert_eq!((phones[0].start, phones[0].end), (start, input.len()));
+        assert_eq!(phones[0].score, 0.6);
+        assert!(!prepared.contains(phone), "{prepared:?}");
+        assert_eq!(a.mapping.restore_bracketed(&prepared), input);
+    } else {
+        assert_eq!(prepared, input);
+    }
+}
+
+#[test]
+fn test_column_header_unicode_phone_roundtrip() {
+    for header in [
+        "Elements deja verifies  phone".to_string(),
+        "Éléments déjà vérifiés  phone".to_string(),
+        format!("{}{}phone", "İ".repeat(12), " ".repeat(12)),
+        format!("{}phone", "x\u{301}".repeat(12)),
+    ] {
+        assert_phone_column(&header, "example                 ", 1, true);
+    }
+    // The value's column must also count scalars, rather than UTF-8 bytes.
+    assert_phone_column("                        phone", &"界".repeat(24), 1, true);
+}
+
+#[test]
+fn test_column_header_scalar_tolerance_and_tabs() {
+    // Keyword interval [24,29): preserve the existing inclusive +/-4 tolerance.
+    for (column, expected) in [(19, false), (20, true), (33, true), (34, false)] {
+        assert_phone_column(
+            "Éléments déjà vérifiés  phone",
+            &" ".repeat(column),
+            1,
+            expected,
+        );
+    }
+    // Tabs count once; these checks intentionally do not use terminal tab stops.
+    assert_phone_column("\t\t\t\t\t\tphone", "      ", 1, true);
+    assert_phone_column("\t\t\t\t\t\tphone", &" ".repeat(48), 1, false);
+    assert_phone_column("                        phone", &"\t".repeat(24), 1, true);
+}
+
+#[test]
+fn test_column_header_context_boundaries_remain_required() {
+    let header = "Éléments déjà vérifiés  phone";
+    assert_phone_column(header, &" ".repeat(24), 19, true); // 20th line above
+    assert_phone_column(header, &" ".repeat(24), 20, false); // 21st line above
+    assert_phone_column("Éléments déjà vérifiés  status", &" ".repeat(24), 1, false);
+    // Retain first-occurrence matching; a later duplicate does not widen context.
+    assert_phone_column(
+        "phone                        phone",
+        &" ".repeat(29),
+        1,
+        false,
+    );
+
+    let input = format!(
+        "{header}\n{}\n{}+1 202 555 0142",
+        "-".repeat(100),
+        " ".repeat(24)
+    );
+    let mut a = Anonymizer::new(0.7);
+    let (prepared, dets) = a.anonymize_text(&input);
+    assert!(dets.is_empty());
+    assert_eq!(
+        prepared, input,
+        "column context must not raise the required-context score"
+    );
+}
+
+#[test]
+fn test_column_header_custom_keyword_case_projection() {
+    use crate::config::RecognizerConfigFile;
+
+    for (header_word, keyword, column, expected) in [
+        ("İ", "i", 16, true),
+        ("İ", "i", 15, false),
+        ("İ", "i", 25, true),
+        ("İ", "i", 26, false),
+        ("İ", "\u{307}", 16, true),
+        ("İ", "\u{307}", 25, true),
+        ("İ", "\u{307}", 26, false),
+        ("İ", "i\u{307}", 25, true),
+        ("İ", "i\u{307}", 26, false),
+        ("ΟΣ", "ος", 26, true), // Whole-string lowercase preserves final sigma.
+        ("ΟΣ", "ΟΣ", 20, false), // Configured keywords retain their spelling.
+        ("téléphone", "téléphone", 33, true),
+        ("téléphone", "téléphone", 34, false),
+    ] {
+        let config = RecognizerConfigFile::from_yaml(&format!(
+            "recognizers:\n  - name: column-test\n    entity_type: FICTIONAL_VALUE\n    patterns:\n      - regex: QZXVALUE\n        score: 0.8\n    context_keywords: [{}]\n    context_required: true\n",
+            serde_json::to_string(keyword).unwrap()
+        )).unwrap();
+        let mut a = Anonymizer::new(0.5);
+        a.add_custom_patterns(&config);
+        let input = format!(
+            "{}{header_word}\n{}\n{}QZXVALUE",
+            " ".repeat(20),
+            "-".repeat(100),
+            " ".repeat(column)
+        );
+        let (prepared, dets) = a.anonymize_text(&input);
+        assert_eq!(
+            dets.len(),
+            usize::from(expected),
+            "{header_word:?}/{keyword:?} at {column}: {dets:?}"
+        );
+        if expected {
+            assert_eq!(dets[0].entity_type, "FICTIONAL_VALUE");
+            assert_eq!(dets[0].original, "QZXVALUE");
+            assert_eq!(dets[0].score, 0.8);
+            assert!(!prepared.contains("QZXVALUE"));
+            assert_eq!(a.mapping.restore_bracketed(&prepared), input);
+        } else {
+            assert_eq!(prepared, input);
+        }
+    }
+}
