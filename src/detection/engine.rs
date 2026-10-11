@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
@@ -177,7 +178,7 @@ fn locate_ner_span(
 
 impl Anonymizer {
     pub fn anonymize_text(&mut self, raw_text: &str) -> (String, Vec<Detection>) {
-        self.anonymize_source_text(raw_text, None)
+        self.anonymize_source_text(raw_text, None, None)
     }
 
     pub(super) fn anonymize_sql_literal(
@@ -188,18 +189,24 @@ impl Anonymizer {
         self.anonymize_source_text(
             raw_text,
             Some(DecodedSourceText::sql_literal(raw_text, backslash_escapes)),
+            None,
         )
     }
 
     pub(super) fn anonymize_csv_field(&mut self, raw_text: &str) -> (String, Vec<Detection>) {
-        self.anonymize_source_text(raw_text, Some(DecodedSourceText::csv_field(raw_text)))
+        self.anonymize_source_text(raw_text, Some(DecodedSourceText::csv_field(raw_text)), None)
     }
 
-    fn anonymize_source_text(
+    pub(super) fn anonymize_source_text(
         &mut self,
         source_text: &str,
         source_view: Option<DecodedSourceText<'_>>,
+        entities: Option<&[String]>,
     ) -> (String, Vec<Detection>) {
+        let allowed: Option<HashSet<&str>> =
+            entities.map(|types| types.iter().map(String::as_str).collect());
+        let entity_allowed =
+            |entity: &str| allowed.as_ref().is_none_or(|types| types.contains(entity));
         // All detector passes see decoded format content, including NER and name
         // consistency. The final projection below preserves source spelling.
         let raw_text = source_view
@@ -213,6 +220,9 @@ impl Anonymizer {
         let mut detections: Vec<Detection> = Vec::new();
 
         for pat in &self.patterns {
+            if !entity_allowed(&pat.entity_type) {
+                continue;
+            }
             // Early threshold check: consider maximum possible score (with boost)
             let max_score = if !pat.context_keywords.is_empty() && !pat.context_required {
                 (pat.score + self.context_boost).min(1.0)
@@ -304,7 +314,9 @@ impl Anonymizer {
         // Detections are mapped back to original byte positions.
         if let Some(collapsed) = collapse_newlines(text) {
             for pat in &self.patterns {
-                if !MULTILINE_ENTITY_TYPES.contains(&pat.entity_type.as_ref()) {
+                if !entity_allowed(&pat.entity_type)
+                    || !MULTILINE_ENTITY_TYPES.contains(&pat.entity_type.as_ref())
+                {
                     continue;
                 }
                 let max_score = if !pat.context_keywords.is_empty() && !pat.context_required {
@@ -388,7 +400,7 @@ impl Anonymizer {
                     let is_person = span.label == "PERSON" || span.label == "PER";
                     let is_location = span.label == "LOCATION" || span.label == "LOC";
 
-                    if is_person {
+                    if is_person && entity_allowed("PERSON") {
                         if PERSON_BLOCKLIST.contains(&trimmed) {
                             continue;
                         }
@@ -401,7 +413,7 @@ impl Anonymizer {
                             end: ext_end,
                             score: span.score,
                         });
-                    } else if is_location {
+                    } else if is_location && entity_allowed("LOCATION") {
                         detections.push(Detection {
                             entity_type: Cow::Borrowed("LOCATION"),
                             original: raw_span.to_string(),
@@ -416,7 +428,7 @@ impl Anonymizer {
 
         // Sign-off name detection: find names after common closing salutations.
         // Catches nicknames and informal names like "Best regards,\nPrzemek".
-        {
+        if entity_allowed("PERSON") {
             static SIGNOFF_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
                 Regex::new(
                     r"(?im)(?:best\s+regards|regards|brgds|brds|cordialement|cdlt|bien\s+[àa]\s+vous|sincerely|cheers|merci|thanks)[,.]?\s*\n?\s*([A-Z\p{Lu}][\p{L}'-]+)"
@@ -565,7 +577,7 @@ impl Anonymizer {
                             let normalized_value = NormalizedText::new(value);
                             let decoded = normalized_value.as_str();
                             for pat in &self.patterns {
-                                if pat.entity_type == "URL" {
+                                if pat.entity_type == "URL" || !entity_allowed(&pat.entity_type) {
                                     continue;
                                 }
                                 let max_score =

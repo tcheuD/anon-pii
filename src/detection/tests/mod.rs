@@ -1,4 +1,5 @@
 mod address;
+mod analysis;
 mod au;
 mod aviation;
 mod batch;

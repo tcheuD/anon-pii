@@ -134,9 +134,20 @@ impl Anonymizer {
     /// NER, overlap resolution) without performing any replacement or writing to the
     /// mapping. Returns raw detections suitable for the Presidio `/analyze` endpoint.
     pub fn analyze(&mut self, text: &str) -> Vec<Detection> {
+        self.analyze_with_entities(text, None)
+    }
+
+    /// Analyze only the requested entity types, selecting candidates before
+    /// overlap resolution. `None` selects all types; an empty slice selects none.
+    /// Like `analyze`, this does not replace text or write to the mapping.
+    pub fn analyze_with_entities(
+        &mut self,
+        text: &str,
+        entities: Option<&[String]>,
+    ) -> Vec<Detection> {
         let saved = self.operator;
         self.operator = Operator::Keep;
-        let (_, detections) = self.anonymize_text(text);
+        let (_, detections) = self.anonymize_source_text(text, None, entities);
         self.operator = saved;
         detections
     }
