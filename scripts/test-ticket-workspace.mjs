@@ -875,6 +875,40 @@ try {
     assert.deepEqual(result.report, { output: result.original, restored_count: 3, unresolved_count: 1 });
   });
 
+  await check('large malformed bracket replies restore without stalling the workspace', async () => {
+    await field('ticket-source').fill('avery@example.invalid');
+    await click('prepare-ticket');
+    const token = await input('ticket-prepared');
+    assert.match(token, /^\[EMAIL_ADDRESS_[a-f0-9]{8}\]$/);
+    for (const suffix of ['', ']', `${token} [UNKNOWN_ENTITY_deadbeef]`]) {
+      const prefix = '['.repeat(320_000);
+      await field('ticket-reply').fill(prefix + suffix);
+      let timeout;
+      try {
+        // The watchdog runs in Node, outside the potentially stalled renderer.
+        // The former scanner took seconds to tens of seconds for these cases.
+        await Promise.race([
+          page.evaluate(() => document.getElementById('restore-reply').click()),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error('Bracket-heavy restore blocked the workspace for 5 seconds')), 5000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+      const expected = prefix + suffix.replace(token, 'avery@example.invalid');
+      assert.equal(await input('ticket-restored'), expected);
+      if (suffix.includes(token)) {
+        assert.match(await field('ticket-status').textContent(), /Restored 1 token occurrence/);
+        assert.match(await field('ticket-status').textContent(), /1 unrecognized token-shaped placeholder/);
+      } else {
+        assert.match(await field('ticket-status').textContent(), /No token occurrences were restored/);
+      }
+      await click('copy-reply');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), expected);
+    }
+  });
+
   await check('reload clears the ticket and all session state', async () => {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForFunction(() => document.getElementById('engstats').textContent.includes('Local engine ready'));
