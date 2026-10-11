@@ -579,6 +579,37 @@ def main():
             require(child.stdout == source, f"{label} control changed during roundtrip")
             require(observed.read_bytes() == source, f"{label} control changed in child input")
 
+        # Standalone restore uses the batch scanner, unlike run's streaming
+        # child stdout. Repeated opening brackets must not repeatedly scan the
+        # same suffix. Use an integrity-protected mapping and the usual 30-second limit.
+        batch_mapping = smoke_home / "batch-restore-mapping.json"
+        batch_original = b"avery@example.invalid"
+        run(["--format", "text", "--mapping", str(batch_mapping)], batch_original)
+        mapping_before = batch_mapping.read_bytes()
+        stored = json.loads(mapping_before)
+        require(bool(stored.get("integrity")), "batch restore mapping has no integrity metadata")
+        require(len(stored["mappings"]) == 1, "batch restore expected one mapping entry")
+        batch_token, mapped_value = next(iter(stored["mappings"].items()))
+        require(mapped_value.encode() == batch_original, "batch restore mapped the wrong value")
+        batch_token = batch_token.encode()
+        require(
+            re.fullmatch(rb"\[EMAIL_ADDRESS_[0-9a-f]{8}\]", batch_token) is not None,
+            "batch restore mapping omitted the email token",
+        )
+        bracket_prefix = b"[" * 2_000_000
+        unchanged_suffix = " | [CUSTOM_ENTITY_deadbeef] — 🧪\n".encode()
+        batch_source = bracket_prefix + batch_token + b" | " + batch_token + unchanged_suffix
+        batch_expected = (
+            bracket_prefix + batch_original + b" | " + batch_original + unchanged_suffix
+        )
+        batch_restored = run(["restore", "--mapping", str(batch_mapping)], batch_source)
+        require(batch_restored.stdout == batch_expected, "batch restore changed exact output bytes")
+        require(
+            batch_restored.stderr == b"Restored 2 token replacements\n",
+            "batch restore did not report exactly two replacements",
+        )
+        require(batch_mapping.read_bytes() == mapping_before, "batch restore modified its mapping")
+
         check_api_handoff(binary, smoke_home, environment)
 
         require(
@@ -590,7 +621,7 @@ def main():
         f"Release smoke passed: anon-pii {args.version}; "
         "preview, roundtrip, support ticket, custom regex spans, IBAN casing, compact UK IBANs, "
         "wrapped emails, SQL E-string controls, complete passwords, specific credentials, "
-        "local API analyze/anonymize handoff"
+        "standalone batch restore, local API analyze/anonymize handoff"
     )
 
 
