@@ -46,9 +46,9 @@ names. Postal-address support covers selected French forms, not every address
 or country. Inspect names, addresses, credentials, and organization-specific
 identifiers yourself. Detection counts do not prove that a ticket is anonymous.
 
-The browser, v0.3.4 native archives, and current source builds keep a recognized
-password assignment fully masked when it contains a detected email, address,
-or credential fragment.
+The browser, native archives since v0.3.4, and current source builds keep a
+recognized password assignment fully masked when it contains a detected email,
+address, or credential fragment.
 A more specific token is used only when it covers the complete assigned value
 and the original assignment syntax establishes that boundary. Encoded or
 ambiguous assignment syntax can keep the whole assignment under one token.

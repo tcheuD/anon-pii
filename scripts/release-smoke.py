@@ -1,17 +1,213 @@
 #!/usr/bin/env python3
-"""Exercise the installed CLI contract using fictional data and a temporary home."""
+"""Exercise installed CLI and local API contracts with fictional data and a temporary home."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import re
+import signal
+import socket
 import subprocess
 import tempfile
+import time
+import urllib.error
+import urllib.request
 
 
 def require(condition, message):
     if not condition:
         raise SystemExit(f"release smoke failed: {message}")
+
+
+class NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+
+def stop_api_server(process):
+    """Always reap the child, escalating only after bounded shutdown waits."""
+    for action in [lambda: process.send_signal(signal.SIGINT), process.terminate, process.kill]:
+        if process.poll() is None:
+            try:
+                action()
+            except ProcessLookupError:
+                pass
+        try:
+            return process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            continue
+    require(False, "API server did not exit after kill")
+
+
+def check_api_handoff(binary, smoke_home, environment):
+    # Keep every request on loopback, independent of CI proxy settings.
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), NoRedirects()
+    )
+    mapping_path = smoke_home / "api-mapping.json"
+    require(not mapping_path.exists(), "API mapping path already exists")
+
+    def request(origin, path, body=None, timeout=3):
+        headers = {} if body is None else {"Content-Type": "application/json"}
+        outgoing = urllib.request.Request(origin + path, data=body, headers=headers)
+        try:
+            response = opener.open(outgoing, timeout=timeout)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            payload = response.read(1_000_001)
+            require(len(payload) <= 1_000_000, f"API {path} response exceeded limit")
+            return response.status, payload
+
+    def verify(process, origin):
+        def post(path, body, label, expected_status=200):
+            require(process.poll() is None, f"API server exited before {label}")
+            status, payload = request(origin, path, body)
+            require(process.poll() is None, f"API server exited during {label}")
+            require(
+                status == expected_status,
+                f"{label} {path} returned HTTP {status}: {payload.decode(errors='replace')}",
+            )
+            return payload
+
+        # These source byte ranges match the route regressions. A separate
+        # trailing email catches audit entries appended out of source order.
+        for label, text, inner_type, url_span, inner_spans, following_spans in [
+            (
+                "email query",
+                "Échec 📨 https://example.invalid/?email=ada%40example.invalid ; contact blair@example.invalid",
+                "EMAIL_ADDRESS",
+                ("URL", 12, 64),
+                [("EMAIL_ADDRESS", 43, 64)],
+                [("EMAIL_ADDRESS", 75, 96)],
+            ),
+            (
+                "phone query",
+                "Échec 📨 https://example.invalid/contact?tel=%2B33639980001",
+                "FR_PHONE_NUMBER",
+                ("URL", 12, 62),
+                [("FR_PHONE_NUMBER", 48, 62)],
+                [],
+            ),
+        ]:
+            source = text.encode("utf-8")
+            for entities in [None, ["URL", inner_type], ["URL"], [inner_type]]:
+                case = f"{label} ({'default' if entities is None else ','.join(entities)})"
+                analysis_request = {"text": text, "language": "en"}
+                if entities is not None:
+                    analysis_request["entities"] = entities
+                analyzed = post(
+                    "/analyze", json.dumps(analysis_request).encode(), case
+                )
+                # Embed the exact analyzer JSON, without sorting or pruning it.
+                anonymize_request = (
+                    b'{"text":' + json.dumps(text).encode()
+                    + b',"analyzer_results":' + analyzed
+                    + b',"anonymizers":{"DEFAULT":{"type":"mask","masking_char":"*"}}}'
+                )
+                anonymized = post("/anonymize", anonymize_request, case)
+                if entities == [inner_type]:
+                    expected_spans = inner_spans + following_spans
+                elif entities == ["URL"]:
+                    expected_spans = [url_span]
+                else:
+                    expected_spans = [url_span] + following_spans
+                results = json.loads(analyzed)
+                actual_spans = [
+                    (item["entity_type"], item["start"], item["end"])
+                    for item in results
+                ]
+                require(actual_spans == expected_spans, f"{case} changed source spans")
+                expected_output = source
+                for _, start, end in reversed(expected_spans):
+                    require(source[start:end].isascii(), f"{case} fixture span is not ASCII")
+                    expected_output = (
+                        expected_output[:start] + b"*" * (end - start) + expected_output[end:]
+                    )
+                response = json.loads(anonymized)
+                require(
+                    response["text"].encode("utf-8") == expected_output,
+                    f"{case} did not mask the exact complete spans",
+                )
+                expected_items = [
+                    {
+                        "operator": "mask", "entity_type": entity,
+                        "start": start, "end": end, "text": "*" * (end - start),
+                    }
+                    for entity, start, end in expected_spans
+                ]
+                require(response["items"] == expected_items, f"{case} changed output item spans")
+                for item in response["items"]:
+                    require(
+                        expected_output[item["start"]:item["end"]] == item["text"].encode(),
+                        f"{case} item does not match its UTF-8 output range",
+                    )
+
+        # Invalid externally supplied overlaps must still be rejected.
+        overlap = {
+            "text": "call john@example.com now",
+            "analyzer_results": [
+                {"entity_type": "EMAIL_ADDRESS", "start": 5, "end": 21, "score": 0.9},
+                {"entity_type": "PERSON", "start": 5, "end": 9, "score": 0.7},
+            ],
+            "anonymizers": {},
+        }
+        rejected = post(
+            "/anonymize", json.dumps(overlap).encode(), "external overlap", 422
+        )
+        require(b"Overlapping analyzer results" in rejected, "API did not reject overlapping input")
+
+    startup_failures = []
+    for attempt in range(3):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        origin = f"http://127.0.0.1:{port}"
+        log_path = smoke_home / f"api-server-{attempt}.log"
+        ready = False
+        with log_path.open("wb") as log:
+            process = subprocess.Popen(
+                [str(binary), "--mapping", str(mapping_path), "api", "--port", str(port)],
+                stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                cwd=smoke_home, env=environment,
+            )
+            try:
+                deadline = time.monotonic() + 10
+                while process.poll() is None and time.monotonic() < deadline:
+                    try:
+                        status, _ = request(
+                            origin, "/health", timeout=min(0.5, max(0.01, deadline - time.monotonic()))
+                        )
+                    except (urllib.error.URLError, OSError):
+                        time.sleep(0.05)
+                        continue
+                    if status == 200:
+                        # Another listener can win the released port. A health
+                        # response is insufficient if our child then exits.
+                        try:
+                            process.wait(timeout=0.2)
+                        except subprocess.TimeoutExpired:
+                            ready = True
+                        break
+                    time.sleep(0.05)
+                if ready:
+                    verify(process, origin)
+            finally:
+                exit_code = stop_api_server(process)
+                require(not mapping_path.exists(), "API persisted its explicit mapping")
+                require(
+                    not (smoke_home / ".anon-pii" / "mapping.json").exists(),
+                    "API persisted a default mapping",
+                )
+        diagnostics = log_path.read_text(errors="replace")
+        if ready:
+            # A clean exit also proves the tested child reached its bound
+            # server loop, rather than failing to bind behind another listener.
+            require(exit_code == 0, f"API server exited {exit_code}: {diagnostics}")
+            return
+        startup_failures.append(f"attempt {attempt + 1}: exit {exit_code}; {diagnostics}")
+    require(False, "API server did not become ready: " + "; ".join(startup_failures))
 
 
 def main():
@@ -337,6 +533,8 @@ def main():
             require(child.stdout == source, f"{label} control changed during roundtrip")
             require(observed.read_bytes() == source, f"{label} control changed in child input")
 
+        check_api_handoff(binary, smoke_home, environment)
+
         require(
             not (smoke_home / ".anon-pii" / "mapping.json").exists(),
             "transaction persisted a mapping file",
@@ -345,7 +543,8 @@ def main():
     print(
         f"Release smoke passed: anon-pii {args.version}; "
         "preview, roundtrip, support ticket, custom regex spans, IBAN casing, "
-        "wrapped emails, SQL E-string controls, complete passwords, specific credentials"
+        "wrapped emails, SQL E-string controls, complete passwords, specific credentials, "
+        "local API analyze/anonymize handoff"
     )
 
 
