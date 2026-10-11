@@ -84,6 +84,15 @@ wrapped-email and SQL E-string spans with format/boundary controls, and absence 
 persisted transaction mapping. Span checks inspect both preview and actual child
 input, because exact restoration alone cannot reveal values left visible.
 
+The same archive smoke check separately exercises standalone `restore` with a
+generated integrity-protected mapping. Two million opening brackets precede two
+known tokens and an unknown placeholder with Unicode text. The check requires
+exact restored bytes, exactly two reported replacements, an unchanged mapping,
+and completion within the helper's existing 30-second process timeout. This
+covers the batch scanner; `run` restores child stdout through a separate
+streaming path. The timeout is a bounded regression gate, not a throughput
+benchmark or a guarantee for every input and mapping.
+
 Packaging fails if README or LICENSE is missing. Release assets include
 `SHA256SUMS`, whose entries use archive basenames so downloads can be checked
 in the same directory:
