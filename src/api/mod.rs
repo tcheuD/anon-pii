@@ -197,6 +197,51 @@ mod tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    async fn assert_analysis_masks_exact_spans(
+        text: &str,
+        entities: Option<&[&str]>,
+        expected_spans: &[(&str, usize, usize)],
+        expected_text: &str,
+    ) {
+        let mut request = serde_json::json!({"text": text, "language": "en"});
+        if let Some(entities) = entities {
+            request["entities"] = serde_json::json!(entities);
+        }
+        let analyzed = post_json("/analyze", request).await;
+        // Forward the response unchanged: callers should not need to identify
+        // and remove audit-only detections before using the next endpoint.
+        let response: types::AnonymizeResponse = serde_json::from_value(
+            post_json(
+                "/anonymize",
+                serde_json::json!({
+                    "text": text,
+                    "analyzer_results": &analyzed,
+                    "anonymizers": {"DEFAULT": {"type": "mask", "masking_char": "*"}}
+                }),
+            )
+            .await,
+        )
+        .unwrap();
+        let results: Vec<types::RecognizerResult> = serde_json::from_value(analyzed).unwrap();
+        let actual_spans: Vec<_> = results
+            .iter()
+            .map(|result| (result.entity_type.as_str(), result.start, result.end))
+            .collect();
+        assert_eq!(actual_spans, expected_spans);
+        assert_eq!(response.text, expected_text);
+        assert_eq!(response.items.len(), expected_spans.len());
+        for (item, &(entity, start, end)) in response.items.iter().zip(expected_spans) {
+            assert_eq!(item.entity_type, entity);
+            assert_eq!(item.operator, "mask");
+            // These fixtures mask ASCII spans while preserving a non-ASCII
+            // prefix, so byte positions must remain identical in the output.
+            assert!(text[start..end].is_ascii());
+            assert_eq!((item.start, item.end), (start, end));
+            assert_eq!(item.text, "*".repeat(end - start));
+            assert_eq!(&response.text[item.start..item.end], item.text);
+        }
+    }
+
     #[tokio::test]
     async fn test_analyze_selected_entities_resolve_password_overlaps() {
         let assignment = r#"password="prefix ada@example.invalid suffix""#;
@@ -246,22 +291,71 @@ mod tests {
 
     #[tokio::test]
     async fn test_analyze_selected_url_excludes_unrequested_inner_audit_types() {
-        let text = "https://example.invalid/help?email=ada%40example.invalid";
-        for (entity, expected) in [("URL", text), ("EMAIL_ADDRESS", "ada%40example.invalid")] {
-            let results: Vec<types::RecognizerResult> = serde_json::from_value(
-                post_json(
-                    "/analyze",
-                    serde_json::json!({
-                        "text": text, "language": "en", "entities": [entity]
-                    }),
-                )
-                .await,
+        let text = "Échec 📨 https://example.invalid/?email=ada%40example.invalid ; contact blair@example.invalid";
+        assert_analysis_masks_exact_spans(
+            text,
+            Some(&["URL"]),
+            &[("URL", 12, 64)],
+            &format!(
+                "Échec 📨 {} ; contact blair@example.invalid",
+                "*".repeat(52)
+            ),
+        )
+        .await;
+        assert_analysis_masks_exact_spans(
+            text,
+            Some(&["EMAIL_ADDRESS"]),
+            &[("EMAIL_ADDRESS", 43, 64), ("EMAIL_ADDRESS", 75, 96)],
+            &format!(
+                "Échec 📨 https://example.invalid/?email={} ; contact {}",
+                "*".repeat(21),
+                "*".repeat(21)
+            ),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_analyze_url_query_results_feed_anonymize_without_overlaps() {
+        let text = "Échec 📨 https://example.invalid/?email=ada%40example.invalid ; contact blair@example.invalid";
+        let selected = ["URL", "EMAIL_ADDRESS"];
+        for entities in [None, Some(selected.as_slice())] {
+            // The separate email follows the URL. URL-inner audit detections
+            // are appended after it by the engine, not kept in source order.
+            assert_analysis_masks_exact_spans(
+                text,
+                entities,
+                &[("URL", 12, 64), ("EMAIL_ADDRESS", 75, 96)],
+                &format!("Échec 📨 {} ; contact {}", "*".repeat(52), "*".repeat(21)),
             )
-            .unwrap();
-            assert_eq!(results.len(), 1, "{results:?}");
-            assert_eq!(results[0].entity_type, entity);
-            assert_eq!(&text[results[0].start..results[0].end], expected);
+            .await;
         }
+    }
+
+    #[tokio::test]
+    async fn test_analyze_url_phone_query_results_feed_anonymize_without_overlaps() {
+        // French audiovisual-work number range, used only as fictional data.
+        let text = "Échec 📨 https://example.invalid/contact?tel=%2B33639980001";
+        let selected = ["URL", "FR_PHONE_NUMBER"];
+        for entities in [None, Some(selected.as_slice())] {
+            assert_analysis_masks_exact_spans(
+                text,
+                entities,
+                &[("URL", 12, 62)],
+                &format!("Échec 📨 {}", "*".repeat(50)),
+            )
+            .await;
+        }
+        assert_analysis_masks_exact_spans(
+            text,
+            Some(&["FR_PHONE_NUMBER"]),
+            &[("FR_PHONE_NUMBER", 48, 62)],
+            &format!(
+                "Échec 📨 https://example.invalid/contact?tel={}",
+                "*".repeat(14)
+            ),
+        )
+        .await;
     }
 
     #[tokio::test]
