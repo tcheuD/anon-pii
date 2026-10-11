@@ -132,6 +132,64 @@ fn wrapped_email_preview_and_child_input_mask_exactly_then_restore() {
 }
 
 #[test]
+fn sql_e_string_controls_preview_and_child_input_restore_exactly() {
+    let ticket_home = tempfile::tempdir().unwrap();
+    let child_input = ticket_home.path().join("child-input.sql");
+    let prefix = r"INSERT INTO tickets VALUES (E'Préfixe 😀 it\'s ";
+    let address = r"ada@\r\n\texample.com";
+    let suffix = r"; suffix\nunchanged');";
+    let input = format!("{prefix}{address}{suffix}\r\n");
+    let preview = run_with_input(
+        ticket_home.path(),
+        &["--format", "sql", "run", "--dry-run"],
+        input.as_bytes(),
+    );
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let prepared = String::from_utf8(preview.stdout).unwrap();
+    let token = prepared
+        .strip_prefix(prefix)
+        .unwrap()
+        .strip_suffix(&format!("{suffix}\r\n"))
+        .unwrap();
+    assert!(token.starts_with("[EMAIL_ADDRESS_") && token.ends_with(']'));
+    assert!(!prepared.contains(address));
+
+    let output = run_with_input(
+        ticket_home.path(),
+        &[
+            "--format",
+            "sql",
+            "run",
+            "--",
+            "tee",
+            child_input.to_str().unwrap(),
+        ],
+        input.as_bytes(),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, input.as_bytes());
+    // Separate invocations create fresh tokens; assert the same replacement
+    // boundary without requiring a shared mapping between preview and run.
+    let child_saw = fs::read_to_string(&child_input).unwrap();
+    let token = child_saw
+        .strip_prefix(prefix)
+        .unwrap()
+        .strip_suffix(&format!("{suffix}\r\n"))
+        .unwrap();
+    assert!(token.starts_with("[EMAIL_ADDRESS_") && token.ends_with(']'));
+    assert!(!child_saw.contains(address));
+    assert!(!ticket_home.path().join(".anon-pii/mapping.json").exists());
+}
+
+#[test]
 fn run_preserves_child_stderr_and_nonzero_exit_status() {
     let home = tempfile::tempdir().unwrap();
     let output = run_with_input(

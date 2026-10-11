@@ -420,12 +420,24 @@ fn find_sql_e_string_escape(input: &str, from: usize) -> Option<EscapeMatch> {
 fn find_sql_escape(input: &str, from: usize, backslash_escapes: bool) -> Option<EscapeMatch> {
     let bytes = input.as_bytes();
     for index in from..bytes.len().saturating_sub(1) {
-        if (bytes[index] == b'\'' && bytes[index + 1] == b'\'')
-            || (backslash_escapes
-                && bytes[index] == b'\\'
-                && matches!(bytes[index + 1], b'\'' | b'\\'))
-        {
-            return Some((index..index + 2, char::from(bytes[index + 1])));
+        if bytes[index] == b'\'' && bytes[index + 1] == b'\'' {
+            return Some((index..index + 2, '\''));
+        }
+        if backslash_escapes && bytes[index] == b'\\' {
+            // PostgreSQL E-string named escapes. decode_with consumes the
+            // original pair once, so an escaped backslash is never revisited
+            // as the start of a control escape. Keep its full source span.
+            let decoded = match bytes[index + 1] {
+                b'\'' => '\'',
+                b'\\' => '\\',
+                b'b' => '\x08',
+                b'f' => '\x0c',
+                b'n' => '\n',
+                b'r' => '\r',
+                b't' => '\t',
+                _ => continue,
+            };
+            return Some((index..index + 2, decoded));
         }
     }
     None

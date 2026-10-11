@@ -129,6 +129,102 @@ fn test_sql_standard_backslash_does_not_consume_the_next_literal() {
 }
 
 #[test]
+fn sql_e_string_controls_mask_wrapped_emails_and_restore_exact_source() {
+    let mut anonymizer = Anonymizer::new(0.5);
+    let mut prepared = Vec::new();
+    for (marker, address) in [
+        ("E", r"ada@\nexample.com"),
+        ("e", r"ada@\r\n\texample.com"),
+        ("E", r"ａｄａ＠\n\tｅｘａｍｐｌｅ．ｃｏｍ"),
+        ("E", "ada@\nexample.com"),
+    ] {
+        let prefix = r"Préfixe 😀 it\'s ";
+        let suffix = r"; suffix\nunchanged";
+        let literal = format!("{prefix}{address}{suffix}");
+        let sql = format!("INSERT INTO tickets VALUES ({marker}'{literal}');\r\n");
+        let (output, detections) = anonymizer.anonymize_sql(&sql);
+        assert_eq!(detections.len(), 1, "{sql:?}: {detections:?}");
+        let detection = &detections[0];
+        assert_eq!(detection.entity_type, "EMAIL_ADDRESS");
+        assert_eq!(detection.original, address);
+        assert_eq!(
+            (detection.start, detection.end),
+            (prefix.len(), prefix.len() + address.len())
+        );
+        assert_eq!(&literal[detection.start..detection.end], address);
+        assert!(output.starts_with(&format!(
+            "INSERT INTO tickets VALUES ({marker}'{prefix}[EMAIL_ADDRESS_"
+        )));
+        assert!(output.ends_with(&format!("]{suffix}');\r\n")));
+        assert!(!output.contains(address));
+        prepared.push((sql, output));
+    }
+    // Equivalent decoded values with distinct source spelling need distinct
+    // mappings; later preparations must not change earlier restorations.
+    assert_eq!(anonymizer.mapping.mappings.len(), prepared.len());
+    for (sql, output) in prepared {
+        assert_eq!(anonymizer.mapping.restore_bracketed(&output), sql);
+    }
+}
+
+#[test]
+fn sql_e_string_controls_keep_literal_and_context_boundaries() {
+    for sql in [
+        r"SELECT 'ada@\nexample.com';",
+        r"SELECT $body$ada@\nexample.com$body$;",
+        r"SELECT E'ada@\\nexample.com';",
+        r"SELECT E'ada@\r\n\\texample.com';",
+        r"SELECT E'ada@\n\nexample.com';",
+        r"SELECT E'ada@\rexample.com';",
+        r"SELECT E'ada@ \nexample.com';",
+        r"SELECT E'ada@\nexample.\ncom';",
+        r"SELECT E'ada@\qexample.com';",
+        r"SELECT E'ada@\nexample.com",
+        r"SELECT E 'ada@\nexample.com';",
+        r"SELECT someE'ada@\nexample.com';",
+        r#"SELECT "E'ada@\nexample.com'"; -- E'ada@\nexample.com'"#,
+        r"/* E'ada@\nexample.com' */ SELECT 42;",
+    ] {
+        let mut anonymizer = Anonymizer::new(0.5);
+        let (output, detections) = anonymizer.anonymize_sql(sql);
+        assert!(detections.is_empty(), "{sql:?}: {detections:?}");
+        assert_eq!(output, sql);
+    }
+    let text = r"Contact ada@\nexample.com";
+    let (output, detections) = Anonymizer::new(0.5).anonymize_text(text);
+    assert!(detections.is_empty());
+    assert_eq!(output, text);
+    let sql = r"SELECT E'ada@\nexample.com';";
+    let (output, detections) = Anonymizer::new(0.91).anonymize_sql(sql);
+    assert!(detections.is_empty());
+    assert_eq!(output, sql);
+}
+
+#[test]
+fn sql_e_string_control_spanning_custom_match_retains_source_bytes() {
+    let mut anonymizer = Anonymizer::new(0.5);
+    anonymizer.patterns = vec![CompiledPattern {
+        name: Cow::Borrowed("sql_control_fixture"),
+        entity_type: Cow::Borrowed("SQL_FIXTURE"),
+        regex: Regex::new(r"debug\x08\x0c\n\r\tend").unwrap(),
+        score: 1.0,
+        context_keywords: Cow::Borrowed(&[]),
+        context_required: false,
+    }];
+    let original = r"debug\b\f\n\r\tend";
+    let sql = format!(r"SELECT E'😀 {original}';");
+    let (output, detections) = anonymizer.anonymize_sql(&sql);
+    assert_eq!(detections.len(), 1);
+    assert_eq!(detections[0].original, original);
+    assert_eq!(
+        (detections[0].start, detections[0].end),
+        ("😀 ".len(), "😀 ".len() + original.len())
+    );
+    assert!(output.starts_with("SELECT E'😀 [SQL_FIXTURE_"));
+    assert_eq!(anonymizer.mapping.restore_bracketed(&output), sql);
+}
+
+#[test]
 fn test_sql_dollar_quoted_literal_is_anonymized_and_roundtrips() {
     let mut a = Anonymizer::new(0.0);
     let sql = "SELECT $body$owner john@example.com's address$body$ AS note;";
