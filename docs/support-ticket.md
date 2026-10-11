@@ -46,14 +46,15 @@ names. Postal-address support covers selected French forms, not every address
 or country. Inspect names, addresses, credentials, and organization-specific
 identifiers yourself. Detection counts do not prove that a ticket is anonymous.
 
-The browser and current source builds keep a recognized password assignment
-fully masked when it contains a detected email, address, or credential fragment.
+The browser, v0.3.4 native archives, and current source builds keep a recognized
+password assignment fully masked when it contains a detected email, address,
+or credential fragment.
 A more specific token is used only when it covers the complete assigned value
 and the original assignment syntax establishes that boundary. Encoded or
 ambiguous assignment syntax can keep the whole assignment under one token.
 Punctuation and spaces inside quoted passwords remain part of the value, and
-restoration preserves the exact source text. The v0.3.3 native archives predate
-this overlap fix.
+restoration preserves the exact source text. Native archives from v0.3.3 and
+earlier predate this overlap fix.
 
 The browser works with ticket text; use the CLI's format-aware paths when you
 need JSON-value, CSV-field, or SQL-literal processing. Do not infer document,
@@ -120,9 +121,10 @@ See the [run contract](../README.md#run-contract-and-limitations) and the
 [runnable demos](../demo/README.md).
 
 For SQL excerpts, use `anon-pii --format sql run --dry-run < ticket.sql` and
-keep `--format sql` when running the child command. In v0.3.3 and current source builds,
-default token preparation decodes PostgreSQL `E'...'` named control escapes
-(`\b`, `\f`, `\n`, `\r`, `\t`) for detection, including wrapped emails such as
+keep `--format sql` when running the child command. Starting with v0.3.3, native
+archives and current source builds decode PostgreSQL `E'...'` named control
+escapes (`\b`, `\f`, `\n`, `\r`, `\t`) for detection during default token
+preparation, including wrapped emails such as
 `E'ada@\r\n\texample.com'`. Restoration preserves the original escape spelling.
 Ordinary quoted strings and dollar-quoted strings retain literal backslashes.
 This is not a full SQL escape parser; other replacement operators are unchanged.

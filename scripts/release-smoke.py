@@ -104,6 +104,94 @@ def main():
             require(original not in outgoing, f"ticket child received original {entity!r}")
             require(b"[" + entity + b"_" in outgoing, f"ticket omitted {entity!r} token")
 
+        # An inner detection must not leave the rest of a password visible.
+        # Assemble fictional credential shapes so they cannot be mistaken for
+        # live secrets in this source file.
+        secret_key = b"ghp" + b"_" + b"A" * 36
+        jwt = b"eyJhbGciOiJub25lIn0" + b"." + b"eyJzdWIiOiJleGFtcGxlIn0"
+        password_prefix = "Réponse 📨 — ".encode()
+        password_suffix = b"\r\nplease investigate.\n"
+        for label, assignment in [
+            (
+                "quoted email fragment",
+                b'password="private-prefix ada@example.invalid private-suffix"',
+            ),
+            ("quoted IP fragment", b"pwd='private-prefix 192.0.2.20 private-suffix'"),
+            ("unquoted IP fragment", b"DB_PASSWORD=private-prefix192.0.2.20private-suffix"),
+            (
+                "quoted secret fragment",
+                b'secret="private-prefix ' + secret_key + b' private-suffix"',
+            ),
+            ("quoted credential whitespace", b'token=" ' + jwt + b' "'),
+            ("credential with ampersand suffix", b"token=" + jwt + b"&cc_last4=4242"),
+            ("encoded assignment separator", b"password%3Dada@example.invalid"),
+            ("encoded quotes", b"password=%22ada@example.invalid%22"),
+            (
+                "encoded separator before value colon",
+                b"password%3Dprivate-prefix:ada@example.invalid",
+            ),
+            (
+                "fullwidth separator before value colon",
+                "password＝private-prefix:ada@example.invalid".encode(),
+            ),
+            (
+                "escaped separator before value colon",
+                rb"password\u003Dprivate-prefix:ada@example.invalid",
+            ),
+            (
+                "encoded separator before value equals",
+                b"password%3Dprivate-prefix=ada@example.invalid",
+            ),
+        ]:
+            source = password_prefix + assignment + password_suffix
+            expected = (
+                re.escape(password_prefix)
+                + rb"\[PASSWORD_[0-9a-f]{8}\]"
+                + re.escape(password_suffix)
+            )
+            preview = run(["run", "--dry-run"], source)
+            require(
+                re.fullmatch(expected, preview.stdout) is not None,
+                f"{label} preview did not mask the complete password assignment",
+            )
+            child = run(["run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, f"{label} roundtrip changed source bytes")
+            require(
+                re.fullmatch(expected, observed.read_bytes()) is not None,
+                f"{label} sent part of the password assignment to the child",
+            )
+
+        # Preserve specific classifications when they cover the entire value.
+        for entity, value in [
+            (b"SECRET_KEY", secret_key),
+            (b"AUTH_TOKEN", jwt),
+            (b"EMAIL_ADDRESS", b"ada@example.invalid"),
+        ]:
+            for key_prefix, quote_suffix in [
+                (b"token=", b""),
+                (b"secret = '", b"'"),
+                (b'password="', b'"'),
+            ]:
+                prefix = password_prefix + key_prefix
+                suffix = quote_suffix + password_suffix
+                source = prefix + value + suffix
+                expected = (
+                    re.escape(prefix)
+                    + rb"\[" + entity + rb"_[0-9a-f]{8}\]"
+                    + re.escape(suffix)
+                )
+                preview = run(["run", "--dry-run"], source)
+                require(
+                    re.fullmatch(expected, preview.stdout) is not None,
+                    f"complete {entity!r} value lost its specific preview token",
+                )
+                child = run(["run", "--", "tee", str(observed)], source)
+                require(child.stdout == source, "complete-value roundtrip changed source bytes")
+                require(
+                    re.fullmatch(expected, observed.read_bytes()) is not None,
+                    f"complete {entity!r} value lost its specific child-input token",
+                )
+
         # Incorrect regex offsets can still roundtrip perfectly while leaving
         # part of a configured value visible. Check complete child-input spans.
         recognizers = smoke_home / "recognizers.yml"
@@ -257,7 +345,7 @@ def main():
     print(
         f"Release smoke passed: anon-pii {args.version}; "
         "preview, roundtrip, support ticket, custom regex spans, IBAN casing, "
-        "wrapped emails, SQL E-string controls"
+        "wrapped emails, SQL E-string controls, complete passwords, specific credentials"
     )
 
 
