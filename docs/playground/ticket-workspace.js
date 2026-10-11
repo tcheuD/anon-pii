@@ -28,6 +28,7 @@ export function mountTicketWorkspace() {
   const reply = get('ticket-reply');
   const restored = get('ticket-restored');
   const prepareButton = get('prepare-ticket');
+  const protectButton = get('protect-selection');
   const copyTicketButton = get('copy-ticket');
   const restoreButton = get('restore-reply');
   const copyReplyButton = get('copy-reply');
@@ -46,6 +47,7 @@ export function mountTicketWorkspace() {
 
   function updateControls() {
     prepareButton.disabled = !engineModule || !source.value.trim();
+    protectButton.disabled = !engine || !preparedText;
     copyTicketButton.disabled = preparedText === null;
     reply.disabled = !engine;
     restoreButton.disabled = !engine || !reply.value.trim();
@@ -138,6 +140,56 @@ export function mountTicketWorkspace() {
     }
     return engine !== null;
   }
+
+  protectButton.addEventListener('click', () => {
+    if (!currentSession() || preparedText === null) return;
+    // A selection belongs to the exact prepared output, never a modified DOM
+    // value. Refuse stale coordinates rather than protecting a different value.
+    if (prepared.value !== preparedText) {
+      prepared.value = preparedText;
+      prepared.setSelectionRange(0, 0);
+      status.textContent = 'The displayed text changed. Make a new selection in the prepared ticket and try again.';
+      return;
+    }
+    const start = prepared.selectionStart;
+    const end = prepared.selectionEnd;
+    // Textarea coordinates count UTF-16 code units; the engine uses UTF-8 bytes.
+    // Encoding half a surrogate pair would silently change the selected value.
+    const splitsSurrogate = offset => offset > 0 && offset < preparedText.length
+      && /[\uD800-\uDBFF]/.test(preparedText[offset - 1])
+      && /[\uDC00-\uDFFF]/.test(preparedText[offset]);
+    if (start >= end || splitsSurrogate(start) || splitsSurrogate(end)) {
+      status.textContent = 'Select a complete value in the prepared ticket, then choose Protect selected text. The selection must not split a character.';
+      return;
+    }
+    try {
+      const encoder = new TextEncoder();
+      const result = JSON.parse(engine.protect_range(
+        preparedText,
+        encoder.encode(preparedText.slice(0, start)).length,
+        encoder.encode(preparedText.slice(0, end)).length,
+      ));
+      if (typeof result.token !== 'string' || !/^\[MANUAL_[a-f0-9]{8}\]$/.test(result.token)
+        || result.output !== preparedText.slice(0, start) + result.token + preparedText.slice(end)) {
+        throw new Error('Invalid protection result');
+      }
+      revision += 1;
+      preparedText = result.output;
+      prepared.value = preparedText;
+      reply.value = '';
+      restoredText = null;
+      restoreOutcome = '';
+      restored.value = '';
+      ticketCopyFeedback.textContent = '';
+      replyCopyFeedback.textContent = '';
+      updateControls();
+      prepared.focus();
+      prepared.setSelectionRange(start, start + result.token.length);
+      status.textContent = 'Selected occurrence protected locally. Review other occurrences and remaining sensitive values before copying. Any previous reply was cleared.';
+    } catch {
+      status.textContent = 'The selection could not be protected. Select complete text outside existing tokens and try again.';
+    }
+  });
 
   reply.addEventListener('input', () => {
     revision += 1;

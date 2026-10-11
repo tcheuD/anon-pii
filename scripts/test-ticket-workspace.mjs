@@ -46,11 +46,16 @@ try {
   await context.addInitScript(() => {
     window.__copied = [];
     window.__clipboardReject = false;
+    window.__clipboardPending = false;
+    window.__resolveClipboard = null;
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
         writeText: async text => {
           if (window.__clipboardReject) throw new Error('Clipboard denied for test');
+          if (window.__clipboardPending) {
+            await new Promise(resolve => { window.__resolveClipboard = resolve; });
+          }
           window.__copied.push(text);
         },
       },
@@ -73,7 +78,7 @@ try {
 
   await check('empty input and initial session cannot copy or restore', async () => {
     assert.equal(await input('ticket-source'), '');
-    for (const id of ['prepare-ticket', 'copy-ticket', 'ticket-reply', 'restore-reply', 'copy-reply']) {
+    for (const id of ['prepare-ticket', 'protect-selection', 'copy-ticket', 'ticket-reply', 'restore-reply', 'copy-reply']) {
       assert.equal(await disabled(id), true, id);
     }
     await field('ticket-source').fill(' \n ');
@@ -213,7 +218,7 @@ try {
   await check('source edits immediately invalidate all downstream state', async () => {
     await field('ticket-source').fill('Please email blair@example.invalid.');
     for (const id of ['ticket-prepared', 'ticket-reply', 'ticket-restored']) assert.equal(await input(id), '');
-    for (const id of ['copy-ticket', 'ticket-reply', 'restore-reply', 'copy-reply']) assert.equal(await disabled(id), true);
+    for (const id of ['protect-selection', 'copy-ticket', 'ticket-reply', 'restore-reply', 'copy-reply']) assert.equal(await disabled(id), true);
     assert.match(await field('ticket-status').textContent(), /previous session and reply were cleared/);
     await click('prepare-ticket');
     await field('ticket-reply').fill(oldToken);
@@ -384,7 +389,7 @@ try {
     const clipboard = await page.evaluate(() => window.__copied.at(-1));
     await click('clear-session');
     for (const id of ['ticket-source', 'ticket-prepared', 'ticket-reply', 'ticket-restored']) assert.equal(await input(id), '');
-    for (const id of ['prepare-ticket', 'copy-ticket', 'ticket-reply', 'restore-reply', 'copy-reply']) assert.equal(await disabled(id), true);
+    for (const id of ['prepare-ticket', 'protect-selection', 'copy-ticket', 'ticket-reply', 'restore-reply', 'copy-reply']) assert.equal(await disabled(id), true);
     assert.equal(await page.evaluate(() => window.__copied.at(-1)), clipboard);
     assert.match(await field('ticket-status').textContent(), /clipboard or in other apps are unchanged/);
   });
@@ -501,11 +506,243 @@ try {
     }
   });
 
+  const manualValue = 'renarde_notes_2042';
+  const manualSource = `réponse 🧪 — contact avery@example.invalid; référence ${manualValue}; encore ${manualValue}.`;
+  const prepareManualTicket = async (ticket = manualSource) => {
+    await field('ticket-source').fill(ticket);
+    await click('prepare-ticket');
+    assert.equal(await disabled('protect-selection'), false);
+    return input('ticket-prepared');
+  };
+  const selectPrepared = async (start, end) => {
+    await field('ticket-prepared').evaluate((element, [start, end]) => {
+      element.focus();
+      element.setSelectionRange(start, end);
+    }, [start, end]);
+  };
+  const protectFirst = async value => {
+    const before = await input('ticket-prepared');
+    const start = before.indexOf(value);
+    assert.ok(start >= 0, 'the selected original must be present');
+    await selectPrepared(start, start + value.length);
+    await click('protect-selection');
+    const output = await input('ticket-prepared');
+    const token = output.slice(start).match(/^\[MANUAL_[a-f0-9]{8}\]/)?.[0];
+    assert.ok(token, 'the selected occurrence must become one MANUAL token');
+    assert.equal(output, before.slice(0, start) + token + before.slice(start + value.length));
+    assert.match(await field('ticket-status').textContent(), /other occurrences/i);
+    return { output, token };
+  };
+
+  await check('manual protection masks only the selected occurrence, reuses its mapping, and preserves automatic tokens', async () => {
+    const initial = await prepareManualTicket();
+    const autoToken = initial.match(/\[EMAIL_ADDRESS_[a-f0-9]{8}\]/)?.[0];
+    assert.ok(autoToken);
+    assert.equal(initial, manualSource.replace('avery@example.invalid', autoToken));
+    assert.equal(await field('ticket-prepared').evaluate(element => element.readOnly), true);
+    await field('ticket-reply').fill(initial);
+    await click('restore-reply');
+    await click('copy-ticket');
+    await click('copy-reply');
+    const first = await protectFirst(manualValue);
+    assert.equal(first.output, initial.replace(manualValue, first.token));
+    assert.ok(first.output.includes(manualValue), 'unselected equal values must stay visible for review');
+    assert.equal(await input('ticket-source'), manualSource);
+    for (const id of ['ticket-reply', 'ticket-restored']) assert.equal(await input(id), '');
+    for (const id of ['restore-reply', 'copy-reply']) assert.equal(await disabled(id), true);
+    for (const id of ['copy-ticket-feedback', 'copy-reply-feedback']) assert.equal(await field(id).textContent(), '');
+    await click('copy-ticket');
+    assert.equal(await page.evaluate(() => window.__copied.at(-1)), first.output);
+    await field('ticket-reply').fill(`${autoToken} / ${first.token} / ${first.token}`);
+    await click('restore-reply');
+    assert.equal(await input('ticket-restored'), `avery@example.invalid / ${manualValue} / ${manualValue}`);
+    assert.match(await field('ticket-status').textContent(), /^Restored 3 token occurrences/);
+    const second = await protectFirst(manualValue);
+    assert.equal(second.token, first.token, 'equal manual values reuse the same session mapping');
+    assert.equal(second.output, initial.replaceAll(manualValue, first.token));
+    await field('ticket-reply').fill(second.output);
+    await click('restore-reply');
+    assert.equal(await input('ticket-restored'), manualSource);
+  });
+
+  await check('selection coordinates preserve accented prefixes and complete emoji characters', async () => {
+    await prepareManualTicket();
+    const { output } = await protectFirst('🧪');
+    await click('copy-ticket');
+    assert.equal(await page.evaluate(() => window.__copied.at(-1)), output);
+    await field('ticket-reply').fill(output);
+    await click('restore-reply');
+    assert.equal(await input('ticket-restored'), manualSource);
+  });
+
+  await check('invalid or tampered selections preserve the canonical prepared text and existing mappings', async () => {
+    const unknown = '[EXTERNAL_deadbeef]';
+    const ticket = `${manualSource} ${unknown}`;
+    await prepareManualTicket(ticket);
+    const { output, token } = await protectFirst(manualValue);
+    const autoToken = output.match(/\[EMAIL_ADDRESS_[a-f0-9]{8}\]/)[0];
+    const emojiStart = output.indexOf('🧪');
+    const autoStart = output.indexOf(autoToken);
+    for (const [label, start, end] of [
+      ['empty', 0, 0],
+      ['whole automatic token', autoStart, autoStart + autoToken.length],
+      ['crossing a token boundary', autoStart - 1, autoStart + 2],
+      ['whole manual token', output.indexOf(token), output.indexOf(token) + token.length],
+      ['unknown token', output.indexOf(unknown), output.indexOf(unknown) + unknown.length],
+      ['split emoji end', emojiStart, emojiStart + 1],
+      ['split emoji start', emojiStart + 1, emojiStart + 2],
+    ]) {
+      await selectPrepared(start, end);
+      await click('protect-selection');
+      assert.match(await field('ticket-status').textContent(), /selection|token/i, label);
+      assert.equal(await input('ticket-prepared'), output, label);
+    }
+    await field('ticket-prepared').evaluate(element => { element.value = 'changed displayed text'; });
+    await selectPrepared(0, 7);
+    await click('protect-selection');
+    assert.match(await field('ticket-status').textContent(), /selection/i);
+    assert.equal(await input('ticket-prepared'), output, 'tampering must restore the canonical display');
+    await click('copy-ticket');
+    assert.equal(await page.evaluate(() => window.__copied.at(-1)), output);
+    await field('ticket-reply').fill(output);
+    await click('restore-reply');
+    assert.equal(await input('ticket-restored'), ticket, 'rejected selections must retain both kinds of mapping');
+  });
+
+  await check('late clipboard completion cannot reinstate feedback from before a manual protection', async () => {
+    for (const copyButton of ['copy-ticket', 'copy-reply']) {
+      const initial = await prepareManualTicket();
+      await field('ticket-reply').fill(initial);
+      await click('restore-reply');
+      const copyCount = await page.evaluate(() => window.__copied.length);
+      await page.evaluate(() => { window.__clipboardPending = true; });
+      await click(copyButton);
+      await page.waitForFunction(() => typeof window.__resolveClipboard === 'function');
+      const { output } = await protectFirst(manualValue);
+      const status = await field('ticket-status').textContent();
+      await page.evaluate(() => {
+        window.__clipboardPending = false;
+        window.__resolveClipboard();
+        window.__resolveClipboard = null;
+      });
+      await page.waitForFunction(count => window.__copied.length === count + 1, copyCount);
+      assert.equal(await field('ticket-status').textContent(), status);
+      for (const id of ['copy-ticket-feedback', 'copy-reply-feedback']) assert.equal(await field(id).textContent(), '');
+      assert.equal(await input('ticket-restored'), '');
+      // A pending OS copy cannot be undone; the next copy must use the new output.
+      await click('copy-ticket');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), output);
+    }
+  });
+
+  await check('clipboard rejection selects the complete ticket including manual tokens', async () => {
+    await prepareManualTicket();
+    const { output } = await protectFirst(manualValue);
+    await page.evaluate(() => { window.__clipboardReject = true; });
+    try {
+      await click('copy-ticket');
+      await page.waitForFunction(() => document.getElementById('ticket-status').textContent.includes('Clipboard access was unavailable'));
+      assert.deepEqual(await field('ticket-prepared').evaluate(element => ({
+        text: element.value.slice(element.selectionStart, element.selectionEnd),
+        focused: document.activeElement === element,
+      })), { text: output, focused: true });
+    } finally {
+      await page.evaluate(() => { window.__clipboardReject = false; });
+    }
+  });
+
+  await check('manual mappings expire on clear, source edit, reprepare, pagehide, and reload', async () => {
+    for (const action of ['clear', 'source edit', 'reprepare', 'pagehide', 'reload']) {
+      await prepareManualTicket();
+      const { token } = await protectFirst(manualValue);
+      if (action === 'clear') await click('clear-session');
+      if (action === 'source edit') await field('ticket-source').fill(`${manualSource} updated.`);
+      if (action === 'reprepare') await click('prepare-ticket');
+      if (action === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+      if (action === 'reload') {
+        await page.reload({ waitUntil: 'networkidle' });
+        await page.waitForFunction(() => document.getElementById('engstats').textContent.includes('Local engine ready'));
+      }
+      if (action !== 'reprepare') {
+        for (const id of ['ticket-prepared', 'ticket-reply', 'ticket-restored']) assert.equal(await input(id), '', action);
+        for (const id of ['protect-selection', 'copy-ticket', 'restore-reply', 'copy-reply']) assert.equal(await disabled(id), true, action);
+        if (action !== 'source edit') {
+          assert.equal(await input('ticket-source'), '', action);
+          await field('ticket-source').fill(manualSource);
+        }
+        await click('prepare-ticket');
+      }
+      const prepared = await input('ticket-prepared');
+      assert.ok(prepared.includes(manualValue), `${action}: protection is local to the discarded mapping`);
+      assert.ok(!prepared.includes(token), action);
+      const autoToken = prepared.match(/\[EMAIL_ADDRESS_[a-f0-9]{8}\]/)[0];
+      await field('ticket-reply').fill(`${token} / ${autoToken}`);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), `${token} / avery@example.invalid`, action);
+      assert.match(await field('ticket-status').textContent(), /1 unrecognized token-shaped placeholder/, action);
+    }
+  });
+
+  await check('WASM range protection uses UTF-8 boundaries and rejects token overlaps without mutating mappings', async () => {
+    const result = await page.evaluate(async ({ value, source }) => {
+      const { Engine } = await import('/playground/pkg/anon_pii.js');
+      const engine = new Engine();
+      const encoder = new TextEncoder();
+      const byteLength = text => encoder.encode(text).length;
+      try {
+        const unknown = '[EXTERNAL_deadbeef]';
+        const original = `é🧪 ${source} ${unknown}`;
+        const initial = JSON.parse(engine.anonymize(original)).output;
+        const protectValue = text => {
+          const start = text.indexOf(value);
+          return JSON.parse(engine.protect_range(text, byteLength(text.slice(0, start)), byteLength(text.slice(0, start + value.length))));
+        };
+        const first = protectValue(initial);
+        const mappingAfterFirst = engine.mapping_len();
+        const second = protectValue(first.output);
+        const mappingAfterSecond = engine.mapping_len();
+        const text = second.output;
+        const autoToken = text.match(/\[EMAIL_ADDRESS_[a-f0-9]{8}\]/)[0];
+        const tokenOffset = token => byteLength(text.slice(0, text.indexOf(token)));
+        const autoStart = tokenOffset(autoToken);
+        const invalid = [
+          ['empty', 0, 0], ['reversed', 2, 0], ['out of bounds', 0, byteLength(text) + 1],
+          ['inside accented character', 1, 2], ['inside emoji', 2, 3],
+          ['whole mapped token', autoStart, autoStart + byteLength(autoToken)],
+          ['crossing token boundary', autoStart - 1, autoStart + 2],
+          ['manual token', tokenOffset(first.token), tokenOffset(first.token) + byteLength(first.token)],
+          ['unknown token', tokenOffset(unknown), tokenOffset(unknown) + byteLength(unknown)],
+          ['partial unknown token', tokenOffset(unknown) + 1, tokenOffset(unknown) + 3],
+        ].map(([label, start, end]) => {
+          const before = engine.mapping_len();
+          let rejected = false;
+          try { engine.protect_range(text, start, end); } catch { rejected = true; }
+          return { label, rejected, before, after: engine.mapping_len() };
+        });
+        return { original, initial, first, second, mappingAfterFirst, mappingAfterSecond, invalid, restored: engine.restore(text), report: JSON.parse(engine.restore_report(text)) };
+      } finally {
+        engine.free();
+      }
+    }, { value: manualValue, source: manualSource });
+    assert.match(result.first.token, /^\[MANUAL_[a-f0-9]{8}\]$/);
+    assert.equal(result.first.output, result.initial.replace(manualValue, result.first.token));
+    assert.equal(result.second.token, result.first.token);
+    assert.equal(result.second.output, result.initial.replaceAll(manualValue, result.first.token));
+    assert.equal(result.mappingAfterSecond, result.mappingAfterFirst);
+    for (const test of result.invalid) {
+      assert.equal(test.rejected, true, test.label);
+      assert.equal(test.after, test.before, `${test.label}: mapping must not change`);
+    }
+    assert.equal(result.restored, result.original);
+    assert.deepEqual(result.report, { output: result.original, restored_count: 3, unresolved_count: 1 });
+  });
+
   await check('reload clears the ticket and all session state', async () => {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForFunction(() => document.getElementById('engstats').textContent.includes('Local engine ready'));
     for (const id of ['ticket-source', 'ticket-prepared', 'ticket-reply', 'ticket-restored']) assert.equal(await input(id), '');
     assert.equal(await disabled('copy-ticket'), true);
+    assert.equal(await disabled('protect-selection'), true);
     assert.equal(await disabled('restore-reply'), true);
   });
 
@@ -535,11 +772,13 @@ try {
     await failedPage.goto(origin, { waitUntil: 'domcontentloaded' });
     await failedPage.locator('#ticket-source').fill(source);
     assert.equal(await failedPage.locator('#prepare-ticket').isDisabled(), true);
+    assert.equal(await failedPage.locator('#protect-selection').isDisabled(), true);
     assert.match(await failedPage.locator('#engstats').textContent(), /Loading/);
     releaseWasm();
     await failedPage.waitForFunction(() => document.getElementById('engstats').textContent.includes('failed to load'));
     assert.equal(await failedPage.locator('#prepare-ticket').isDisabled(), true);
     assert.equal(await failedPage.locator('#copy-ticket').isDisabled(), true);
+    assert.equal(await failedPage.locator('#protect-selection').isDisabled(), true);
     assert.equal(await failedPage.locator('#ticket-source').inputValue(), source, 'load failure must not discard the unprepared source');
     await failedPage.close();
   });

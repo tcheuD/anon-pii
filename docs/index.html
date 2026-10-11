@@ -167,8 +167,11 @@ footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
           <div class="ticket-field">
             <label for="ticket-prepared">2 · Tokenized ticket</label>
             <textarea id="ticket-prepared" readonly spellcheck="false" autocomplete="off" aria-describedby="prepared-help" placeholder="Prepared text appears here. Review it for missed sensitive values."></textarea>
-            <p class="help" id="prepared-help">Detection can miss values. Review before copying to an AI tool. Keep the bracketed tokens unchanged.</p>
-            <button type="button" id="copy-ticket" disabled>Copy tokenized ticket</button><span class="copy-feedback" id="copy-ticket-feedback"></span>
+            <p class="help" id="prepared-help">Detection can miss values. Select missed text here and choose Protect selected text before copying. Only that occurrence is protected; review the rest. Keep bracketed tokens unchanged.</p>
+            <div class="ticket-actions">
+              <button type="button" class="secondary" id="protect-selection" disabled>Protect selected text</button>
+              <button type="button" id="copy-ticket" disabled>Copy tokenized ticket</button><span class="copy-feedback" id="copy-ticket-feedback"></span>
+            </div>
           </div>
           <div class="ticket-field">
             <label for="ticket-reply">3 · AI reply with tokens</label>

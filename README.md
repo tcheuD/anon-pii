@@ -13,8 +13,10 @@ aid, not a privacy compliance guarantee or proof that a payload is fully anonymi
 ## Try a support ticket
 
 Open the [local browser workspace](https://tcheud.github.io/anon-pii/#try), load
-the fictional example, and choose **Prepare ticket**. Review the prepared text,
-copy it into your AI tool, then paste its reply back and choose **Restore reply**.
+the fictional example, and choose **Prepare ticket**. Review the prepared text;
+select a missed value and choose **Protect selected text** to tokenize that
+occurrence. Review other occurrences, copy the prepared ticket into your AI tool,
+then paste its reply back and choose **Restore reply**.
 Known tokens become the original references again. Detection and restoration
 run in the browser; the workspace makes no AI calls and saves no ticket or mapping.
 
