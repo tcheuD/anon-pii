@@ -163,8 +163,8 @@ enforce the same national fields and check-digit range as the compact UK rule.
 Replacement and restoration preserve the original separators and spelling. This rule does
 not extend lowercase/mixed-case support across line breaks. It keeps score
 `0.7` and requires context; threshold `0.8` rejects it. The broader generic
-uppercase matcher is unchanged. Native archives through v0.3.7 predate this
-grouped-casing addition.
+uppercase matcher is unchanged. Native v0.3.8 is the first archive release
+with this grouped-casing support; earlier archives lack it.
 
 The built-in URL recognizer keeps percent-encoded spaces, quotes, and delimiters
 inside a complete URL when its scheme is recognized before percent decoding.
@@ -175,8 +175,8 @@ Query values are decoded separately for inner PII audit detections, which refer
 to the original encoded bytes;
 replacement masks the enclosing URL once. The local API's `/analyze` output
 remains non-overlapping and can feed `/anonymize` directly, including when only
-an inner entity type is selected. Native archives through v0.3.7 predate the
-complete encoded-URL fix; it is covered in source and browser workflow checks.
+an inner entity type is selected. Native v0.3.8 is the first archive release
+with this encoded-URL fix. Source and browser workflow checks also cover it.
 
 Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
 spaces/tabs and a complete domain. Preparation and restoration preserve the
