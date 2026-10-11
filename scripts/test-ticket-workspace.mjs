@@ -285,6 +285,37 @@ try {
     assert.equal(await page.locator('#try img, #try script').count(), 0);
   });
 
+  await check('complete password assignments mask nested PII before copying and restore exactly', async () => {
+    const nestedSecret = ['sk', 'test', 'fictionalvalue1234567890'].join('_');
+    for (const [label, assignment, nestedValue] of [
+      ['quoted email', 'password="private-prefix ada@example.invalid private-suffix"', 'ada@example.invalid'],
+      ['quoted secret', `password="private-prefix ${nestedSecret} private-suffix"`, nestedSecret],
+      ['unquoted IP', 'password=private-prefix/192.0.2.20/private-suffix', '192.0.2.20'],
+      ['encoded separator', 'password%3Dprivate-prefix:ada@example.invalid', 'ada@example.invalid'],
+    ]) {
+      const prefix = 'réponse 🧪 — ';
+      const suffix = ' ; ticket text remains unchanged.\n';
+      const ticket = `${prefix}${assignment}${suffix}`;
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      const prepared = await input('ticket-prepared');
+      const token = prepared.match(/\[PASSWORD_[a-f0-9]{8}\]/);
+      assert.ok(token, `${label}: the enclosing assignment must be detected as PASSWORD`);
+      assert.equal(prepared, `${prefix}${token[0]}${suffix}`, `${label}: mask the entire assignment and preserve surrounding text`);
+      await click('copy-ticket');
+      const copied = await page.evaluate(() => window.__copied.at(-1));
+      assert.equal(copied, prepared, `${label}: copy must contain exactly the prepared text`);
+      for (const original of ['private-prefix', nestedValue, 'private-suffix']) {
+        assert.ok(!copied.includes(original), `${label}: copied text retained part of the password`);
+      }
+      await field('ticket-reply').fill(prepared);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), ticket, `${label}: restore the exact assignment and UTF-8 text`);
+      await click('copy-reply');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), ticket);
+    }
+  });
+
   await check('WASM restore reports count input occurrences once and preserve the existing restore API', async () => {
     const result = await page.evaluate(async () => {
       const { Engine } = await import('/playground/pkg/anon_pii.js');

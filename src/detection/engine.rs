@@ -33,6 +33,33 @@ fn basic_auth_value_start(candidate: &str) -> Option<usize> {
     (decoded.contains(&b':') && !decoded.iter().any(u8::is_ascii_control)).then_some(start)
 }
 
+fn password_value_range(assignment: &str) -> Option<std::ops::Range<usize>> {
+    let separator = assignment.find(['=', ':'])?;
+    let key = assignment[..separator].trim_end();
+    let key = key.strip_suffix(['\'', '"']).unwrap_or(key);
+    // Detection uses normalized text, but this is its original source spelling.
+    // If the key/separator was encoded or otherwise transformed, a later ':' or
+    // '=' could be inside the password. Keep the whole detection in that case.
+    if key.is_empty()
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return None;
+    }
+    let value = assignment[separator + 1..].trim_start();
+    let start = assignment.len() - value.len();
+    match value.as_bytes().first()? {
+        quote @ (b'\'' | b'"') => {
+            if value.len() < 2 || value.as_bytes().last() != Some(quote) {
+                return None;
+            }
+            Some(start + 1..assignment.len() - 1)
+        }
+        _ => Some(start..assignment.len()),
+    }
+}
+
 fn has_address_city_continuation(suffix: &str) -> bool {
     let mut chars = suffix.chars();
     match chars.next() {
@@ -462,8 +489,10 @@ impl Anonymizer {
             }
         }
 
-        // Drop PASSWORD detections that fully contain a more specific detection
-        // (e.g., PASSWORD wrapping a SECRET_KEY or AUTH_TOKEN value).
+        // Prefer a specific classification only when it covers the entire
+        // password value. A detected fragment must not expose the rest of a
+        // recognized credential. Keep whitespace inside quotes and punctuation
+        // such as '&': neither is proof that the password has ended.
         if detections.iter().any(|d| d.entity_type == "PASSWORD") {
             let specific_spans: Vec<(usize, usize)> = detections
                 .iter()
@@ -475,9 +504,12 @@ impl Anonymizer {
                     if det.entity_type != "PASSWORD" {
                         return true;
                     }
+                    let Some(value) = password_value_range(&det.original) else {
+                        return true;
+                    };
                     !specific_spans
                         .iter()
-                        .any(|&(s, e)| s >= det.start && e <= det.end)
+                        .any(|&(s, e)| s == det.start + value.start && e == det.start + value.end)
                 });
             }
         }
