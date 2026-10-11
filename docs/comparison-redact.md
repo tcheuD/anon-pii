@@ -54,7 +54,9 @@ These counts establish behavior on this selected corpus, not general detector
 quality. The corpus belongs to `anon-pii`, was developed alongside its detector
 fixes, is small by entity family, and is not an independent holdout. For
 example, the pinned `redact` configuration exactly detects the context-free GB
-IBAN case that `anon-pii` intentionally retains as a challenge miss. Conversely,
+IBAN case that the pinned `anon-pii` revision retains as a challenge miss. Later
+source changes are measured separately in the [quality report](quality.md).
+Conversely,
 several exact-span differences come from normalization, formatted values,
 partial timestamp or IPv4-mapped IPv6 matches, and negative controls. Inspect
 the per-case evidence rather than reading the aggregate as a universal ranking.

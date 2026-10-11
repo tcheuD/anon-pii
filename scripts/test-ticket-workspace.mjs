@@ -440,12 +440,33 @@ try {
     }
     for (const ticket of [
       'IBAN gb82west12345698765433', // Invalid checksum.
-      'ref gb82west12345698765432', // Generic IBAN still requires context.
+      'ref de89370400440532013000', // Non-UK generic IBAN still requires context.
     ]) {
       await field('ticket-source').fill(ticket);
       await click('prepare-ticket');
       assert.equal(await input('ticket-prepared'), ticket);
     }
+  });
+
+  await check('compact UK IBAN without financial context prepares, copies, and restores exact text', async () => {
+    // Public checksum example in a fictional ticket without an IBAN keyword.
+    const iban = 'GB82WEST12345698765432';
+    const prefix = 'Échec 🧪 — value=';
+    const suffix = '; please investigate.';
+    const ticket = `${prefix}${iban}${suffix}`;
+    await field('ticket-source').fill(ticket);
+    await click('prepare-ticket');
+    const prepared = await input('ticket-prepared');
+    const token = prepared.match(/\[IBAN_CODE_[a-f0-9]{8}\]/)?.[0];
+    assert.ok(token, 'the complete compact UK IBAN must be detected without a context keyword');
+    assert.equal(prepared, `${prefix}${token}${suffix}`, 'preserve Unicode and adjacent ticket prose');
+    await click('copy-ticket');
+    assert.equal(await page.evaluate(() => window.__copied.at(-1)), prepared);
+    await field('ticket-reply').fill(prepared);
+    await click('restore-reply');
+    assert.equal(await input('ticket-restored'), ticket);
+    await click('copy-reply');
+    assert.equal(await page.evaluate(() => window.__copied.at(-1)), ticket);
   });
 
   await check('emails wrapped immediately after @ prepare, copy, and restore exact source text', async () => {
