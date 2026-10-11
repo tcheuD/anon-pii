@@ -19,8 +19,10 @@ paths:
       summary: Detect PII entities in text
       description: >-
         Runs the full detection pipeline (normalization, pattern matching,
-        validators, NER, overlap resolution) and returns detected entities
-        with positions and confidence scores.
+        validators, NER, overlap resolution) and returns nonoverlapping entities
+        with UTF-8 byte positions and confidence scores, ready for /anonymize
+        with the same original text. Nested URL audit detections are omitted
+        when their enclosing URL is returned.
       operationId: analyze
       requestBody:
         required: true
@@ -37,7 +39,7 @@ paths:
                 - FR_PHONE_NUMBER
       responses:
         "200":
-          description: Detected entities
+          description: Nonoverlapping detected entities in source order
           content:
             application/json:
               schema:
@@ -179,7 +181,9 @@ components:
           type: array
           items:
             type: string
-          description: If provided, only return detections matching these entity types
+          description: >-
+            If provided, select these entity types before overlap resolution.
+            An empty list or only unknown types returns no detections.
         return_decision_process:
           type: boolean
           default: false

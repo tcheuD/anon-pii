@@ -23,7 +23,21 @@ pub async fn analyze(Json(req): Json<AnalyzeRequest>) -> Response {
     #[cfg(feature = "ner-lite")]
     anonymizer.set_ner_detector(crate::ner::auto::detector(|_| {}));
 
-    let detections = anonymizer.analyze_with_entities(&req.text, req.entities.as_deref());
+    let mut detections = anonymizer.analyze_with_entities(&req.text, req.entities.as_deref());
+
+    // The core includes nested URL query detections for audit reports. Return
+    // only replacement spans so this response can feed /anonymize unchanged.
+    // Prefer the enclosing span and restore source order before filtering.
+    detections.sort_by_key(|d| (d.start, std::cmp::Reverse(d.end)));
+    let mut replacement_end = 0;
+    detections.retain(|d| {
+        if d.start < replacement_end {
+            false
+        } else {
+            replacement_end = d.end;
+            true
+        }
+    });
 
     let results: Vec<RecognizerResult> = detections
         .into_iter()

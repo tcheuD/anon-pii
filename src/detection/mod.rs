@@ -132,7 +132,8 @@ impl Anonymizer {
 
     /// Run the full detection pipeline (normalization, pattern matching, validators,
     /// NER, overlap resolution) without performing any replacement or writing to the
-    /// mapping. Returns raw detections suitable for the Presidio `/analyze` endpoint.
+    /// mapping. Raw results include URL query audit entries that can overlap
+    /// their enclosing URL; the HTTP API omits those audit-only entries.
     pub fn analyze(&mut self, text: &str) -> Vec<Detection> {
         self.analyze_with_entities(text, None)
     }

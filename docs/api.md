@@ -7,14 +7,11 @@ the `proxy` feature because it uses the same async HTTP stack as proxy mode.
 
 ## Install
 
-```bash
-cargo install anon-pii --features proxy
-```
-
-From a source checkout:
+The [native release archives](../README.md#installation) include the API.
+The crate is not published on crates.io. From a source checkout:
 
 ```bash
-cargo install --path . --features proxy
+cargo install --locked --path . --features ner-lite,proxy
 ```
 
 ## Start
@@ -49,6 +46,18 @@ curl -s http://127.0.0.1:8080/analyze \
 ```
 
 ## Anonymize Example
+
+Current source builds return nonoverlapping `/analyze` results that can be sent
+directly to `/anonymize` with the same original text. Offsets are UTF-8 byte
+positions, not character counts. Requested `entities` are selected before
+overlap resolution. If both a URL and an email inside it are recognized, the
+enclosing URL is returned; selecting only `EMAIL_ADDRESS` returns the email's
+source span instead. Nested URL audit details remain available in CLI detection
+reports. `/anonymize` still rejects overlapping results supplied by a caller.
+
+Native archives through v0.3.4 predate this API handoff fix and can return
+overlapping URL and query-value results. Use a current source build for this
+workflow until a newer native release includes the fix.
 
 ```bash
 curl -s http://127.0.0.1:8080/anonymize \
