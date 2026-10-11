@@ -104,13 +104,13 @@ See the [run contract](../README.md#run-contract-and-limitations) and the
 [runnable demos](../demo/README.md).
 
 For SQL excerpts, use `anon-pii --format sql run --dry-run < ticket.sql` and
-keep `--format sql` when running the child command. In current source builds,
+keep `--format sql` when running the child command. In v0.3.3 and current source builds,
 default token preparation decodes PostgreSQL `E'...'` named control escapes
 (`\b`, `\f`, `\n`, `\r`, `\t`) for detection, including wrapped emails such as
 `E'ada@\r\n\texample.com'`. Restoration preserves the original escape spelling.
 Ordinary quoted strings and dollar-quoted strings retain literal backslashes.
 This is not a full SQL escape parser; other replacement operators are unchanged.
-The E-string control-escape fix is not included in the v0.3.2 release archives.
+Older v0.3.2 archives do not include wrapped-email or E-string control-escape support.
 
 ## Optional outcome note
 

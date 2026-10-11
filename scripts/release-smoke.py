@@ -174,6 +174,81 @@ def main():
             require(child.stdout == source, f"{label} control changed during roundtrip")
             require(observed.read_bytes() == source, f"{label} control changed in child input")
 
+        # Test the complete wrapped source span, including its line ending and
+        # indentation. Separate preview/run invocations use fresh token IDs.
+        text_prefix = "Réponse 😀 — contact ".encode()
+        text_suffix = b"; please investigate.\n"
+        sql_prefix = r"INSERT INTO tickets VALUES (E'Préfixe 😀 it\'s ".encode()
+        sql_suffix = rb"; suffix\nunchanged');" + b"\r\n"
+        for label, flags, prefix, address, suffix in [
+            (
+                "LF-wrapped email",
+                [],
+                text_prefix,
+                b"ada@\nexample.invalid",
+                text_suffix,
+            ),
+            (
+                "CRLF/tab-wrapped Unicode email",
+                [],
+                text_prefix,
+                "iñes@\r\n\texample.invalid".encode(),
+                text_suffix,
+            ),
+            (
+                "PostgreSQL E-string named controls",
+                ["--format", "sql"],
+                sql_prefix,
+                rb"ada@\r\n\texample.invalid",
+                sql_suffix,
+            ),
+        ]:
+            source = prefix + address + suffix
+            expected = (
+                re.escape(prefix)
+                + rb"\[EMAIL_ADDRESS_[0-9a-f]{8}\]"
+                + re.escape(suffix)
+            )
+            preview = run([*flags, "run", "--dry-run"], source)
+            require(
+                re.fullmatch(expected, preview.stdout) is not None,
+                f"{label} preview did not mask the exact source span",
+            )
+            child = run([*flags, "run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, f"{label} roundtrip changed source bytes")
+            require(
+                re.fullmatch(expected, observed.read_bytes()) is not None,
+                f"{label} child input did not preserve the exact token span",
+            )
+
+        # Blank lines and malformed domains must not create a wrapped email.
+        # SQL named controls apply to E-strings, not ordinary/dollar quotes or
+        # a doubled backslash that represents literal text rather than a control.
+        for label, flags, source in [
+            ("wrapped email across a blank line", [], b"ada@\n\nexample.invalid"),
+            ("wrapped email with malformed domain", [], b"ada@\nexample.invalid_extra"),
+            (
+                "SQL standard-quoted named controls",
+                ["--format", "sql"],
+                rb"SELECT 'ada@\r\n\texample.invalid';",
+            ),
+            (
+                "SQL dollar-quoted named controls",
+                ["--format", "sql"],
+                rb"SELECT $body$ada@\r\n\texample.invalid$body$;",
+            ),
+            (
+                "SQL E-string doubled backslashes",
+                ["--format", "sql"],
+                rb"SELECT E'ada@\\r\\n\\texample.invalid';",
+            ),
+        ]:
+            preview = run([*flags, "run", "--dry-run"], source)
+            require(preview.stdout == source, f"{label} control changed in preview")
+            child = run([*flags, "run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, f"{label} control changed during roundtrip")
+            require(observed.read_bytes() == source, f"{label} control changed in child input")
+
         require(
             not (smoke_home / ".anon-pii" / "mapping.json").exists(),
             "transaction persisted a mapping file",
@@ -181,7 +256,8 @@ def main():
 
     print(
         f"Release smoke passed: anon-pii {args.version}; "
-        "preview, roundtrip, support ticket, custom regex spans, IBAN casing"
+        "preview, roundtrip, support ticket, custom regex spans, IBAN casing, "
+        "wrapped emails, SQL E-string controls"
     )
 
 
