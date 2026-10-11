@@ -178,10 +178,11 @@ to the original encoded bytes;
 replacement masks the enclosing URL once. The local API's `/analyze` output
 remains non-overlapping and can feed `/anonymize` directly, including when only
 an inner entity type is selected. Native v0.3.8 is the first archive release
-with the literal-scheme encoded-URL fix. Native archives through v0.3.8 lack the
-percent-encoded scheme extension and can leave an encoded suffix visible after
-the URL token. Source and browser workflow checks cover both forms. Review the
-prepared text before sharing; URL recognition is not semantic URL validation.
+with the literal-scheme encoded-URL fix. Native v0.3.9 is the first archive
+release with the percent-encoded scheme extension; earlier archives can leave
+an encoded suffix visible after the URL token. Source and browser workflow
+checks cover both forms. Review prepared text before sharing; URL recognition
+is not semantic URL validation.
 
 Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
 spaces/tabs and a complete domain. Preparation and restoration preserve the
