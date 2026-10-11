@@ -166,6 +166,18 @@ not extend lowercase/mixed-case support across line breaks. It keeps score
 uppercase matcher is unchanged. Native archives through v0.3.7 predate this
 grouped-casing addition.
 
+The built-in URL recognizer keeps percent-encoded spaces, quotes, and delimiters
+inside a complete URL when its scheme is recognized before percent decoding.
+This includes NFKC and Unicode-escape normalization. Fully percent-encoded
+schemes retain the existing decoded matching path and its boundary limitations.
+Literal surrounding whitespace and punctuation retain the existing boundaries.
+Query values are decoded separately for inner PII audit detections, which refer
+to the original encoded bytes;
+replacement masks the enclosing URL once. The local API's `/analyze` output
+remains non-overlapping and can feed `/anonymize` directly, including when only
+an inner entity type is selected. Native archives through v0.3.7 predate the
+complete encoded-URL fix; it is covered in source and browser workflow checks.
+
 Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
 spaces/tabs and a complete domain. Preparation and restoration preserve the
 source newline, indentation, and spelling. Blank lines, whitespace before the

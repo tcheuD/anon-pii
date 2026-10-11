@@ -10,6 +10,8 @@ use super::PiiPattern;
 pub(crate) const WRAPPED_EMAIL_PATTERN: &str =
     r"[\p{L}\p{N}._%+\-]+@\r?\n[ \t]*(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}";
 
+pub(crate) const URL_PATTERN: &str = r#"https?://[^\s\)\]>"']+[^\s\)\]>"'.,;:!?]"#;
+
 pub const GLOBAL_PATTERNS: &[PiiPattern] = &[
     // ── Email ──
     PiiPattern {
@@ -34,7 +36,7 @@ pub const GLOBAL_PATTERNS: &[PiiPattern] = &[
     PiiPattern {
         name: "url",
         entity_type: "URL",
-        pattern: r#"https?://[^\s\)\]>"']+[^\s\)\]>"'.,;:!?]"#,
+        pattern: URL_PATTERN,
         score: 0.9,
         context_keywords: &[],
         context_required: false,

@@ -327,6 +327,31 @@ try {
     }
   });
 
+  await check('percent-encoded URLs are fully masked before copying and restore exact source text', async () => {
+    const prefix = 'Échec 🧪 — ';
+    for (const [url, suffix] of [
+      ['https://example.invalid/?account=GB82%20WEST%201234%205698%207654%2032', '.'],
+      ['https://example.invalid/?iban=gb29%20nwbk%206016%201331%209268%2019', ' please investigate.\nréponse en attente.'],
+      ['https://example.invalid/debug?note=before%29middle%5Dafter%22quote%27end%3E&next=ok', ' ; ticket remains open.'],
+    ]) {
+      const ticket = `${prefix}${url}${suffix}`;
+      await field('ticket-source').fill(ticket);
+      await click('prepare-ticket');
+      const prepared = await input('ticket-prepared');
+      const token = prepared.match(/\[URL_[a-f0-9]{8}\]/)?.[0];
+      assert.ok(token, 'the complete URL must be detected');
+      const expected = `${prefix}${token}${suffix}`;
+      assert.equal(prepared, expected, 'mask the entire URL without leaving an encoded tail or consuming surrounding prose');
+      await click('copy-ticket');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), expected);
+      await field('ticket-reply').fill(prepared);
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), ticket, 'restore exact percent escapes, casing, punctuation, and Unicode');
+      await click('copy-reply');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), ticket);
+    }
+  });
+
   await check('WASM restore reports count input occurrences once and preserve the existing restore API', async () => {
     const result = await page.evaluate(async () => {
       const { Engine } = await import('/playground/pkg/anon_pii.js');

@@ -90,6 +90,30 @@ def check_api_handoff(binary, smoke_home, environment):
                 [("FR_PHONE_NUMBER", 48, 62)],
                 [],
             ),
+            (
+                "encoded grouped IBAN query",
+                "Échec 🧪 — https://example.invalid/?account=gb82%20west%201234%205698%207654%2032 ; fin",
+                "IBAN_CODE",
+                ("URL", 16, 86),
+                [("IBAN_CODE", 49, 86)],
+                [],
+            ),
+            (
+                "encoded quote query",
+                "Échec 🧪 — https://example.invalid/?note=%22hello%20there%22&email=ada%40example.invalid ; fin",
+                "EMAIL_ADDRESS",
+                ("URL", 16, 93),
+                [("EMAIL_ADDRESS", 72, 93)],
+                [],
+            ),
+            (
+                "encoded newline query",
+                "Échec 🧪 — https://example.invalid/?note=first%0Asecond&tel=%2B33639980001 ; fin",
+                "FR_PHONE_NUMBER",
+                ("URL", 16, 79),
+                [("FR_PHONE_NUMBER", 65, 79)],
+                [],
+            ),
         ]:
             source = text.encode("utf-8")
             for entities in [None, ["URL", inner_type], ["URL"], [inner_type]]:
@@ -282,6 +306,28 @@ def main():
         require(credential not in outgoing, "child received original Basic credentials")
         require(b"[EMAIL_ADDRESS_" in outgoing, "child did not receive an email token")
         require(b"[AUTH_TOKEN_" in outgoing, "child did not receive a credential token")
+
+        # Percent escapes inside a URL must not become outer URL delimiters.
+        # Observe child stdin as well as restoration to reject partial masking.
+        url_prefix = "Échec 🧪 — ".encode()
+        url_suffix = b" ; please investigate.\r\n"
+        for query in [
+            b"account=GB82%20WEST%201234%205698%207654%2032",
+            b"account=gb82%20west%201234%205698%207654%2032",
+            b"note=%22hello%20there%22&email=ada%40example.invalid",
+            b"note=first%0Asecond&tel=%2B33639980001",
+            b"note=left%26email%3Dada%40example.invalid%3Fright",
+        ]:
+            source = url_prefix + b"https://example.invalid/?" + query + url_suffix
+            expected = re.escape(url_prefix) + rb"\[URL_[0-9a-f]+\]" + re.escape(url_suffix)
+            preview = run(["run", "--dry-run"], source)
+            require(re.fullmatch(expected, preview.stdout), "encoded URL preview left a visible tail")
+            child = run(["run", "--", "tee", str(observed)], source)
+            require(child.stdout == source, "encoded URL roundtrip changed source bytes")
+            require(
+                re.fullmatch(expected, observed.read_bytes()),
+                "encoded URL child input did not mask the complete URL",
+            )
 
         # Released builds promise ner-lite. Exercise the new ticket path from
         # each extracted archive, including exact source restoration.

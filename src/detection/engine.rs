@@ -14,8 +14,8 @@ use super::operators::{apply_custom_replacement, apply_encrypt, apply_hash, appl
 use super::types::{Detection, Operator};
 use crate::ner::PERSON_BLOCKLIST;
 use crate::patterns::{
-    BASIC_AUTH_PATTERN, CREW_CODE_BLOCKLIST, WRAPPED_EMAIL_PATTERN, iban_mod97, luhn_check,
-    valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare, valid_au_tfn,
+    BASIC_AUTH_PATTERN, CREW_CODE_BLOCKLIST, URL_PATTERN, WRAPPED_EMAIL_PATTERN, iban_mod97,
+    luhn_check, valid_aba_routing, valid_au_abn, valid_au_acn, valid_au_medicare, valid_au_tfn,
     valid_calendar_date, valid_card_prefix, valid_es_nie, valid_es_nif, valid_fi_identity_code,
     valid_in_aadhaar, valid_in_gstin, valid_it_fiscal_code, valid_kr_brn, valid_kr_frn,
     valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number,
@@ -216,6 +216,7 @@ impl Anonymizer {
         // public offsets are projected back to the caller's exact input.
         let normalized = NormalizedText::new(raw_text);
         let text = normalized.as_str();
+        let mut url_boundary_view = None;
 
         let mut detections: Vec<Detection> = Vec::new();
 
@@ -231,6 +232,35 @@ impl Anonymizer {
             };
             if max_score < self.threshold {
                 continue;
+            }
+
+            // Percent-encoded whitespace and quotes belong to the original
+            // URL. Add complete candidates before decoded matching can shorten
+            // them; normal overlap resolution keeps the enclosing span. Keep
+            // the decoded pass below for encoded schemes and inner PII.
+            if text != raw_text
+                && pat.name == "url"
+                && pat.entity_type == "URL"
+                && pat.regex.as_str() == URL_PATTERN
+                && pat.context_keywords.is_empty()
+                && !pat.context_required
+            {
+                let view = url_boundary_view
+                    .get_or_insert_with(|| NormalizedText::before_percent_decoding(raw_text));
+                if view.as_str() != text {
+                    for mat in pat.regex.find_iter(view.as_str()) {
+                        let range = view
+                            .project_range(mat.range())
+                            .expect("URL match must project to a raw UTF-8 span");
+                        detections.push(Detection {
+                            entity_type: pat.entity_type.clone(),
+                            original: raw_text[range.clone()].to_string(),
+                            start: range.start,
+                            end: range.end,
+                            score: pat.score,
+                        });
+                    }
+                }
             }
 
             for mat in pattern_matches(&pat.name, &pat.regex, text) {

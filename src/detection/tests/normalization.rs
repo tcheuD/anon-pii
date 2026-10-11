@@ -108,6 +108,32 @@ fn chained_nfkc_and_escape_decoding_roundtrips_raw_input() {
 }
 
 #[test]
+fn url_boundaries_preserve_nfkc_unicode_escapes_and_raw_offsets() {
+    let mut anonymizer = Anonymizer::new(0.5);
+    for url in [
+        "ｈttps://example.invalid/?note=before％２０after",
+        r"https\u003A//example.invalid/?note=before\u002520after",
+    ] {
+        // NFKC changes both the prefix width and the closing delimiter. The
+        // latter must stay outside the replacement in its original spelling.
+        let prefix = "Préfixe ① e\u{301} 🧪 — ";
+        let input = format!("{prefix}{url}） suite");
+        let (prepared, detections) = anonymizer.anonymize_text(&input);
+        assert_eq!(detections.len(), 1, "{detections:?}");
+        let found = detection(&detections, "URL");
+        assert_eq!(found.original, url);
+        assert_eq!(
+            (found.start, found.end),
+            (prefix.len(), prefix.len() + url.len())
+        );
+        assert_raw_span(&input, found);
+        let token = &anonymizer.mapping.reverse[&("URL".to_string(), url.to_string())];
+        assert_eq!(prepared, format!("{prefix}{token}） suite"));
+        assert_eq!(anonymizer.mapping.restore_bracketed(&prepared), input);
+    }
+}
+
+#[test]
 fn normalized_multiline_match_projects_to_exact_raw_span() {
     let mut anonymizer = Anonymizer::new(0.0);
     let input = "card: ４１１１ １１１１\n  １１１１ １１１１ done";
