@@ -167,16 +167,21 @@ uppercase matcher is unchanged. Native v0.3.8 is the first archive release
 with this grouped-casing support; earlier archives lack it.
 
 The built-in URL recognizer keeps percent-encoded spaces, quotes, and delimiters
-inside a complete URL when its scheme is recognized before percent decoding.
-This includes NFKC and Unicode-escape normalization. Fully percent-encoded
-schemes retain the existing decoded matching path and its boundary limitations.
+inside a complete URL. Current source builds and the browser also accept each
+character of the lowercase `http://` or `https://` scheme literally or once
+percent-encoded, including mixed forms such as `h%74tps:%2F/`. Scheme recognition
+includes NFKC and Unicode-escape normalization. This does not recursively decode
+schemes, add other schemes, or change the existing uppercase-scheme behavior.
 Literal surrounding whitespace and punctuation retain the existing boundaries.
 Query values are decoded separately for inner PII audit detections, which refer
 to the original encoded bytes;
 replacement masks the enclosing URL once. The local API's `/analyze` output
 remains non-overlapping and can feed `/anonymize` directly, including when only
 an inner entity type is selected. Native v0.3.8 is the first archive release
-with this encoded-URL fix. Source and browser workflow checks also cover it.
+with the literal-scheme encoded-URL fix. Native archives through v0.3.8 lack the
+percent-encoded scheme extension and can leave an encoded suffix visible after
+the URL token. Source and browser workflow checks cover both forms. Review the
+prepared text before sharing; URL recognition is not semantic URL validation.
 
 Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
 spaces/tabs and a complete domain. Preparation and restoration preserve the

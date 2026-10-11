@@ -5,29 +5,33 @@ use crate::csv::parse_csv_document;
 
 #[test]
 fn csv_encoded_url_masks_complete_field_span_and_restores_source() {
-    let url = "ｈttps://example.invalid/?account=gb82%20west%201234%205698%207654%2032";
-    let field = format!("Échec 🧪 \"\"quoted\"\" {url} ; fin");
-    let csv = format!("id,note\r\n1,\"{field}\"\r\n");
-    let mut anonymizer = Anonymizer::new(0.5);
-    let (output, detections) = anonymizer.anonymize_csv(&csv);
-    let urls: Vec<_> = detections
-        .iter()
-        .filter(|d| d.entity_type == "URL")
-        .collect();
-    assert_eq!(urls.len(), 1, "{detections:?}");
-    assert_eq!(urls[0].original, url);
-    assert_eq!(&field[urls[0].start..urls[0].end], url);
-    assert!(
-        output.starts_with("id,note\r\n1,\"Échec 🧪 \"\"quoted\"\" [URL_"),
-        "{output}"
-    );
-    assert!(output.ends_with("] ; fin\"\r\n"), "{output}");
-    assert!(!output.contains("%20"), "{output}");
-    assert_eq!(anonymizer.mapping.mappings.len(), 1);
-    assert_eq!(anonymizer.mapping.restore_bracketed(&output), csv);
-    let parsed = parse_csv_document(&output).unwrap();
-    assert_eq!(parsed.records.len(), 2);
-    assert!(parsed.records.iter().all(|record| record.fields.len() == 2));
+    for url in [
+        "ｈttps://example.invalid/?account=gb82%20west%201234%205698%207654%2032",
+        "ｈttps%3a%2f%2fexample.invalid/?account=gb82%20west%201234%205698%207654%2032",
+    ] {
+        let field = format!("Échec 🧪 \"\"quoted\"\" {url} ; fin");
+        let csv = format!("id,note\r\n1,\"{field}\"\r\n");
+        let mut anonymizer = Anonymizer::new(0.5);
+        let (output, detections) = anonymizer.anonymize_csv(&csv);
+        let urls: Vec<_> = detections
+            .iter()
+            .filter(|d| d.entity_type == "URL")
+            .collect();
+        assert_eq!(urls.len(), 1, "{detections:?}");
+        assert_eq!(urls[0].original, url);
+        assert_eq!(&field[urls[0].start..urls[0].end], url);
+        assert!(
+            output.starts_with("id,note\r\n1,\"Échec 🧪 \"\"quoted\"\" [URL_"),
+            "{output}"
+        );
+        assert!(output.ends_with("] ; fin\"\r\n"), "{output}");
+        assert!(!output.contains("%20"), "{output}");
+        assert_eq!(anonymizer.mapping.mappings.len(), 1);
+        assert_eq!(anonymizer.mapping.restore_bracketed(&output), csv);
+        let parsed = parse_csv_document(&output).unwrap();
+        assert_eq!(parsed.records.len(), 2);
+        assert!(parsed.records.iter().all(|record| record.fields.len() == 2));
+    }
 }
 
 #[test]

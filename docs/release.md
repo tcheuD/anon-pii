@@ -81,7 +81,8 @@ complete custom-regex masking for reverse-suffix and reverse-inner matches
 and fixed French/UK print IBAN spans with checksum/context controls, compact UK IBANs
 without financial context (including field/boundary and threshold controls),
 complete URL masking with percent-encoded spaces, quotes, newlines, and query
-delimiters, plus exact API analyze/anonymize handoff for embedded PII,
+delimiters, including literal and singly percent-encoded HTTP(S) schemes,
+plus exact API analyze/anonymize handoff for embedded PII,
 wrapped-email and SQL E-string spans with format/boundary controls, and absence of a
 persisted transaction mapping. Span checks inspect both preview and actual child
 input, because exact restoration alone cannot reveal values left visible.

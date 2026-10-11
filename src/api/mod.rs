@@ -401,6 +401,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_analyze_percent_encoded_schemes_feed_anonymize() {
+        for url in [
+            "https%3A%2F%2Fexample.invalid%2F%3Faccount%3DGB82%20WEST%201234%205698%207654%2032",
+            "%68%74%74%70%73%3a%2f%2fexample.invalid/?note=before%22after&account=GB82%20WEST%201234%205698%207654%2032",
+            "%68ttp%73:%2f/example.invalid/?note=before%0aafter&account=GB82%20WEST%201234%205698%207654%2032",
+        ] {
+            let text = format!("Échec 🧪 — callback={url} ; fin");
+            let url_start = text.find(url).unwrap();
+            for entities in [None, Some(vec!["URL", "IBAN_CODE"]), Some(vec!["URL"])] {
+                assert_analysis_masks_exact_spans(
+                    &text,
+                    entities.as_deref(),
+                    &[("URL", url_start, url_start + url.len())],
+                    &text.replacen(url, &"*".repeat(url.len()), 1),
+                )
+                .await;
+            }
+            let inner = "GB82%20WEST%201234%205698%207654%2032";
+            let inner_start = text.find(inner).unwrap();
+            assert_analysis_masks_exact_spans(
+                &text,
+                Some(&["IBAN_CODE"]),
+                &[("IBAN_CODE", inner_start, inner_start + inner.len())],
+                &text.replacen(inner, &"*".repeat(inner.len()), 1),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
     async fn test_analyze_selected_email_feeds_anonymize() {
         let text = r#"Échec 📨 password="prefix ada@example.invalid suffix""#;
         let results = post_json(

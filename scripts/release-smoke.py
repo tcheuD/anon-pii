@@ -311,15 +311,37 @@ def main():
         # Observe child stdin as well as restoration to reject partial masking.
         url_prefix = "Échec 🧪 — ".encode()
         url_suffix = b" ; please investigate.\r\n"
-        for query in [
-            b"account=GB82%20WEST%201234%205698%207654%2032",
-            b"account=gb82%20west%201234%205698%207654%2032",
-            b"note=%22hello%20there%22&email=ada%40example.invalid",
-            b"note=first%0Asecond&tel=%2B33639980001",
-            b"note=left%26email%3Dada%40example.invalid%3Fright",
-        ]:
-            source = url_prefix + b"https://example.invalid/?" + query + url_suffix
-            expected = re.escape(url_prefix) + rb"\[URL_[0-9a-f]+\]" + re.escape(url_suffix)
+        url_cases = [
+            (b"", b"https://example.invalid/?" + query, url_suffix)
+            for query in [
+                b"account=GB82%20WEST%201234%205698%207654%2032",
+                b"account=gb82%20west%201234%205698%207654%2032",
+                b"note=%22hello%20there%22&email=ada%40example.invalid",
+                b"note=first%0Asecond&tel=%2B33639980001",
+                b"note=left%26email%3Dada%40example.invalid%3Fright",
+            ]
+        ]
+        # A singly encoded scheme must retain the raw boundaries of its body.
+        # Literal quotes/newlines/brackets still belong to the surrounding text.
+        url_cases.extend([
+            (b"", b"%68ttps://example.invalid/?note=left%20right", url_suffix),
+            (
+                b'"', b"http%3A%2F%2Fexample.invalid/?note=%22quoted%22",
+                b'" ; fin\r\n',
+            ),
+            (
+                b"", b"%68%74%74%70%73%3a%2f%2fexample.invalid/?note=first%0Asecond",
+                "\nréponse en attente.\r\n".encode(),
+            ),
+            (
+                b"(", b"%68%74%74%70%3A%2F%2Fexample.invalid/?note=left%20%22middle%22%0Aright",
+                b") ; fin\r\n",
+            ),
+        ])
+        for opening, url, suffix in url_cases:
+            prefix = url_prefix + opening
+            source = prefix + url + suffix
+            expected = re.escape(prefix) + rb"\[URL_[0-9a-f]{8}\]" + re.escape(suffix)
             preview = run(["run", "--dry-run"], source)
             require(re.fullmatch(expected, preview.stdout), "encoded URL preview left a visible tail")
             child = run(["run", "--", "tee", str(observed)], source)

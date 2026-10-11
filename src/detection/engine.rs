@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
@@ -21,6 +22,19 @@ use crate::patterns::{
     valid_kr_rrn, valid_mac, valid_pl_pesel, valid_sg_nric_fin, valid_si_emso, valid_si_tax_number,
     valid_th_tnin, valid_uk_nhs, valid_uk_nino, valid_us_itin, valid_us_ssn,
 };
+
+// Recognize one layer of scheme encoding without decoding the URL body: an
+// encoded space or quote there is URL data, not a boundary. Share the ordinary
+// matcher's tail so literal punctuation keeps exactly the existing behavior.
+static URL_BOUNDARY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    let tail = URL_PATTERN
+        .strip_prefix("https?://")
+        .expect("built-in URL pattern must start with the HTTP(S) scheme");
+    Regex::new(&format!(
+        r"(?:h|%68)(?:t|%74){{2}}(?:p|%70)(?:s|%73)?(?::|%3[aA])(?:/|%2[fF]){{2}}{tail}"
+    ))
+    .expect("built-in URL boundary regex must compile")
+});
 
 fn basic_auth_value_start(candidate: &str) -> Option<usize> {
     let start = candidate.rfind([' ', '\t'])? + 1;
@@ -236,8 +250,9 @@ impl Anonymizer {
 
             // Percent-encoded whitespace and quotes belong to the original
             // URL. Add complete candidates before decoded matching can shorten
-            // them; normal overlap resolution keeps the enclosing span. Keep
-            // the decoded pass below for encoded schemes and inner PII.
+            // them; normal overlap resolution keeps the enclosing span. Only
+            // the scheme accepts percent-escaped characters in this pass;
+            // decoded matching below still handles other patterns and PII.
             if text != raw_text
                 && pat.name == "url"
                 && pat.entity_type == "URL"
@@ -248,7 +263,7 @@ impl Anonymizer {
                 let view = url_boundary_view
                     .get_or_insert_with(|| NormalizedText::before_percent_decoding(raw_text));
                 if view.as_str() != text {
-                    for mat in pat.regex.find_iter(view.as_str()) {
+                    for mat in URL_BOUNDARY_RE.find_iter(view.as_str()) {
                         let range = view
                             .project_range(mat.range())
                             .expect("URL match must project to a raw UTF-8 span");
