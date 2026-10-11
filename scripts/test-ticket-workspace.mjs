@@ -101,6 +101,44 @@ try {
     await field('ticket-prepared').evaluate((element, output) => { element.value = output; }, tokenized);
   });
 
+  await check('opening the support-ticket guide preserves the prepared session in its original tab', async () => {
+    const guideUrl = 'https://github.com/tcheuD/anon-pii/blob/main/docs/support-ticket.md';
+    const guideRequests = [];
+    // Intercept the popup at context level so the test uses no external service.
+    const serveGuide = route => {
+      const request = route.request();
+      guideRequests.push({ url: request.url(), method: request.method(), body: request.postData() });
+      return route.fulfill({ contentType: 'text/html', body: '<title>Support-ticket guide fixture</title>' });
+    };
+    await context.route(guideUrl, serveGuide);
+    let guide;
+    try {
+      await field('ticket-reply').fill(tokenized);
+      const workspaceUrl = page.url();
+      [guide] = await Promise.all([
+        context.waitForEvent('page'),
+        page.getByRole('link', { name: 'Read the support-ticket guide (opens in a new tab)', exact: true }).click(),
+      ]);
+      await guide.waitForLoadState('domcontentloaded');
+      assert.equal(guide.url(), guideUrl);
+      assert.equal(await guide.evaluate(() => window.opener), null);
+      assert.deepEqual(guideRequests, [{ url: guideUrl, method: 'GET', body: null }]);
+      assert.equal(page.url(), workspaceUrl);
+      assert.equal(await input('ticket-source'), source);
+      assert.equal(await input('ticket-prepared'), tokenized);
+      assert.equal(await input('ticket-reply'), tokenized);
+      assert.equal(await disabled('copy-ticket'), false);
+      await guide.close();
+      await click('restore-reply');
+      assert.equal(await input('ticket-restored'), source, 'the original mapping must survive reading the guide');
+      await click('copy-reply');
+      assert.equal(await page.evaluate(() => window.__copied.at(-1)), source);
+    } finally {
+      if (guide && !guide.isClosed()) await guide.close();
+      await context.unroute(guideUrl, serveGuide);
+    }
+  });
+
   await check('known tokens restore exactly and unknown tokens stay unchanged', async () => {
     const unknown = '[EMAIL_ADDRESS_00000000]';
     assert.ok(!tokenized.includes(unknown));
