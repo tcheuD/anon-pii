@@ -194,8 +194,8 @@ place; context requirements and score thresholds still apply. This is limited
 text alignment, not a table parser or a measurement of screen columns: tabs are
 not expanded, and combining marks and wide characters do not necessarily match
 their displayed width. Review prepared text when alignment is uncertain.
-The correction is included in current source and browser builds. Native archives
-through v0.3.9 lack it; the native release containing this correction is pending.
+The correction is included in current source and browser builds. Native v0.3.10
+is the first archive release containing it; archives through v0.3.9 lack it.
 
 Wrapped emails support one LF or CRLF immediately after `@`, followed by optional
 spaces/tabs and a complete domain. Preparation and restoration preserve the
