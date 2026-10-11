@@ -142,8 +142,8 @@ source newline, indentation, and spelling. Blank lines, whitespace before the
 line break, and domains split across more lines remain unsupported. An incomplete
 prefix cannot consume a complete address on the next line. A domain-only next
 line can be indistinguishable from a wrapped address; review the prepared text.
-This improvement applies to source builds and the refreshed browser engine;
-the published v0.3.2 native archives do not include it.
+This improvement applies to v0.3.3 native archives, source builds, and the browser
+engine. Older v0.3.2 native archives do not include it.
 
 All contract cases and every non-exempt case must remain exact. The two
 remaining reviewed challenge exceptions are intentionally visible in the baseline:
