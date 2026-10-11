@@ -359,6 +359,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_analyze_encoded_url_boundaries_feed_anonymize() {
+        for (query, inner_type, inner) in [
+            (
+                "account=gb82%20west%201234%205698%207654%2032",
+                "IBAN_CODE",
+                "gb82%20west%201234%205698%207654%2032",
+            ),
+            (
+                "note=%22hello%20there%22&email=ada%40example.invalid",
+                "EMAIL_ADDRESS",
+                "ada%40example.invalid",
+            ),
+            (
+                "note=first%0Asecond&tel=%2B33639980001",
+                "FR_PHONE_NUMBER",
+                "%2B33639980001",
+            ),
+        ] {
+            let url = format!("https://example.invalid/?{query}");
+            let text = format!("Échec 🧪 — {url} ; fin");
+            let url_start = text.find(&url).unwrap();
+            let inner_start = text.find(inner).unwrap();
+            for entities in [None, Some(vec!["URL", inner_type]), Some(vec!["URL"])] {
+                assert_analysis_masks_exact_spans(
+                    &text,
+                    entities.as_deref(),
+                    &[("URL", url_start, url_start + url.len())],
+                    &format!("Échec 🧪 — {} ; fin", "*".repeat(url.len())),
+                )
+                .await;
+            }
+            assert_analysis_masks_exact_spans(
+                &text,
+                Some(&[inner_type]),
+                &[(inner_type, inner_start, inner_start + inner.len())],
+                &text.replacen(inner, &"*".repeat(inner.len()), 1),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
     async fn test_analyze_selected_email_feeds_anonymize() {
         let text = r#"Échec 📨 password="prefix ada@example.invalid suffix""#;
         let results = post_json(

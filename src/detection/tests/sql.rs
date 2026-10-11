@@ -3,6 +3,32 @@ use super::super::*;
 // -- SQL tests --
 
 #[test]
+fn sql_encoded_url_masks_complete_literal_span_and_restores_source() {
+    let url = "ｈttps://example.invalid/?account=gb82%20west%201234%205698%207654%2032";
+    for (opening, prefix) in [("'", "Échec 🧪 it''s "), ("E'", r"Échec 🧪 it\'s\n")] {
+        let literal = format!("{prefix}{url} ; fin");
+        let sql = format!("SELECT {opening}{literal}';\r\n");
+        let mut anonymizer = Anonymizer::new(0.5);
+        let (output, detections) = anonymizer.anonymize_sql(&sql);
+        let urls: Vec<_> = detections
+            .iter()
+            .filter(|d| d.entity_type == "URL")
+            .collect();
+        assert_eq!(urls.len(), 1, "{detections:?}");
+        assert_eq!(urls[0].original, url);
+        assert_eq!(&literal[urls[0].start..urls[0].end], url);
+        assert!(
+            output.starts_with(&format!("SELECT {opening}{prefix}[URL_")),
+            "{output}"
+        );
+        assert!(output.ends_with("] ; fin';\r\n"), "{output}");
+        assert!(!output.contains("%20"), "{output}");
+        assert_eq!(anonymizer.mapping.mappings.len(), 1);
+        assert_eq!(anonymizer.mapping.restore_bracketed(&output), sql);
+    }
+}
+
+#[test]
 fn test_sql_anonymizes_string_literals_only() {
     let mut a = Anonymizer::new(0.0);
     let sql = "INSERT INTO users VALUES (1, 'john@example.com', 'admin')";

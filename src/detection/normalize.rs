@@ -292,6 +292,16 @@ pub(super) struct NormalizedText<'a>(MappedText<'a>);
 
 impl<'a> NormalizedText<'a> {
     pub(super) fn new(raw: &'a str) -> Self {
+        Self(
+            Self::before_percent_decoding(raw)
+                .0
+                .decode_percent_encoding(),
+        )
+    }
+
+    /// URL boundaries must see encoded separators as data, while still sharing
+    /// Unicode normalization and exact source provenance with other matchers.
+    pub(super) fn before_percent_decoding(raw: &'a str) -> Self {
         let mapped = if is_nfkc(raw) {
             MappedText::identity(raw)
         } else {
@@ -308,7 +318,7 @@ impl<'a> NormalizedText<'a> {
             builder.finish()
         };
 
-        Self(mapped.decode_unicode_escapes().decode_percent_encoding())
+        Self(mapped.decode_unicode_escapes())
     }
 
     pub(super) fn as_str(&self) -> &str {

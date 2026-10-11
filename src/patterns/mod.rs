@@ -30,7 +30,7 @@ mod us;
 pub mod validators;
 
 pub use aviation::CREW_CODE_BLOCKLIST;
-pub(crate) use global::WRAPPED_EMAIL_PATTERN;
+pub(crate) use global::{URL_PATTERN, WRAPPED_EMAIL_PATTERN};
 pub(crate) use secrets::BASIC_AUTH_PATTERN;
 pub(crate) use uk::UK_IBAN_PRINT_PATTERN;
 pub use validators::{
