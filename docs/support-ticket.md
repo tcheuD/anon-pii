@@ -21,7 +21,14 @@ Keep the same tab open until you finish restoring the reply.
 For a real handoff, paste only the reviewed tokenized text into your chosen AI
 tool and ask it to preserve bracketed tokens exactly. Copy its response back
 into the workspace's reply field, choose **Restore reply**, and inspect the
-result. **Copy restored reply** copies text containing original values; use it
+result. The status counts restored token occurrences, including repeats, and
+flags unrecognized placeholders with the usual token shape (an uppercase type
+and eight lowercase hexadecimal digits in brackets). Old-session tokens can
+therefore produce a zero-restoration result. Changed or incomplete tokens may
+not be recognized by this notice; always inspect the reply. Plain text without
+tokens stays unchanged and can still be copied.
+
+**Copy restored reply** copies the result, which can contain original values; use it
 only in the destination where those values belong.
 
 If the browser blocks clipboard access, select and copy the prepared text

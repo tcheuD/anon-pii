@@ -78,6 +78,31 @@ export class Engine {
             wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
         }
     }
+    /**
+     * Restore exact tokens and return JSON with output, restored_count, and
+     * unresolved_count. Unresolved counts only built-in-shaped input tokens;
+     * changed or incomplete placeholders may not be recognized.
+     * @param {string} text
+     * @returns {string}
+     */
+    restore_report(text) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(text, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.engine_restore_report(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred2_0 = r0;
+            deferred2_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred2_0, deferred2_1, 1);
+        }
+    }
 }
 if (Symbol.dispose) Engine.prototype[Symbol.dispose] = Engine.prototype.free;
 

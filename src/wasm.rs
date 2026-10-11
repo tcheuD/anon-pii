@@ -54,6 +54,19 @@ impl Engine {
         self.anon.mapping.restore_bracketed(text)
     }
 
+    /// Restore exact tokens and return JSON with output, restored_count, and
+    /// unresolved_count. Unresolved counts only built-in-shaped input tokens;
+    /// changed or incomplete placeholders may not be recognized.
+    pub fn restore_report(&self, text: &str) -> String {
+        let report = self.anon.mapping.restore_bracketed_report(text);
+        serde_json::json!({
+            "output": report.output,
+            "restored_count": report.restored_count,
+            "unresolved_count": report.unresolved_count,
+        })
+        .to_string()
+    }
+
     /// Number of entries currently in the session mapping.
     pub fn mapping_len(&self) -> usize {
         self.anon.mapping.mappings.len()
