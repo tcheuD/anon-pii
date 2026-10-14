@@ -180,7 +180,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-sbom
-        uses: taiki-e/install-action@787505cde8a44ea468a00478fe52baf23b15bccd # v2.75.21
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: cargo-sbom
 
